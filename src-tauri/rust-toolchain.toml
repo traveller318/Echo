@@ -1,0 +1,10 @@
+# SOURCE OF TRUTH KEYWORDS: rust-toolchain, toolchain pin, msvc target, rustfmt, clippy
+# WHAT:  Pins the Rust toolchain, target and components used to build Echo.
+# WHY:   Reproducible local builds are the SmartScreen/AV mitigation (05 W21) and the only CI (02 §11); a silent
+#        toolchain upgrade could change lints or codegen between two gate runs. MSVC is the only supported target.
+# WHERE: Picked up by rustup for every cargo command run inside src-tauri/ (including `pnpm tauri dev|build`).
+[toolchain]
+channel = "1.98.0"
+components = ["rustfmt", "clippy"]
+targets = ["x86_64-pc-windows-msvc"]
+profile = "minimal"

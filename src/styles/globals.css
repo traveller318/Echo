@@ -1,0 +1,12 @@
+/**
+ * SOURCE OF TRUTH KEYWORDS: globals.css, tailwind import, tailwind source, theme mapping, base styles
+ * WHAT:  Global stylesheet for both windows: loads Tailwind CSS v4.
+ * WHY:   Tailwind's automatic source detection honours .gitignore, and this repo has none (no git), so it would
+ *        crawl src-tauri/target. `source("../")` limits scanning to src/, and the two HTML entries are added
+ *        explicitly because they carry classes too. This file owns the `@theme` mapping of tokens.css
+ *        (03 §1); raw theme values never go here, only in tokens.css after docs/04.
+ * WHERE: Imported once by each window bootstrap (src/main.tsx, src/pill.tsx).
+ */
+@import "tailwindcss" source("../");
+@source "../../index.html";
+@source "../../pill.html";

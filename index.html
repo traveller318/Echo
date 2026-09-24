@@ -1,0 +1,18 @@
+<!--
+  SOURCE OF TRUTH KEYWORDS: main window entry, index.html, main webview, root mount, dashboard window
+  WHAT:  HTML entry for the main window (label `main` in tauri.conf.json); mounts src/main.tsx into #root.
+  WHY:   One HTML entry per Tauri window keeps each window's bundle independent (see vite.config.ts).
+  WHERE: Loaded by the `main` window; built by Vite as the `main` input.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Echo</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

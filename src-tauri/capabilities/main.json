@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-window",
+  "description": "Permissions for the main window (dashboard, history, models, settings). Grants only what its UI calls.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

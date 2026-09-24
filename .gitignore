@@ -1,0 +1,65 @@
+# SOURCE OF TRUTH KEYWORDS: gitignore, ignored files, build output, generated files, local-only files, secrets
+# WHAT:  Files that never go into the repository: dependencies, build output, generated schemas, caches, logs,
+#        local app data, secrets, and editor/OS clutter. Everything else (source, docs-owned config, lockfiles,
+#        src/bindings.ts, icons, capabilities) is committed.
+# WHY:   The repo must rebuild from source alone with the pinned toolchain (05 W21). Lockfiles stay tracked so
+#        builds are reproducible; src/bindings.ts stays tracked because tsc checks the UI against it before
+#        `cargo test` has run on a fresh clone. The owner-only entries at the top are the owner's decision.
+# WHERE: Read by git and by Tailwind's source detection (globals.css also names its sources explicitly).
+
+# Owner-only files (kept out of the repository by the owner)
+/CHANGELOG.md
+/docs
+/CLAUDE.md
+/Echo-Build-Prompts.md
+
+# Dependencies
+/node_modules
+
+# Frontend build output and caches
+/dist
+/coverage
+*.tsbuildinfo
+.vite/
+.eslintcache
+
+# Rust / Tauri build output and generated schemas (tauri-build regenerates gen/schemas on every build)
+/src-tauri/target
+/src-tauri/gen/schemas
+
+# Local app data that must never be committed (history database, journals, downloaded models, logs)
+*.db
+*.db-shm
+*.db-wal
+*.db.bak-*
+*.wav
+*.onnx
+*.gguf
+*.log
+logs/
+# Bundled installer resources (Silero VAD model, sound cues, runtime DLLs) are source, not app data
+!/src-tauri/resources/**
+
+# Secrets and local environment
+.env
+.env.*
+*.pem
+*.pfx
+*.key
+
+# Local tool settings
+.claude/settings.local.json
+
+# Editors
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*~
+
+# Operating system
+Thumbs.db
+ehthumbs.db
+desktop.ini
+$RECYCLE.BIN/
+.DS_Store

@@ -1,0 +1,66 @@
+# SOURCE OF TRUTH KEYWORDS: Cargo.toml, crate manifest, clippy deny lints, release profile, pinned crates, echo_lib
+# WHAT:  Manifest of the single Echo crate: the `echo_lib` library (all layers) plus the `echo` binary (main.rs).
+# WHY:   One crate with layer folders keeps paths identical to the rulebook; tests/architecture.rs enforces the
+#        import matrix (02 §3.2, 05 decision log). Every dependency is pinned with `=` so builds are reproducible
+#        (05 W21). Lints are deny-level here, not in source attributes, so no file can quietly relax them;
+#        clippy.toml allows unwrap/expect/panic inside tests only. clippy::exit is not enabled: the code that
+#        tauri::generate_context! expands to calls process::exit, and a lint is never silenced with #[allow].
+# WHERE: Built by `pnpm tauri dev|build` and the cargo steps of the local gate (02 §11).
+[package]
+name = "echo"
+version = "0.1.0"
+description = "Local, private speech-to-text for Windows."
+license = "MIT"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+
+[lib]
+name = "echo_lib"
+# Windows desktop only: no mobile targets, so no staticlib/cdylib.
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.6.3", features = [] }
+
+[dependencies]
+garde = { version = "=0.23.0", default-features = false, features = ["derive"] }
+parking_lot = "=0.12.5"
+serde = { version = "=1.0.229", features = ["derive"] }
+specta = { version = "=2.0.0-rc.25", features = ["derive"] }
+specta-typescript = "=0.0.12"
+tauri = { version = "=2.11.6", features = [] }
+tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
+thiserror = "=2.0.20"
+tracing = { version = "=0.1.44", default-features = false, features = ["std"] }
+ulid = { version = "=3.0.0", features = ["serde"] }
+# Same version tauri already links, so no second copy is compiled; features grow with each Win32 adapter.
+windows = { version = "=0.61.3", features = ["Win32_Foundation", "Win32_System_Registry"] }
+
+[dev-dependencies]
+serde_json = "=1.0.151"
+# `test` adds the mock runtime used to call commands end to end (dev builds only; resolver 3 keeps it out of the app).
+tauri = { version = "=2.11.6", features = ["test"] }
+tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["fmt", "std"] }
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused_must_use = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+mem_forget = "deny"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+strip = true

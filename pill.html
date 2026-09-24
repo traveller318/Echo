@@ -1,0 +1,19 @@
+<!--
+  SOURCE OF TRUTH KEYWORDS: pill window entry, pill.html, pill webview, transparent window, root mount
+  WHAT:  HTML entry for the pill window (label `pill` in tauri.conf.json); mounts src/pill.tsx into #root.
+  WHY:   The pill window is transparent, so the page itself must paint nothing outside the pill:
+         `bg-transparent` on html and body keeps the webview from filling the 360×88 window.
+  WHERE: Loaded by the `pill` window; built by Vite as the `pill` input.
+-->
+<!doctype html>
+<html lang="en" class="bg-transparent">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Echo pill</title>
+  </head>
+  <body class="bg-transparent">
+    <div id="root"></div>
+    <script type="module" src="/src/pill.tsx"></script>
+  </body>
+</html>

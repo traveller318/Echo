@@ -1,0 +1,10 @@
+# SOURCE OF TRUTH KEYWORDS: clippy.toml, test allowances, allow-unwrap-in-tests, allow-expect-in-tests, allow-panic-in-tests
+# WHAT:  Clippy configuration: lets tests use unwrap/expect/panic/dbg/print while production code stays denied.
+# WHY:   Cargo.toml denies these lints crate-wide; tests (`#[test]`, `#[cfg(test)]`) are the one place the
+#        rulebook allows them, and this is the only switch that scopes the allowance to tests.
+# WHERE: Read by `cargo clippy --all-targets -- -D warnings` (local gate).
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-dbg-in-tests = true
+allow-print-in-tests = true

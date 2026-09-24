@@ -1,0 +1,6 @@
+# SOURCE OF TRUTH KEYWORDS: pnpm settings, saveExact, dependency pinning, package manager config
+# WHAT:  Project-level pnpm settings (single package, not a monorepo).
+# WHY:   pnpm 10+ reads project settings from this file instead of .npmrc. saveExact keeps every
+#        future `pnpm add` pinned to an exact version, as the build contract requires.
+# WHERE: Read by pnpm on every install and add.
+saveExact: true
