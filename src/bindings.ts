@@ -24,6 +24,10 @@ export const commands = {
 	settingsReset: (input: SettingsResetInput) => typedError<SettingEntry, AppError>(__TAURI_INVOKE("settings_reset", { input })),
 	/**  The theme, transparency and backdrop both windows paint from right now. */
 	appearanceGet: () => typedError<AppearanceView, AppError>(__TAURI_INVOKE("appearance_get")),
+	/**  Shows the folder that holds Echo's local log files. */
+	appOpenLogsDir: () => typedError<null, AppError>(__TAURI_INVOKE("app_open_logs_dir")),
+	/**  Opens the Windows privacy page where microphone access for desktop apps is turned on. */
+	appOpenMicPrivacySettings: () => typedError<null, AppError>(__TAURI_INVOKE("app_open_mic_privacy_settings")),
 };
 
 /** Events */
@@ -356,8 +360,8 @@ export type ModelStatus = { kind: "not_installed" } |
 /**  A sidebar icon, serialized as its lucide-react name (e.g. `layout-dashboard`). */
 export type NavIcon = "layout-dashboard" | "history" | "boxes" | "settings";
 
-/**  Registry id of a sidebar navigation item, kebab-case, e.g. `dashboard`. */
-export type NavId = string;
+/**  Registry id of a sidebar navigation item; each one has a page in `src/routes/<id>/`. */
+export type NavId = "dashboard" | "history" | "models" | "settings";
 
 /**  A registry navigation entry. */
 export type NavItem = {

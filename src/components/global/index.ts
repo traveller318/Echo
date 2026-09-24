@@ -1,5 +1,5 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: components global barrel, reusable components, GlassSurface, EmptyState, ProgressBar
+ * SOURCE OF TRUTH KEYWORDS: components global barrel, reusable components, GlassSurface, EmptyState, ProgressBar, NavIcon, Page
  * WHAT:  Barrel for every reusable app component (one folder each under components/global).
  * WHY:   Routes import `@/components/global` and never reach into a folder, so components can be reorganised
  *        inside their folders freely (03 §3). StatCard, DataList, SettingField and HotkeyInput join with their steps.
@@ -7,4 +7,6 @@
  */
 export { EmptyState, type EmptyStateProps } from "./empty-state";
 export { GLASS_SURFACE_VARIANTS, GlassSurface, type GlassSurfaceProps, type GlassSurfaceVariant } from "./glass-surface";
+export { NavIcon, type NavIconProps } from "./nav-icon";
+export { Page, type PageProps } from "./page";
 export { ProgressBar, progressFraction, type ProgressBarProps } from "./progress-bar";

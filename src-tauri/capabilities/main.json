@@ -1,7 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
-  "description": "Permissions for the main window (dashboard, history, models, settings). Grants only what its UI calls.",
+  "description": "Permissions for the main window (dashboard, history, models, settings). Grants only what its UI calls: the custom titlebar drags the window, double-click toggles maximize, and its buttons minimize and close (close is turned into hide by app/windows.rs).",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-minimize",
+    "core:window:allow-close"
+  ]
 }

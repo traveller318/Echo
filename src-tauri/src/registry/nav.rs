@@ -2,9 +2,9 @@
  * SOURCE OF TRUTH KEYWORDS: nav registry, NAV, sidebar entries, dashboard, history, models, settings, route order
  * WHAT:  The main window's sidebar entries (dashboard, history, models, settings) with label, icon, route and
  *        order, and the list in sidebar order.
- * WHY:   The sidebar and router are built from these (02 §3.3), so adding a page is an entry here plus its route
- *        folder. Onboarding is a route, not a nav item: it is reached on first run, never from the sidebar.
- * WHERE: Sent to the UI by `registry_get`; rendered by src/app/shell (sidebar) and src/app/router.tsx.
+ * WHY:   The sidebar and router are built from these (02 §3.3), so adding a page is a NavId variant, an entry here
+ *        and its route folder (src/routes/<id>/, which tsc demands through the generated NavId union). Onboarding is a route, not a nav item: it is reached on first run, never from the sidebar.
+ * WHERE: Sent to the UI by `registry_get`; rendered by src/app/shell (sidebar) and src/app/routes.tsx (routes).
  */
 
 use crate::types::{NavIcon, NavId, NavItem, StaticStr};
@@ -12,28 +12,28 @@ use crate::types::{NavIcon, NavId, NavItem, StaticStr};
 /// Every sidebar entry.
 pub const NAV: &[NavItem] = &[
     NavItem {
-        id: NavId::from_static("dashboard"),
+        id: NavId::Dashboard,
         label: StaticStr::new("Dashboard"),
         icon: NavIcon::LayoutDashboard,
         route: StaticStr::new("/"),
         order: 0,
     },
     NavItem {
-        id: NavId::from_static("history"),
+        id: NavId::History,
         label: StaticStr::new("History"),
         icon: NavIcon::History,
         route: StaticStr::new("/history"),
         order: 1,
     },
     NavItem {
-        id: NavId::from_static("models"),
+        id: NavId::Models,
         label: StaticStr::new("Models"),
         icon: NavIcon::Boxes,
         route: StaticStr::new("/models"),
         order: 2,
     },
     NavItem {
-        id: NavId::from_static("settings"),
+        id: NavId::Settings,
         label: StaticStr::new("Settings"),
         icon: NavIcon::Settings,
         route: StaticStr::new("/settings"),
@@ -59,9 +59,10 @@ mod tests {
     fn ids_routes_and_order_are_unique() {
         let (mut ids, mut routes, mut orders) = (HashSet::new(), HashSet::new(), HashSet::new());
         for item in NAV {
-            assert!(is_registry_id(item.id.as_str()), "{}", item.id);
-            assert!(ids.insert(item.id.as_str()), "duplicate nav id {}", item.id);
-            assert!(item.route.starts_with('/'), "{} route", item.id);
+            let id = item.id.as_str();
+            assert!(is_registry_id(id), "{id}");
+            assert!(ids.insert(id), "duplicate nav id {id}");
+            assert!(item.route.starts_with('/'), "{id} route");
             assert!(
                 routes.insert(item.route.as_str()),
                 "duplicate route {}",

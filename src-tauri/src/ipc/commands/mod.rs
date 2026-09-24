@@ -6,7 +6,7 @@
  *        command cannot be declared but left unreachable or untyped. Adding a command is an `echo_command!` in
  *        its group plus one path here.
  * WHERE: `catalog()` is read by app/bindings.rs; groups are filled step by step (session, history, metrics,
- *        models and audio join with their layers; system holds appearance_get so far).
+ *        models and audio join with their layers; system holds appearance and the logs / privacy openers).
  */
 
 pub mod settings;
@@ -23,5 +23,7 @@ pub fn catalog<R: Runtime>() -> Commands<R> {
         settings::settings_set,
         settings::settings_reset,
         system::appearance_get,
+        system::app_open_logs_dir,
+        system::app_open_mic_privacy_settings,
     ]
 }

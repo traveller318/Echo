@@ -21,6 +21,7 @@ mod events;
 mod future;
 mod hotkey;
 mod ids;
+mod launcher;
 mod metrics;
 mod model;
 mod nav;
@@ -57,15 +58,15 @@ pub use events::{
 pub use future::BoxFuture;
 pub use hotkey::{HotkeyEvent, HotkeyScope, HotkeySpec, KeyState, Shortcut};
 pub use ids::{
-    AudioDeviceId, EngineId, HotkeyId, InvalidId, MetricId, ModelId, NavId, SettingKey,
-    TranscriptId,
+    AudioDeviceId, EngineId, HotkeyId, InvalidId, MetricId, ModelId, SettingKey, TranscriptId,
 };
+pub use launcher::SettingsPage;
 pub use metrics::{
     ActivityDay, LogMetricSpec, MetricAggregate, MetricEmphasis, MetricQuery, MetricSpec,
     MetricUnit, MetricValue, MetricsRange, MetricsSummary, TranscriptTotals,
 };
 pub use model::{ModelFile, ModelManifest, ModelPhase, ModelStatus, Sha256Hex};
-pub use nav::{NavIcon, NavItem};
+pub use nav::{NavIcon, NavId, NavItem};
 pub use notification::{Toast, ToastKind};
 pub use paths::AppPaths;
 pub use permission::{Permission, PermissionState};

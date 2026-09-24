@@ -1,19 +1,42 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: NavItem, NavIcon, sidebar navigation, nav entry, route, nav order, lucide icon
- * WHAT:  A sidebar navigation entry (NavItem: id, label, icon, route, order) and the closed set of icons an entry
- *        can use (NavIcon, serialized as the lucide-react icon name).
+ * SOURCE OF TRUTH KEYWORDS: NavItem, NavId, NavIcon, sidebar navigation, nav entry, route, nav order, lucide icon, route page
+ * WHAT:  A sidebar navigation entry (NavItem: id, label, icon, route, order), the closed set of pages an entry can
+ *        open (NavId) and the closed set of icons it can use (NavIcon, serialized as the lucide-react icon name).
  * WHY:   The sidebar and the router are built from registry nav entries (02 §3.3), so adding a page is an entry,
- *        not a component change. The icon is an enum, not free text, so the generated TS type is a string union
- *        and the UI's icon map is checked for exhaustiveness by tsc: an entry can never name an icon the UI
- *        cannot draw.
- * WHERE: Entries in registry/nav; sent to the UI by `registry_get`; rendered by src/app/shell (sidebar) and
- *        src/app/router.tsx.
+ *        not a shell change. The UI must own a React page for every entry and a drawing for every icon, so both
+ *        are enums, not free text: the generated TS types are string unions and the UI's page and icon maps are
+ *        checked for exhaustiveness by tsc. An entry can never name a page or an icon the UI cannot render, and
+ *        a new NavId fails the frontend build until its route folder exists.
+ * WHERE: Entries in registry/nav; sent to the UI by `registry_get`; rendered by src/app/shell (sidebar),
+ *        src/app/routes.tsx (routes) and src/app/nav-page.ts (pages keyed by NavId).
  */
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use super::{NavId, StaticStr};
+use super::StaticStr;
+
+/// Registry id of a sidebar navigation item; each one has a page in `src/routes/<id>/`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum NavId {
+    Dashboard,
+    History,
+    Models,
+    Settings,
+}
+
+impl NavId {
+    /// The wire value, which is also the route folder name.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Dashboard => "dashboard",
+            Self::History => "history",
+            Self::Models => "models",
+            Self::Settings => "settings",
+        }
+    }
+}
 
 /// A sidebar icon, serialized as its lucide-react name (e.g. `layout-dashboard`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
@@ -44,9 +67,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn items_serialize_with_lucide_icon_names() {
+    fn items_serialize_with_kebab_ids_and_lucide_icon_names() {
         const ITEM: NavItem = NavItem {
-            id: NavId::from_static("dashboard"),
+            id: NavId::Dashboard,
             label: StaticStr::new("Dashboard"),
             icon: NavIcon::LayoutDashboard,
             route: StaticStr::new("/"),
@@ -62,5 +85,17 @@ mod tests {
                 "order": 0,
             })
         );
+    }
+
+    #[test]
+    fn as_str_matches_the_wire_value() {
+        for id in [
+            NavId::Dashboard,
+            NavId::History,
+            NavId::Models,
+            NavId::Settings,
+        ] {
+            assert_eq!(serde_json::to_value(id).unwrap(), json!(id.as_str()));
+        }
     }
 }

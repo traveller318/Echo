@@ -6,7 +6,7 @@
  *        keyboard focus behaviour and aria-describedby. The glass recipe comes from GlassSurface (04 §3.2), never
  *        restated here. Radix requires a provider, so each Tooltip brings one (the shadcn v4 shape) and a single
  *        tooltip works anywhere.
- * WHERE: App shell titlebar and sidebar (step 08), History row actions (step 16). Exported through
+ * WHERE: App shell titlebar buttons (app/shell/Titlebar.tsx), History row actions (step 16). Exported through
  *        components/ui/index.ts.
  */
 import { Tooltip as TooltipPrimitive } from "radix-ui";

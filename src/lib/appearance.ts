@@ -22,6 +22,7 @@ import {
   type Transparency,
 } from "@/bindings";
 import { toAppError } from "./app-error";
+import type { Unsubscribe } from "./echo-events";
 
 const THEME_ATTRIBUTE = "data-theme";
 const TRANSPARENCY_ATTRIBUTE = "data-transparency";
@@ -57,8 +58,6 @@ export function applyAppearance(view: AppearanceView, root: HTMLElement = docume
   setOrRemove(root, TRANSPARENCY_ATTRIBUTE, TRANSPARENCY_VALUE[view.transparency]);
   setOrRemove(root, BACKDROP_ATTRIBUTE, BACKDROP_VALUE[view.backdrop]);
 }
-
-export type Unsubscribe = () => void;
 
 export interface SyncAppearanceOptions {
   readonly root?: HTMLElement;

@@ -5,7 +5,8 @@
  * WHY:   Every list and page shows "nothing here yet" the same way (04 §6); the content comes in as slots so the
  *        component carries no copy or behaviour of its own. The title renders as a heading (`titleAs`, default
  *        h2 under the page's h1) so screen readers can jump to it. Icons follow 04 §3.9 (--size-icon-md).
- * WHERE: Route index pages while they are being set up (step 08), History with no takes or no search results,
+ * WHERE: Route index pages while they are being set up, app gate and page errors (app/router.tsx,
+ *        app/shell/RouteError.tsx), History with no takes or no search results,
  *        Models with nothing installed. Exported through components/global/index.ts.
  */
 import type { ComponentProps, ReactNode } from "react";

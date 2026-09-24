@@ -7,10 +7,10 @@
  *        <style> element that the production CSP blocks (05 §5); Radix Toast styles through classes only and
  *        brings the live region, pause-on-hover/focus, F8 hotkey to the viewport and swipe gestures. The action
  *        reuses Button and the dismiss control reuses the ghost icon Button (root CLAUDE.md §7). Copy is calm and
- *        short (04 §1); the viewport is announced as "Echo notifications". The imperative toaster (a queue that
- *        renders these parts) lands with the app providers in step 08.
- * WHERE: The toaster in src/app/providers.tsx (step 08): AppError toasts via lib/app-error.ts, "Copied" and
- *        recovery notices. Exported through components/ui/index.ts.
+ *        short (04 §1); the viewport is announced as "Echo notifications". The queue lives in
+ *        stores/toast-store.ts and app/shell/Toaster.tsx renders it with these parts.
+ * WHERE: ToastProvider in src/app/providers.tsx; the other parts in src/app/shell/Toaster.tsx (AppError toasts via
+ *        lib/app-error.ts, later "Copied" and recovery notices). Exported through components/ui/index.ts.
  */
 import { XIcon } from "lucide-react";
 import { Toast as ToastPrimitive } from "radix-ui";

@@ -3,7 +3,7 @@
  * WHAT:  `start`: the startup sequence that runs before any window exists: resolve AppPaths from the Tauri path
  *        API, start local logging, open and migrate the database, resolve the stored settings over the registry
  *        defaults, start the appearance watcher, and manage the CommandCtx (settings, consent and appearance
- *        adapters, database, event sink).
+ *        launcher adapters, AppPaths, database, event sink).
  * WHY:   The composition root is the only place that names a concrete adapter or resolves a path (02 §3.2,
  *        05 W23); every other layer receives ports, AppPaths and the Db handle. Logging starts first so every
  *        later failure is on disk. It runs on the built app before `run_return`, so the CommandCtx is managed
@@ -19,7 +19,10 @@ use tauri::{App, Manager, Runtime};
 
 use super::{events::TauriEventSink, logging};
 use crate::{
-    adapters::{appearance::Win32SystemAppearance, consent::Win32PrivacyConsent},
+    adapters::{
+        appearance::Win32SystemAppearance, consent::Win32PrivacyConsent,
+        launcher::Win32ShellLauncher,
+    },
     ipc::{CommandCtx, CommandDeps},
     pipeline::appearance::AppearanceRelay,
     ports::{EventSink, SystemAppearance},
@@ -47,6 +50,8 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<(), Box<dyn Error>> {
         settings,
         consent: Arc::new(Win32PrivacyConsent::new()),
         appearance,
+        launcher: Arc::new(Win32ShellLauncher::new()),
+        paths,
         db,
         events,
     }));

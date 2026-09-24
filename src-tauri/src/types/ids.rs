@@ -1,13 +1,14 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: TranscriptId, ULID, EngineId, ModelId, SettingKey, HotkeyId, NavId, MetricId, AudioDeviceId, registry ids, static_str_id
+ * SOURCE OF TRUTH KEYWORDS: TranscriptId, ULID, EngineId, ModelId, SettingKey, HotkeyId, MetricId, AudioDeviceId, registry ids, static_str_id
  * WHAT:  Identifier newtypes: TranscriptId (a ULID), the string ids registry entries are keyed by
- *        (EngineId, ModelId, SettingKey, HotkeyId, NavId, MetricId) and the id of an audio input device
+ *        (EngineId, ModelId, SettingKey, HotkeyId, MetricId) and the id of an audio input device
  *        (AudioDeviceId).
  *        All serialize as plain strings.
  * WHY:   Distinct types stop an engine id being passed where a model id is expected. ULIDs sort by creation time,
  *        so the transcripts primary key doubles as a history cursor (02 §7.2). Registry ids wrap
  *        StaticStr: `const` registry entries borrow a literal, and ids arriving over IPC deserialize
- *        into an owned string without a second type.
+ *        into an owned string without a second type. Sidebar ids are a closed enum instead (NavId, types/nav.rs),
+ *        because the UI must own a page for each one.
  * WHERE: Every layer. Registry entries build them with `from_static`; commands receive them in inputs.
  */
 
@@ -107,11 +108,6 @@ impl SettingKey {
 static_str_id! {
     /// Registry id of a hotkey binding, kebab-case, e.g. `record`, `paste-last`, `cancel`.
     HotkeyId
-}
-
-static_str_id! {
-    /// Registry id of a sidebar navigation item, kebab-case, e.g. `dashboard`.
-    NavId
 }
 
 static_str_id! {

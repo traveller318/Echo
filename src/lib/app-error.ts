@@ -1,7 +1,8 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: AppError copy, describeAppError, toAppError, isAppError, AppErrorAction, error message map, calm copy
+ * SOURCE OF TRUTH KEYWORDS: AppError copy, describeAppError, toAppError, isAppError, CommandError, AppErrorAction, error message map, calm copy
  * WHAT:  The single map from an AppError (generated from Rust) to what the user reads and can do about it:
- *        a title, a body and an optional action. Plus `toAppError` to normalize any rejected value.
+ *        a title, a body and an optional action. Plus `toAppError` to normalize any rejected value, and
+ *        CommandError, the Error that carries an AppError through code that must throw (TanStack Query).
  * WHY:   AppError is the only error that crosses IPC (02 §4.2), so the UI has one error surface and this is its one
  *        copy table. The table is a mapped type over `AppError["code"]`, so a new Rust variant fails `tsc` until
  *        it has copy here. Copy follows 04 §1 "Calm copy": sentence case, short, no exclamation marks, no blame.
@@ -187,12 +188,33 @@ export function isAppError(value: unknown): value is AppError {
 }
 
 /**
+ * SOURCE OF TRUTH KEYWORDS: CommandError, thrown AppError, query error, mutation error, Error subclass
+ * WHAT:  An Error whose `appError` is the AppError a command returned (or `Internal` for a failed call).
+ * WHY:   TanStack Query learns about a failure only through a thrown value, and the lint (and good practice) only
+ *        allows throwing Error objects; wrapping keeps the one error shape reachable through `toAppError`.
+ * WHERE: Thrown by `runCommand` (lib/command.ts); unwrapped by `toAppError` wherever a query or mutation error is shown.
+ */
+export class CommandError extends Error {
+  readonly appError: AppError;
+
+  constructor(appError: AppError) {
+    super(`Echo command failed with ${appError.code}`);
+    this.name = "CommandError";
+    this.appError = appError;
+  }
+}
+
+/**
  * SOURCE OF TRUTH KEYWORDS: toAppError, normalize rejection, unknown error, Internal fallback
- * WHAT:  Returns the value itself when it is an AppError, otherwise `{ code: "Internal" }`.
+ * WHAT:  Returns the value itself when it is an AppError, the carried AppError of a CommandError, otherwise
+ *        `{ code: "Internal" }`.
  * WHY:   A promise can reject with something that is not an AppError (a webview failure, a thrown Error); the UI
  *        still gets exactly one error shape to render.
- * WHERE: Query/mutation error handlers and event handlers that catch.
+ * WHERE: Query/mutation error handlers, event subscriptions and window-control handlers that catch.
  */
 export function toAppError(value: unknown): AppError {
+  if (value instanceof CommandError) {
+    return value.appError;
+  }
   return isAppError(value) ? value : { code: "Internal" };
 }

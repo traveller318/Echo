@@ -25,13 +25,14 @@ use std::process::ExitCode;
  *        before the event loop creates the windows, so no command or emit can run without them. A failure before
  *        logging exists goes to stderr; after that bootstrap has also written it to the log.
  *        Native window appearance (Mica, theme) is applied on RunEvent::Ready, the first moment the config
- *        windows exist.
+ *        windows exist; window events (close → hide) go to app/windows.rs.
  * WHERE: Called once by main.rs.
  */
 pub fn run() -> ExitCode {
     let ipc = bindings::builder::<tauri::Wry>();
     let app = match tauri::Builder::default()
         .invoke_handler(ipc.invoke_handler())
+        .on_window_event(windows::on_window_event)
         .build(tauri::generate_context!())
     {
         Ok(app) => app,

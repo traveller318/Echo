@@ -8,3 +8,4 @@
 
 pub mod appearance;
 pub mod consent;
+pub mod launcher;
