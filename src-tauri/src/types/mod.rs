@@ -48,7 +48,7 @@ pub use engine::{
 };
 pub use error::{AppError, AppErrorCode, HotkeyIssue, ResourceKind};
 pub use events::{
-    AudioLevel, HistoryChangeReason, HistoryChanged, MetricsChanged, ModelProgress,
+    AppEvent, AudioLevel, HistoryChangeReason, HistoryChanged, MetricsChanged, ModelProgress,
     SessionStateChanged, SettingsChanged, TranscriptSaved,
 };
 pub use future::BoxFuture;
@@ -59,7 +59,7 @@ pub use ids::{
 };
 pub use metrics::{
     ActivityDay, LogMetricSpec, MetricAggregate, MetricEmphasis, MetricQuery, MetricSpec,
-    MetricUnit, MetricValue, MetricsRange, MetricsSummary,
+    MetricUnit, MetricValue, MetricsRange, MetricsSummary, TranscriptTotals,
 };
 pub use model::{ModelFile, ModelManifest, ModelPhase, ModelStatus, Sha256Hex};
 pub use nav::{NavIcon, NavItem};
@@ -72,11 +72,15 @@ pub use power::PowerEvent;
 pub use registry::RegistryView;
 pub use session::{DeliveryOutcome, SessionStatus, SessionUiInput, SessionView};
 pub use settings::{
-    CapsRequirement, EnumOption, EnumOptions, OptionSource, SettingKind, SettingSection,
-    SettingSpec, SettingUnit, SettingValue, SettingsSnapshot, SharedSettings, TextPair,
+    CapsRequirement, EnumOption, EnumOptions, OptionSource, SettingEntry, SettingKind,
+    SettingSection, SettingSpec, SettingUnit, SettingValue, SettingsResetInput, SettingsSetInput,
+    SettingsSnapshot, SharedSettings, TextPair,
 };
 pub use static_data::{StaticList, StaticStr};
 pub use target::{AppTarget, ScreenRect, WindowHandle};
-pub use transcript::{Page, PageCursor, Transcript, TranscriptStatus, TranscriptSummary};
+pub use transcript::{
+    NewTranscript, Page, PageCursor, Transcript, TranscriptChange, TranscriptRef,
+    TranscriptSelector, TranscriptStatus, TranscriptSummary,
+};
 pub use units::{ByteCount, UnixMs};
 pub use update::UpdateStatus;

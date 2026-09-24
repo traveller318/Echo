@@ -55,6 +55,7 @@ pub fn builder<R: Runtime>() -> Builder<R> {
         .typ::<types::ModelStatus>()
         .typ::<types::UpdateStatus>()
         .typ::<types::PermissionState>()
+        .typ::<types::HistoryChangeReason>()
 }
 
 /**
@@ -82,7 +83,11 @@ mod tests {
     };
 
     use super::builder;
-    use crate::{app::bootstrap, registry, types::RegistryView};
+    use crate::{
+        ipc::testing,
+        registry,
+        types::{RegistryView, SettingEntry, SettingValue},
+    };
 
     // Built from pieces so this Rust file does not itself show up as a bindings.ts header in `pnpm sot`.
     const HEADER: &str = concat!(
@@ -113,6 +118,12 @@ mod tests {
             "sessionStateChanged",
             "registryGet",
             "export type RegistryView",
+            "settingsGetAll",
+            "settingsSet",
+            "settingsReset",
+            "export type SettingEntry",
+            "export type SettingsSetInput",
+            "export type SettingsResetInput",
         ] {
             assert!(
                 bindings.contains(expected),
@@ -121,32 +132,85 @@ mod tests {
         }
     }
 
-    #[test]
-    fn registry_get_answers_through_the_served_invoke_handler() {
+    /// A mock app serving the real invoke handler over a test CommandCtx, and its main webview.
+    fn mock_app() -> (tauri::App<MockRuntime>, tauri::WebviewWindow<MockRuntime>) {
         let ipc = builder::<MockRuntime>();
         let app = mock_builder()
-            .manage(bootstrap::command_ctx())
+            .manage(testing::ctx())
             .invoke_handler(ipc.invoke_handler())
             .build(mock_context(noop_assets()))
             .expect("the mock app builds");
         let webview = WebviewWindowBuilder::new(&app, "main", Default::default())
             .build()
             .expect("the mock window builds");
-        let response = get_ipc_response(
-            &webview,
+        (app, webview)
+    }
+
+    /// Invokes `cmd` with JSON `args` the way the generated bindings do.
+    fn invoke(
+        webview: &tauri::WebviewWindow<MockRuntime>,
+        cmd: &str,
+        args: serde_json::Value,
+    ) -> Result<tauri::ipc::InvokeResponseBody, serde_json::Value> {
+        get_ipc_response(
+            webview,
             InvokeRequest {
-                cmd: "registry_get".into(),
+                cmd: cmd.into(),
                 callback: CallbackFn(0),
                 error: CallbackFn(1),
                 url: "http://tauri.localhost".parse().expect("valid url"),
-                body: InvokeBody::default(),
+                body: InvokeBody::Json(args),
                 headers: Default::default(),
                 invoke_key: INVOKE_KEY.to_owned(),
             },
         )
-        .expect("registry_get succeeds");
+    }
+
+    #[test]
+    fn registry_get_answers_through_the_served_invoke_handler() {
+        let (_app, webview) = mock_app();
+        let response =
+            invoke(&webview, "registry_get", serde_json::json!({})).expect("registry_get succeeds");
         let view: RegistryView = response.deserialize().expect("a RegistryView");
         assert_eq!(view.settings, registry::settings::SETTINGS);
         assert_eq!(view.nav.len(), registry::nav::NAV.len());
+    }
+
+    #[test]
+    fn settings_commands_answer_in_the_wire_shape_the_bindings_promise() {
+        let (_app, webview) = mock_app();
+        let set = invoke(
+            &webview,
+            "settings_set",
+            serde_json::json!({ "input": { "key": "metrics.typing_wpm", "value": { "kind": "int", "value": 72 } } }),
+        )
+        .expect("settings_set succeeds");
+        let entry: SettingEntry = set.deserialize().expect("a SettingEntry");
+        assert_eq!(entry.value, SettingValue::Int(72));
+
+        let all: Vec<SettingEntry> = invoke(&webview, "settings_get_all", serde_json::json!({}))
+            .expect("settings_get_all succeeds")
+            .deserialize()
+            .expect("a list of SettingEntry");
+        assert!(all.contains(&entry));
+
+        let error = invoke(
+            &webview,
+            "settings_set",
+            serde_json::json!({ "input": { "key": "metrics.typing_wpm", "value": { "kind": "int", "value": 1 } } }),
+        )
+        .expect_err("an out-of-range value is refused");
+        assert_eq!(error["code"], "Validation");
+        assert_eq!(error["field"], "metrics.typing_wpm");
+
+        let reset: SettingEntry = invoke(
+            &webview,
+            "settings_reset",
+            serde_json::json!({ "input": { "key": "metrics.typing_wpm" } }),
+        )
+        .expect("settings_reset succeeds")
+        .deserialize()
+        .expect("a SettingEntry");
+        assert_eq!(reset.value, SettingValue::Int(40));
     }
 }

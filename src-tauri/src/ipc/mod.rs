@@ -12,4 +12,6 @@ mod context;
 pub mod factory;
 mod reentrancy;
 
-pub use context::CommandCtx;
+#[cfg(test)]
+pub use context::testing;
+pub use context::{CommandCtx, CommandDeps};

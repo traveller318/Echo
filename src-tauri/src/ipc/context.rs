@@ -1,36 +1,60 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: CommandCtx, command context, managed state, handler dependencies, SharedSettings, PrivacyConsent, reentrancy locks
+ * SOURCE OF TRUTH KEYWORDS: CommandCtx, CommandDeps, command context, managed state, handler dependencies, SharedSettings, Db, event sink, emit, reentrancy locks
  * WHAT:  CommandCtx: everything a command handler and the factory pipeline may use, managed once by Tauri and
- *        passed to every handler as `&CommandCtx`.
+ *        passed to every handler as `&CommandCtx`; CommandDeps: the named parts it is built from.
  * WHY:   Handlers take their dependencies from one place instead of Tauri state lookups, so they stay plain async
- *        fns that tests call with a context built from port fakes. It holds only ports (`Arc<dyn …>`, never an
- *        adapter, 02 §3.2), shared handles and the factory's own reentrancy locks; the registry needs no handle
- *        because it is compiled-in `const` data. Fields are added as their layers arrive: the database handle
- *        with services (step 06), the session actor's inbox with the pipeline (step 14).
+ *        fns that tests call with a context built from port fakes and an in-memory database. It holds only ports
+ *        (`Arc<dyn …>`, never an adapter, 02 §3.2), the services' `Db` handle, shared handles and the factory's
+ *        own reentrancy locks; the registry needs no handle because it is compiled-in `const` data. Events leave
+ *        through the `EventSink<AppEvent>` port, so no handler imports Tauri. Built from a named-field struct so a
+ *        new dependency (the session actor's inbox, step 14) is one field here plus one line where it is wired.
  * WHERE: Built by app/bootstrap and managed on the Tauri app; read by ipc/factory.rs (preflight, reentrancy)
- *        and every handler in ipc/commands.
+ *        and every handler in ipc/commands. Tests build it with `testing::harness`.
  */
 
 use std::sync::Arc;
 
 use super::reentrancy::ReentrancyLocks;
 use crate::{
-    ports::PrivacyConsent,
-    types::{SettingsSnapshot, SharedSettings},
+    ports::{EventSink, PrivacyConsent},
+    services::Db,
+    types::{AppEvent, SettingsSnapshot, SharedSettings},
 };
+
+/// The parts a CommandCtx is built from.
+pub struct CommandDeps {
+    /// The one live settings snapshot (resolved from the database at startup).
+    pub settings: SharedSettings,
+    /// Operating-system privacy consent, for the Microphone permission check.
+    pub consent: Arc<dyn PrivacyConsent>,
+    /// The database every service call goes through.
+    pub db: Db,
+    /// Where commands send Rust → UI events.
+    pub events: Arc<dyn EventSink<AppEvent>>,
+}
 
 /// What command handlers and the factory may use.
 pub struct CommandCtx {
     settings: SharedSettings,
     consent: Arc<dyn PrivacyConsent>,
+    db: Db,
+    events: Arc<dyn EventSink<AppEvent>>,
     locks: ReentrancyLocks,
 }
 
 impl CommandCtx {
-    pub fn new(settings: SharedSettings, consent: Arc<dyn PrivacyConsent>) -> Self {
+    pub fn new(deps: CommandDeps) -> Self {
+        let CommandDeps {
+            settings,
+            consent,
+            db,
+            events,
+        } = deps;
         Self {
             settings,
             consent,
+            db,
+            events,
             locks: ReentrancyLocks::default(),
         }
     }
@@ -50,8 +74,65 @@ impl CommandCtx {
         self.consent.as_ref()
     }
 
+    /// The database handle services take.
+    pub fn db(&self) -> &Db {
+        &self.db
+    }
+
+    /// Sends a Rust → UI event; never blocks.
+    pub fn emit(&self, event: impl Into<AppEvent>) {
+        self.events.emit(event.into());
+    }
+
     /// The factory's keyed reentrancy locks.
     pub(super) fn locks(&self) -> &ReentrancyLocks {
         &self.locks
+    }
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: command test harness, test CommandCtx, in-memory database context, recorded events
+ * WHAT:  `harness`: a CommandCtx over given settings and consent, a fresh in-memory database with the real
+ *        migrations and a RecordingSink for events, plus handles to the sink; `ctx()` is the all-defaults one.
+ * WHY:   Factory, command and app tests all need the same context without a Tauri app or a disk; keeping the
+ *        builder here means a new CommandDeps field is added to tests in one place.
+ * WHERE: Tests in ipc/factory.rs, ipc/commands and app/bindings.rs.
+ */
+#[cfg(test)]
+pub mod testing {
+    use std::sync::Arc;
+
+    use super::{CommandCtx, CommandDeps};
+    use crate::{
+        ports::fakes::{FakePrivacyConsent, RecordingSink},
+        registry,
+        services::Db,
+        types::{AppEvent, SettingsSnapshot, SharedSettings},
+    };
+
+    /// A test context and the sink its events land in.
+    pub struct Harness {
+        pub ctx: CommandCtx,
+        pub events: Arc<RecordingSink<AppEvent>>,
+    }
+
+    pub fn harness(settings: SettingsSnapshot, consent: FakePrivacyConsent) -> Harness {
+        let events = Arc::new(RecordingSink::default());
+        let ctx = CommandCtx::new(CommandDeps {
+            settings: SharedSettings::new(settings),
+            consent: Arc::new(consent),
+            db: Db::open_in_memory().unwrap(),
+            events: Arc::clone(&events) as _,
+        });
+        Harness { ctx, events }
+    }
+
+    /// Registry defaults, granted consent, an empty database.
+    pub fn ctx() -> CommandCtx {
+        harness(
+            registry::settings::defaults(),
+            FakePrivacyConsent::granted(),
+        )
+        .ctx
     }
 }

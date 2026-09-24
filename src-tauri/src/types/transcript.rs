@@ -1,12 +1,14 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: Transcript, TranscriptSummary, TranscriptStatus, Page, PageCursor, history row, pagination
+ * SOURCE OF TRUTH KEYWORDS: Transcript, TranscriptSummary, TranscriptStatus, NewTranscript, TranscriptChange, TranscriptSelector, Page, PageCursor, history row, pagination
  * WHAT:  The history domain shapes: one take in full (Transcript), its list row (TranscriptSummary), its status,
- *        and the generic cursor-paginated Page<T>.
+ *        the generic cursor-paginated Page<T>, and the service-facing shapes for writing and selecting rows
+ *        (NewTranscript, TranscriptChange, TranscriptSelector, TranscriptRef; these never cross IPC).
  * WHY:   Mirrors the `transcripts` table (02 §7.2) minus storage detail: the audio path is not exposed, only
  *        whether audio is kept (`has_audio`), because the WAV location is derived from the id by the pipeline.
  *        TranscriptStatus serializes exactly as the `status` column stores it. PageCursor is opaque so the
  *        keyset encoding can change inside services without touching the UI.
- * WHERE: Returned by history commands, carried by the TranscriptSaved event, built by services/transcripts.
+ * WHERE: Returned by history commands, carried by the TranscriptSaved event, built and written by
+ *        services/transcripts.
  */
 
 use serde::{Deserialize, Serialize};
@@ -105,6 +107,80 @@ pub struct Transcript {
     pub latency_ms: Option<u32>,
     pub app_name: Option<String>,
     pub error_code: Option<AppErrorCode>,
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: NewTranscript, insert transcript row, take row before mic, recording row
+ * WHAT:  The columns known when a take's row is inserted: id, time, starting status, the journal file name, the
+ *        engine that will transcribe it and the app the text is meant for.
+ * WHY:   The row exists before the mic opens (02 §7.3), so only what is known at that moment is set; everything
+ *        measured later arrives through TranscriptChange. `audio_path` is relative to `recordings/`
+ *        (AppPaths::recording_name), never absolute, so the data folder can move.
+ * WHERE: Built by the session actor (and service tests); written by services/transcripts/insert.
+ */
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewTranscript {
+    pub id: TranscriptId,
+    pub created_at: UnixMs,
+    pub status: TranscriptStatus,
+    pub audio_path: Option<String>,
+    pub engine_id: Option<EngineId>,
+    pub app_name: Option<String>,
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: TranscriptChange, update transcript columns, partial update, clear column, row patch
+ * WHAT:  One column assignment for an update of a stored take; a list of them is applied in one statement.
+ * WHY:   Each pipeline stage sets a different subset of columns (capture sets durations, delivery sets text and
+ *        latency, retry clears the error, retention clears the audio path), so the update verb takes a list of
+ *        changes instead of one function per combination. Clearable columns take an Option (None writes NULL);
+ *        measured values are always set, never cleared. Column names are spelled only by the service.
+ * WHERE: Built by the pipeline and commands; applied by services/transcripts/update.
+ */
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TranscriptChange {
+    Status(TranscriptStatus),
+    RawText(Option<String>),
+    FinalText(Option<String>),
+    AudioPath(Option<String>),
+    DurationMs(u32),
+    SpeechMs(u32),
+    WordCount(u32),
+    EngineId(EngineId),
+    /// Polishers that ran, in chain order.
+    PolisherIds(Vec<EngineId>),
+    Language(Option<Language>),
+    LatencyMs(u32),
+    AppName(Option<String>),
+    ErrorCode(Option<AppErrorCode>),
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: TranscriptSelector, select transcripts, bulk selection, recovery query, retention query
+ * WHAT:  Which stored takes a bulk read or delete applies to: every condition that is set must hold.
+ * WHY:   Startup recovery (rows left `recording`/`transcribing`), the audio retention sweep (old takes with audio,
+ *        except failed/recoverable) and history retention (rows older than N days) are all "these rows" queries
+ *        (02 §7.3); one selector serves them and any later sweep. `statuses: None` means any status, while
+ *        `Some(vec![])` matches nothing, so an empty list can never widen a delete to every row.
+ * WHERE: Built by the pipeline (recovery, retention); read by services/transcripts/{list::select, delete::delete_matching}.
+ */
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TranscriptSelector {
+    pub statuses: Option<Vec<TranscriptStatus>>,
+    /// Only takes created strictly before this time.
+    pub created_before: Option<UnixMs>,
+    /// Only takes whose journal is (true) or is not (false) still on disk.
+    pub has_audio: Option<bool>,
+}
+
+/// The identifying columns of a selected take: enough to find or delete its journal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranscriptRef {
+    pub id: TranscriptId,
+    pub created_at: UnixMs,
+    pub status: TranscriptStatus,
+    /// Journal file name relative to `recordings/`, when audio is kept.
+    pub audio_path: Option<String>,
 }
 
 /// Opaque position after the last item of a page; pass it back to fetch the next page.

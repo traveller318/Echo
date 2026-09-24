@@ -668,14 +668,11 @@ mod tests {
         for spec in SETTINGS {
             let key = spec.key.as_str();
             assert!(keys.insert(key), "duplicate setting {key}");
-            let (section, name) = key.split_once('.').unwrap_or_default();
+            let (section, _) = key.split_once('.').unwrap_or_default();
             assert_eq!(section, spec.section.as_str(), "{key}");
             assert!(
-                !name.is_empty()
-                    && name.chars().all(|character| character.is_ascii_lowercase()
-                        || character.is_ascii_digit()
-                        || character == '_'),
-                "{key} is not section.snake_key"
+                spec.key.is_well_formed(),
+                "{key} is not section.snake_key (the settings commands would refuse it)"
             );
             assert!(!spec.label.trim().is_empty(), "{key} has no label");
             assert!(spec.help.ends_with('.'), "{key} help is not a sentence");

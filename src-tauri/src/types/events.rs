@@ -1,6 +1,7 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: event payloads, SessionStateChanged, AudioLevel, TranscriptSaved, HistoryChanged, MetricsChanged, SettingsChanged, ModelProgress
- * WHAT:  The payload struct of every Rust → UI event in 02 §4.4. Each struct name is the event name.
+ * SOURCE OF TRUTH KEYWORDS: event payloads, AppEvent, SessionStateChanged, AudioLevel, TranscriptSaved, HistoryChanged, MetricsChanged, SettingsChanged, ModelProgress
+ * WHAT:  The payload struct of every Rust → UI event in 02 §4.4 (each struct name is the event name), and AppEvent,
+ *        the envelope emitters hand to the event sink.
  * WHY:   Rust owns domain state and pushes it as typed events; the UI reads once through a command and then stays
  *        fresh from these, never polling (02 §4.4). The payloads are plain data here; the Tauri event wiring
  *        (`tauri_specta::Event` impls and the catalog) lives in registry/events.rs so this layer stays free of
@@ -70,6 +71,49 @@ pub struct ModelProgress {
     pub phase: ModelPhase,
 }
 
+/**
+ * SOURCE OF TRUTH KEYWORDS: AppEvent, any event, event envelope, emit event, EventSink AppEvent, From payload
+ * WHAT:  One value that can carry any event payload above; `From<Payload>` for each, so emitters write
+ *        `ctx.emit(SettingsChanged { .. })`.
+ * WHY:   Commands and the pipeline emit through one `EventSink<AppEvent>` port instead of holding a Tauri handle
+ *        or one sink per event type, so they stay testable with a RecordingSink and never import Tauri. The
+ *        variant name is the event name; registry/events.rs matches on it exhaustively when it emits, so a new
+ *        payload added here without a catalog entry (or the reverse) fails to compile.
+ * WHERE: Built by ipc/commands and pipeline/; emitted by app/events.rs (TauriEventSink) through
+ *        `registry::events::emit`; recorded by ports/fakes RecordingSink in tests.
+ */
+#[derive(Debug, Clone, PartialEq)]
+pub enum AppEvent {
+    SessionStateChanged(SessionStateChanged),
+    AudioLevel(AudioLevel),
+    TranscriptSaved(TranscriptSaved),
+    HistoryChanged(HistoryChanged),
+    MetricsChanged(MetricsChanged),
+    SettingsChanged(SettingsChanged),
+    ModelProgress(ModelProgress),
+}
+
+/// `From<Payload> for AppEvent` for every payload, so the variant is never named twice at an emit site.
+macro_rules! app_event_from {
+    ($($payload:ident),* $(,)?) => {
+        $(impl From<$payload> for AppEvent {
+            fn from(payload: $payload) -> Self {
+                Self::$payload(payload)
+            }
+        })*
+    };
+}
+
+app_event_from![
+    SessionStateChanged,
+    AudioLevel,
+    TranscriptSaved,
+    HistoryChanged,
+    MetricsChanged,
+    SettingsChanged,
+    ModelProgress,
+];
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -82,6 +126,20 @@ mod tests {
             serde_json::to_value(SessionStateChanged(SessionView::IDLE)).unwrap(),
             serde_json::to_value(SessionView::IDLE).unwrap()
         );
+    }
+
+    #[test]
+    fn payloads_convert_into_their_own_variant() {
+        assert_eq!(
+            AppEvent::from(MetricsChanged {}),
+            AppEvent::MetricsChanged(MetricsChanged {})
+        );
+        assert!(matches!(
+            AppEvent::from(HistoryChanged {
+                reason: HistoryChangeReason::Deleted
+            }),
+            AppEvent::HistoryChanged(_)
+        ));
     }
 
     #[test]

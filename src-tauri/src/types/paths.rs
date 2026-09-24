@@ -1,13 +1,14 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: AppPaths, app data layout, echo.db path, recordings dir, models dir, runtimes dir, logs dir, resources dir
+ * SOURCE OF TRUTH KEYWORDS: AppPaths, app data layout, echo.db path, database backup path, recordings dir, recording name, models dir, runtimes dir, logs dir, resources dir
  * WHAT:  AppPaths: every location Echo reads or writes (02 §7.1), derived from two roots the composition root
  *        resolves: the per-user app data folder and the bundled resources folder.
  * WHY:   Paths are never hardcoded (05 W23) and never resolved below app/: bootstrap asks the Tauri path API for
  *        the two roots once and hands this value down. Every file and folder name under them is spelled here
  *        only, so the database, journal, model manager and log sink cannot drift apart. Model folders are
  *        `models/<id>/` with downloads staged in `models/<id>.partial/` (02 §8.2); journals are
- *        `recordings/<transcript id>.wav` (02 §7.3).
- * WHERE: Built by app/bootstrap; carried by registry::engines::BuildCtx; read by services/db (database file),
+ *        `recordings/<transcript id>.wav` (02 §7.3), and the row stores only that file name; the pre-migration
+ *        copy is `echo.db.bak-<from_version>` (02 §7.2).
+ * WHERE: Built by app/bootstrap; carried by registry::engines::BuildCtx; read by services/db (database file, backup),
  *        the model store, the capture journal, retention and the log sink.
  */
 
@@ -45,14 +46,24 @@ impl AppPaths {
         self.data_dir.join("echo.db")
     }
 
+    /// Where the database is copied before a migration from schema `from_version` (02 §7.2).
+    pub fn database_backup(&self, from_version: usize) -> PathBuf {
+        self.data_dir.join(format!("echo.db.bak-{from_version}"))
+    }
+
     /// WAV journals of takes.
     pub fn recordings_dir(&self) -> PathBuf {
         self.data_dir.join("recordings")
     }
 
+    /// The journal file name of one take, relative to `recordings_dir()`; stored as `transcripts.audio_path`.
+    pub fn recording_name(id: TranscriptId) -> String {
+        format!("{id}.wav")
+    }
+
     /// The journal of one take.
     pub fn recording(&self, id: TranscriptId) -> PathBuf {
-        self.recordings_dir().join(format!("{id}.wav"))
+        self.recordings_dir().join(Self::recording_name(id))
     }
 
     /// Installed models, one folder per model id.
@@ -75,10 +86,16 @@ impl AppPaths {
         self.data_dir.join("runtimes")
     }
 
-    /// Rolling local log files.
+    /// Rolling local log files, named `<LOG_FILE_PREFIX>.<date>.<LOG_FILE_SUFFIX>`.
     pub fn logs_dir(&self) -> PathBuf {
         self.data_dir.join("logs")
     }
+
+    /// Start of every log file name in `logs_dir()`.
+    pub const LOG_FILE_PREFIX: &str = "echo";
+
+    /// Extension of every log file in `logs_dir()`.
+    pub const LOG_FILE_SUFFIX: &str = "log";
 }
 
 #[cfg(test)]
@@ -93,6 +110,11 @@ mod tests {
         let take: TranscriptId = "01ARZ3NDEKTSV4RRFFQ69G5FAV".parse().unwrap();
 
         assert_eq!(paths.database(), data.join("echo.db"));
+        assert_eq!(paths.database_backup(3), data.join("echo.db.bak-3"));
+        assert_eq!(
+            AppPaths::recording_name(take),
+            "01ARZ3NDEKTSV4RRFFQ69G5FAV.wav"
+        );
         assert_eq!(
             paths.recording(take),
             data.join("recordings")

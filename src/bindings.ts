@@ -13,6 +13,15 @@ import * as __TAURI_EVENT from "@tauri-apps/api/event";
 export const commands = {
 	/**  Every registry list the UI renders from. Compiled in, so it never changes while the app runs. */
 	registryGet: () => typedError<RegistryView, AppError>(__TAURI_INVOKE("registry_get")),
+	/**  Every setting's effective value (the stored value, or the registry default), ordered by key. */
+	settingsGetAll: () => typedError<SettingEntry[], AppError>(__TAURI_INVOKE("settings_get_all")),
+	/**
+	 *  Stores a new value for a setting after checking it against the setting's registry spec; returns the
+	 *  value now in effect and emits SettingsChanged.
+	 */
+	settingsSet: (input: SettingsSetInput) => typedError<SettingEntry, AppError>(__TAURI_INVOKE("settings_set", { input })),
+	/**  Returns a setting to its registry default; returns the value now in effect and emits SettingsChanged. */
+	settingsReset: (input: SettingsResetInput) => typedError<SettingEntry, AppError>(__TAURI_INVOKE("settings_reset", { input })),
 };
 
 /** Events */
@@ -434,6 +443,20 @@ export type SessionView = {
 	error: AppError | null,
 };
 
+/**
+ * 
+ *  * SOURCE OF TRUTH KEYWORDS: SettingEntry, effective setting value, settings_get_all output, settings_set output
+ *  * WHAT:  One setting's key with its effective value (stored value over the registry default).
+ *  * WHY:   `settings_get_all` returns every effective value and `settings_set` / `settings_reset` return the value now
+ *  *        in effect, so the UI replaces its query data with exactly what Rust holds instead of guessing.
+ *  * WHERE: Output of the settings commands (ipc/commands/settings.rs).
+ *  
+ */
+export type SettingEntry = {
+	key: SettingKey,
+	value: SettingValue,
+};
+
 /**  Registry key of a setting, `section.snake_key`, e.g. `output.auto_paste`. */
 export type SettingKey = string;
 
@@ -476,6 +499,27 @@ export type SettingValue = { kind: "bool"; value: boolean } | { kind: "int"; val
 
 /**  A setting was written or reset; `value` is the effective value after the change. */
 export type SettingsChanged = {
+	key: SettingKey,
+	value: SettingValue,
+};
+
+export type SettingsResetInput = {
+	key: SettingKey,
+};
+
+/**
+ * 
+ *  * SOURCE OF TRUTH KEYWORDS: SettingsSetInput, SettingsResetInput, settings command input, garde schema, setting key rule
+ *  * WHAT:  The inputs of `settings_set` (key and new value) and `settings_reset` (key).
+ *  * WHY:   The factory enforces the declared garde schema before the handler runs (02 §4.1): a malformed key is a
+ *  *        `Validation` error on `key`. The value is checked against the registry spec of that key (kind, bounds,
+ *  *        runtime options) by `registry::settings::validate` in the handler, because which rule applies depends on
+ *  *        the key and the current settings, which a static schema cannot see (02 §7.2); garde skips it for that
+ *  *        reason only.
+ *  * WHERE: ipc/commands/settings.rs; built in the UI through the generated bindings.
+ *  
+ */
+export type SettingsSetInput = {
 	key: SettingKey,
 	value: SettingValue,
 };

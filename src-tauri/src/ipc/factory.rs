@@ -273,9 +273,10 @@ mod tests {
 
     use super::*;
     use crate::{
+        ipc::testing,
         ports::fakes::{FakePrivacyConsent, poll_once},
         registry::settings::{self, keys},
-        types::{PermissionState, Reentrancy, SettingValue, SettingsSnapshot, SharedSettings},
+        types::{PermissionState, Reentrancy, SettingValue, SettingsSnapshot},
     };
 
     #[derive(Debug, Validate)]
@@ -302,11 +303,11 @@ mod tests {
     const EXCLUSIVE: CommandSpec = spec(None, Reentrancy::Exclusive("test_key"));
 
     fn ctx_with(settings: SettingsSnapshot, consent: FakePrivacyConsent) -> CommandCtx {
-        CommandCtx::new(SharedSettings::new(settings), Arc::new(consent))
+        testing::harness(settings, consent).ctx
     }
 
     fn ctx() -> CommandCtx {
-        ctx_with(settings::defaults(), FakePrivacyConsent::granted())
+        testing::ctx()
     }
 
     async fn echo_name(_: &CommandCtx, input: RenameInput) -> Result<String, AppError> {

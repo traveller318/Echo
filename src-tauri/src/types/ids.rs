@@ -76,6 +76,34 @@ static_str_id! {
     SettingKey
 }
 
+impl SettingKey {
+    /// Longest setting key accepted over IPC, in bytes.
+    pub const MAX_LEN: usize = 64;
+
+    /**
+     * SOURCE OF TRUTH KEYWORDS: setting key format, section.snake_key, is_well_formed, settings input schema
+     * WHAT:  Whether the key has the `section.snake_key` shape (03 §3): two non-empty parts of lowercase ASCII
+     *        letters, digits and underscores, each starting with a letter, at most `MAX_LEN` bytes.
+     * WHY:   The declared input schema of the settings commands (garde) rejects malformed keys before any lookup,
+     *        and the registry test proves every registered key has the same shape, so the two cannot disagree.
+     *        Whether the key exists is the registry's answer, not this check's.
+     * WHERE: types/settings.rs (`SettingsSetInput`, `SettingsResetInput` garde rules); registry/settings tests.
+     */
+    pub fn is_well_formed(&self) -> bool {
+        let key = self.as_str();
+        let part = |text: &str| {
+            text.starts_with(|character: char| character.is_ascii_lowercase())
+                && text.chars().all(|character| {
+                    character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_'
+                })
+        };
+        key.len() <= Self::MAX_LEN
+            && key
+                .split_once('.')
+                .is_some_and(|(section, name)| part(section) && part(name))
+    }
+}
+
 static_str_id! {
     /// Registry id of a hotkey binding, kebab-case, e.g. `record`, `paste-last`, `cancel`.
     HotkeyId
@@ -157,6 +185,37 @@ mod tests {
         let earlier: TranscriptId = "01ARZ3NDEKTSV4RRFFQ69G5FAV".parse().unwrap();
         let later: TranscriptId = "01BX5ZZKBKACTAV9WEVGEMMVRZ".parse().unwrap();
         assert!(earlier < later);
+    }
+
+    #[test]
+    fn setting_keys_must_be_section_dot_snake_key() {
+        for valid in [
+            "general.theme",
+            "output.auto_paste",
+            "session.max_duration_min",
+            "a1.b_2",
+        ] {
+            assert!(SettingKey::from_static(valid).is_well_formed(), "{valid}");
+        }
+        let too_long = format!("general.{}", "a".repeat(SettingKey::MAX_LEN));
+        for invalid in [
+            "",
+            "general",
+            "general.",
+            ".theme",
+            "General.theme",
+            "general.theme.extra",
+            "general.auto-paste",
+            "general._theme",
+            "1general.theme",
+            "general.thème",
+            too_long.as_str(),
+        ] {
+            assert!(
+                !SettingKey::from(invalid.to_owned()).is_well_formed(),
+                "{invalid}"
+            );
+        }
     }
 
     #[test]

@@ -16,5 +16,10 @@ use tauri_specta::{Commands, collect_commands};
 
 /// Every IPC command, ready for `tauri_specta::Builder::commands`.
 pub fn catalog<R: Runtime>() -> Commands<R> {
-    collect_commands![settings::registry_get]
+    collect_commands![
+        settings::registry_get,
+        settings::settings_get_all,
+        settings::settings_set,
+        settings::settings_reset,
+    ]
 }

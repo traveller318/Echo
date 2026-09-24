@@ -1,10 +1,11 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: SettingSpec, SettingKind, SettingValue, EnumOptions, OptionSource, SettingsSnapshot, SharedSettings, CapsRequirement, setting validation
+ * SOURCE OF TRUTH KEYWORDS: SettingSpec, SettingKind, SettingValue, EnumOptions, OptionSource, SettingsSnapshot, SharedSettings, SettingEntry, SettingsSetInput, setting validation
  * WHAT:  The shape of a registry setting (SettingSpec with its SettingKind), the value a setting holds
  *        (SettingValue), where an Enum's options come from (EnumOptions / OptionSource), the conditions under which
  *        a setting or option is offered (CapsRequirement), the kind check every write passes
- *        (`SettingSpec::validate`), the resolved values the core reads (SettingsSnapshot) and the one live copy of
- *        them the running app shares (SharedSettings).
+ *        (`SettingSpec::validate`), the resolved values the core reads (SettingsSnapshot), the one live copy of
+ *        them the running app shares (SharedSettings), and the settings commands' inputs and output
+ *        (SettingsSetInput, SettingsResetInput, SettingEntry).
  * WHY:   One spec drives three things (02 §3.3): the settings service validates writes against `kind`, the
  *        Settings UI renders a control per `kind`, and src/lib/setting-schema.ts builds the Zod schema from it.
  *        Strings and lists are StaticStr/StaticList so registry entries are `const` while values arriving over IPC
@@ -23,7 +24,7 @@ use std::{
     sync::Arc,
 };
 
-use parking_lot::RwLock;
+use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
@@ -347,6 +348,52 @@ fn exceeds(text: &str, max_len: u32) -> bool {
 }
 
 /**
+ * SOURCE OF TRUTH KEYWORDS: SettingEntry, effective setting value, settings_get_all output, settings_set output
+ * WHAT:  One setting's key with its effective value (stored value over the registry default).
+ * WHY:   `settings_get_all` returns every effective value and `settings_set` / `settings_reset` return the value now
+ *        in effect, so the UI replaces its query data with exactly what Rust holds instead of guessing.
+ * WHERE: Output of the settings commands (ipc/commands/settings.rs).
+ */
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct SettingEntry {
+    pub key: SettingKey,
+    pub value: SettingValue,
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: SettingsSetInput, SettingsResetInput, settings command input, garde schema, setting key rule
+ * WHAT:  The inputs of `settings_set` (key and new value) and `settings_reset` (key).
+ * WHY:   The factory enforces the declared garde schema before the handler runs (02 §4.1): a malformed key is a
+ *        `Validation` error on `key`. The value is checked against the registry spec of that key (kind, bounds,
+ *        runtime options) by `registry::settings::validate` in the handler, because which rule applies depends on
+ *        the key and the current settings, which a static schema cannot see (02 §7.2); garde skips it for that
+ *        reason only.
+ * WHERE: ipc/commands/settings.rs; built in the UI through the generated bindings.
+ */
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type, garde::Validate)]
+pub struct SettingsSetInput {
+    #[garde(custom(well_formed_key))]
+    pub key: SettingKey,
+    #[garde(skip)]
+    pub value: SettingValue,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type, garde::Validate)]
+pub struct SettingsResetInput {
+    #[garde(custom(well_formed_key))]
+    pub key: SettingKey,
+}
+
+/// garde rule shared by the settings inputs.
+fn well_formed_key(key: &SettingKey, (): &()) -> garde::Result {
+    if key.is_well_formed() {
+        Ok(())
+    } else {
+        Err(garde::Error::new("Not a setting key."))
+    }
+}
+
+/**
  * SOURCE OF TRUTH KEYWORDS: SettingsSnapshot, effective settings, resolved settings, stored over default, typed setting getters
  * WHAT:  The effective value of every setting (stored value over registry default), with typed getters.
  * WHY:   Rust owns settings state; the pipeline, permission checks and option resolution read one resolved view
@@ -454,6 +501,27 @@ impl SharedSettings {
     /// Makes `snapshot` the one every later `current()` returns.
     pub fn replace(&self, snapshot: SettingsSnapshot) {
         *self.slot.write() = Arc::new(snapshot);
+    }
+
+    /**
+     * SOURCE OF TRUTH KEYWORDS: SharedSettings::update, serialized settings write, read-modify-write, lost update
+     * WHAT:  Runs `revise` with the snapshot in effect and, if it succeeds, makes its result current; returns the
+     *        new snapshot. Updates run one at a time.
+     * WHY:   A settings write is "validate against current, write the row, re-read and resolve, publish". Two
+     *        writes interleaving those steps could publish a snapshot that misses the other's row (a lost update in
+     *        the cache while the table is right). An upgradable read lock admits one updater at a time while plain
+     *        readers (`current()`) keep reading the old snapshot until the swap, so preflight never waits on disk.
+     *        On error nothing changes.
+     * WHERE: ipc/commands/settings.rs (`settings_set`, `settings_reset`).
+     */
+    pub fn update<E>(
+        &self,
+        revise: impl FnOnce(&SettingsSnapshot) -> Result<SettingsSnapshot, E>,
+    ) -> Result<Arc<SettingsSnapshot>, E> {
+        let slot = self.slot.upgradable_read();
+        let revised = Arc::new(revise(&slot)?);
+        *RwLockUpgradableReadGuard::upgrade(slot) = Arc::clone(&revised);
+        Ok(revised)
     }
 }
 
@@ -768,5 +836,85 @@ mod tests {
             "clones share one slot"
         );
         assert_eq!(SharedSettings::default().current().iter().count(), 0);
+    }
+
+    #[test]
+    fn update_publishes_only_a_successful_revision() {
+        let flag = SettingKey::from_static("privacy.offline_mode");
+        let shared = SharedSettings::new(SettingsSnapshot::from_resolved([(
+            flag.clone(),
+            SettingValue::Bool(false),
+        )]));
+        let failed: Result<_, &str> = shared.update(|_| Err("disk full"));
+        assert_eq!(failed.unwrap_err(), "disk full");
+        assert_eq!(shared.current().bool(&flag), Some(false));
+
+        let revised = shared
+            .update(|current| {
+                assert_eq!(
+                    current.bool(&flag),
+                    Some(false),
+                    "revise sees the current snapshot"
+                );
+                Ok::<_, ()>(SettingsSnapshot::from_resolved([(
+                    flag.clone(),
+                    SettingValue::Bool(true),
+                )]))
+            })
+            .unwrap();
+        assert_eq!(revised.bool(&flag), Some(true));
+        assert_eq!(shared.current().bool(&flag), Some(true));
+    }
+
+    #[test]
+    fn concurrent_updates_never_lose_a_write() {
+        let shared = SharedSettings::new(SettingsSnapshot::default());
+        std::thread::scope(|scope| {
+            for index in 0..8 {
+                let shared = &shared;
+                scope.spawn(move || {
+                    let key = SettingKey::from(format!("test.key_{index}"));
+                    shared
+                        .update(|current| {
+                            let mut values: Vec<_> = current
+                                .iter()
+                                .map(|(key, value)| (key.clone(), value.clone()))
+                                .collect();
+                            std::thread::yield_now();
+                            values.push((key, SettingValue::Bool(true)));
+                            Ok::<_, ()>(SettingsSnapshot::from_resolved(values))
+                        })
+                        .unwrap();
+                });
+            }
+        });
+        assert_eq!(shared.current().iter().count(), 8);
+    }
+
+    #[test]
+    fn settings_inputs_reject_malformed_keys() {
+        use garde::Validate;
+
+        let set = |key: &str| SettingsSetInput {
+            key: SettingKey::from(key.to_owned()),
+            value: SettingValue::Bool(true),
+        };
+        assert!(set("output.auto_paste").validate().is_ok());
+        let report = set("output.auto-paste").validate().unwrap_err();
+        let (path, _) = report.iter().next().unwrap();
+        assert_eq!(path.to_string(), "key");
+        assert!(
+            SettingsResetInput {
+                key: SettingKey::from(String::new()),
+            }
+            .validate()
+            .is_err()
+        );
+        let input: SettingsSetInput = serde_json::from_value(json!({
+            "key": "general.theme",
+            "value": { "kind": "enum", "value": "dark" },
+        }))
+        .unwrap();
+        assert_eq!(input.value, SettingValue::Enum(text("dark")));
     }
 }

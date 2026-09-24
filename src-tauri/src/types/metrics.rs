@@ -1,9 +1,9 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: MetricSpec, LogMetricSpec, MetricQuery, MetricEmphasis, MetricsSummary, MetricValue, MetricAggregate, MetricUnit, MetricsRange, ActivityDay
+ * SOURCE OF TRUTH KEYWORDS: MetricSpec, LogMetricSpec, MetricQuery, MetricEmphasis, MetricsSummary, MetricValue, MetricAggregate, MetricUnit, MetricsRange, ActivityDay, TranscriptTotals
  * WHAT:  Dashboard metric shapes: the registry entry (MetricSpec: label, unit, query, emphasis), which SQL
  *        aggregate or series a metric reads (MetricQuery / MetricAggregate), how it is displayed (MetricUnit,
  *        MetricEmphasis), the time window (MetricsRange), the computed results (MetricsSummary, ActivityDay) and
- *        the log-only metrics (LogMetricSpec).
+ *        the log-only metrics (LogMetricSpec) and the raw sums the aggregates are computed from (TranscriptTotals).
  * WHY:   Metrics are computed from `transcripts`, never counted (02 §7.4, 05 decision log). The dashboard renders
  *        registry metric entries and looks each value up by aggregate, so adding a metric is a registry entry plus
  *        one aggregate, not a new component. Emphasis places a metric in the 04 §5 dashboard layout (hero, stat
@@ -137,6 +137,22 @@ impl MetricsSummary {
             .find(|metric| metric.aggregate == aggregate)
             .and_then(|metric| metric.value)
     }
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: TranscriptTotals, raw aggregates, metrics sums, done takes totals, time saved inputs
+ * WHAT:  Raw SQL sums over completed takes in a window: how many, and their words, recorded time and speech time.
+ * WHY:   Metrics are formulas over these sums (02 §7.4): time saved, speaking WPM and averages are computed by the
+ *        metrics command from them, so the service stays one aggregate query with no business rule. Sums are u64
+ *        because a long history can exceed u32; the type never crosses IPC (MetricsSummary does).
+ * WHERE: Returned by services/transcripts/aggregate::totals; read by the metrics commands (dashboard step).
+ */
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TranscriptTotals {
+    pub transcriptions: u64,
+    pub words: u64,
+    pub duration_ms: u64,
+    pub speech_ms: u64,
 }
 
 /// Words delivered on one local calendar day.

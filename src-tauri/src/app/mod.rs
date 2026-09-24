@@ -9,35 +9,41 @@
 
 mod bindings;
 mod bootstrap;
+mod events;
+mod logging;
 
 use std::process::ExitCode;
 
 /**
- * SOURCE OF TRUTH KEYWORDS: run, app entry, exit code, startup failure, invoke handler, mount events, manage CommandCtx
- * WHAT:  Runs Echo until the event loop ends; returns success, or failure if Tauri could not start.
- * WHY:   Returns an ExitCode instead of panicking (denied) or calling process::exit, so destructors run.
- *        A startup failure happens before any log sink exists, so it is written to stderr. The IPC surface
- *        comes from the same tauri-specta builder that generates src/bindings.ts; events are mounted in
- *        `setup` because emitting an unmounted event fails. The CommandCtx is managed before the invoke handler
- *        exists, so no command can run without it.
+ * SOURCE OF TRUTH KEYWORDS: run, app entry, exit code, startup failure, invoke handler, mount events, run_return
+ * WHAT:  Builds the Tauri app, mounts the event catalog, runs the bootstrap sequence, then runs the event loop
+ *        until exit; returns the loop's exit code, or failure if Echo could not start.
+ * WHY:   Returns an ExitCode instead of panicking (denied) or calling process::exit, and uses `run_return`, so
+ *        destructors run and the database closes cleanly. The IPC surface comes from the same tauri-specta
+ *        builder that generates src/bindings.ts. Events are mounted and the CommandCtx managed on the built app,
+ *        before the event loop creates the windows, so no command or emit can run without them. A failure before
+ *        logging exists goes to stderr; after that bootstrap has also written it to the log.
  * WHERE: Called once by main.rs.
  */
 pub fn run() -> ExitCode {
     let ipc = bindings::builder::<tauri::Wry>();
-    let app = tauri::Builder::default()
-        .manage(bootstrap::command_ctx())
+    let app = match tauri::Builder::default()
         .invoke_handler(ipc.invoke_handler())
-        .setup(move |app| {
-            ipc.mount_events(app);
-            Ok(())
-        });
-    match app.run(tauri::generate_context!()) {
-        Ok(()) => ExitCode::SUCCESS,
+        .build(tauri::generate_context!())
+    {
+        Ok(app) => app,
         Err(error) => {
             eprintln!("Echo could not start: {error}");
-            ExitCode::FAILURE
+            return ExitCode::FAILURE;
         }
+    };
+    ipc.mount_events(&app);
+    if let Err(error) = bootstrap::start(&app) {
+        eprintln!("Echo could not start: {error}");
+        return ExitCode::FAILURE;
     }
+    let code = app.run_return(|_, _| {});
+    ExitCode::from(u8::try_from(code).unwrap_or(u8::MAX))
 }
 
 /**
