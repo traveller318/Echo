@@ -11,6 +11,7 @@ mod bindings;
 mod bootstrap;
 mod events;
 mod logging;
+mod plugins;
 mod windows;
 
 use std::process::ExitCode;
@@ -20,7 +21,7 @@ use std::process::ExitCode;
  * WHAT:  Builds the Tauri app, mounts the event catalog, runs the bootstrap sequence, then runs the event loop
  *        until exit; returns the loop's exit code, or failure if Echo could not start.
  * WHY:   Returns an ExitCode instead of panicking (denied) or calling process::exit, and uses `run_return`, so
- *        destructors run and the database closes cleanly. The IPC surface comes from the same tauri-specta
+ *        destructors run and the database closes cleanly. Plugins are added by app/plugins.rs before the build. The IPC surface comes from the same tauri-specta
  *        builder that generates src/bindings.ts. Events are mounted and the CommandCtx managed on the built app,
  *        before the event loop creates the windows, so no command or emit can run without them. A failure before
  *        logging exists goes to stderr; after that bootstrap has also written it to the log.
@@ -31,7 +32,7 @@ use std::process::ExitCode;
  */
 pub fn run() -> ExitCode {
     let ipc = bindings::builder::<tauri::Wry>();
-    let app = match tauri::Builder::default()
+    let app = match plugins::register(tauri::Builder::default())
         .invoke_handler(ipc.invoke_handler())
         .on_window_event(windows::on_window_event)
         .build(tauri::generate_context!())

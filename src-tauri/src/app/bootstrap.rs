@@ -1,10 +1,11 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: bootstrap, composition root, startup sequence, resolve paths, open database, initial settings, appearance watcher, microphone adapter, ASR worker, start_speech_engine, command context
+ * SOURCE OF TRUTH KEYWORDS: bootstrap, composition root, startup sequence, resolve paths, open database, initial settings, appearance watcher, microphone adapter, ASR worker, delivery adapters, hotkey adapter, start_speech_engine, command context
  * WHAT:  `start`: the startup sequence that runs before any window exists: resolve AppPaths from the Tauri path
  *        API, start local logging, open and migrate the database, resolve the stored settings over the registry
  *        defaults, start the appearance watcher, start the (empty) ASR worker, and manage the CommandCtx (settings;
- *        consent, appearance, launcher, microphone and thread-priority adapters; the ASR worker; AppPaths, database,
- *        event sink). `start_speech_engine`: once the windows exist, load and warm the selected speech engine in
+ *        consent, appearance, launcher, microphone, thread-priority, hotkey, foreground-window and toast adapters;
+ *        the ASR worker; the Delivery over the clipboard, paste and toast adapters; AppPaths, database, event
+ *        sink). `start_speech_engine`: once the windows exist, load and warm the selected speech engine in
  *        the background.
  * WHY:   The composition root is the only place that names a concrete adapter or resolves a path (02 §3.2,
  *        05 W23); every other layer receives ports, AppPaths and the Db handle. Logging starts first so every
@@ -17,8 +18,11 @@
  *        loaded only after the UI is up and on the worker's own loader thread, so the first paint never waits for
  *        it (02 §6.1 "resident, warm model"); a missing model is logged and reported by the worker's readiness
  *        (onboarding and the Models page offer the download). The session actor joins this sequence in step 14 and
- *        takes the same microphone, scheduler and ASR worker handles. The process opts out of Windows power
- *        throttling first thing, because Echo does its work while other apps are in front (05 W35).
+ *        takes the same microphone, scheduler, ASR worker, hotkey, foreground and delivery handles; no hotkey is
+ *        registered before it exists, so no combination is taken from other apps while pressing it would do nothing.
+ *        The hotkey and toast adapters look up their plugins' state, which app/plugins.rs registered before build. The
+ *        process opts out of Windows power throttling first thing, because Echo does its work while other apps are in
+ *        front (05 W35).
  * WHERE: `start` is called once by app::run before the event loop, `start_speech_engine` on RunEvent::Ready; its
  *        parts (TauriEventSink, logging) live next to it in app/.
  */
@@ -30,15 +34,18 @@ use tauri::{App, AppHandle, Manager, Runtime};
 use super::{events::TauriEventSink, logging};
 use crate::{
     adapters::{
-        appearance::Win32SystemAppearance, audio::CpalWasapiCapture, consent::Win32PrivacyConsent,
-        launcher::Win32ShellLauncher, scheduler::Win32WorkerScheduler,
+        appearance::Win32SystemAppearance, audio::CpalWasapiCapture, clipboard::ArboardClipboard,
+        consent::Win32PrivacyConsent, foreground::Win32ForegroundApp, hotkey::TauriGlobalShortcut,
+        inserter::Win32SendInputInserter, launcher::Win32ShellLauncher,
+        notifier::TauriToastNotifier, scheduler::Win32WorkerScheduler,
     },
     ipc::{CommandCtx, CommandDeps},
     pipeline::{
         appearance::AppearanceRelay,
         asr::{self, AsrWorker, AsrWorkerConfig},
+        delivery::{Delivery, DeliveryPorts},
     },
-    ports::{EventSink, PrivacyConsent, SystemAppearance, WorkerScheduler},
+    ports::{EventSink, Notifier, PrivacyConsent, SystemAppearance, WorkerScheduler},
     registry::{self, engines::BuildCtx},
     services::{self, Db},
     types::{AppEvent, AppPaths, PortError, SharedSettings},
@@ -75,6 +82,12 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<(), Box<dyn Error>> {
         None,
     ))
     .map_err(startup_failure)?;
+    let notifier: Arc<dyn Notifier> = Arc::new(TauriToastNotifier::new(app.handle().clone()));
+    let delivery = Delivery::new(DeliveryPorts {
+        clipboard: Arc::new(ArboardClipboard::new()),
+        inserter: Arc::new(Win32SendInputInserter::new()),
+        notifier: Arc::clone(&notifier),
+    });
     app.manage(CommandCtx::new(CommandDeps {
         settings,
         audio: Arc::new(CpalWasapiCapture::new(Arc::clone(&consent))),
@@ -83,6 +96,10 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<(), Box<dyn Error>> {
         launcher: Arc::new(Win32ShellLauncher::new()),
         scheduler,
         asr,
+        hotkeys: Arc::new(TauriGlobalShortcut::new(app.handle().clone())),
+        foreground: Arc::new(Win32ForegroundApp::new()),
+        notifier,
+        delivery,
         paths,
         db,
         events,

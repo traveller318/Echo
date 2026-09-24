@@ -15,6 +15,7 @@ mod asr;
 mod audio;
 mod clipboard;
 mod command;
+mod delivery;
 mod engine;
 mod error;
 mod events;
@@ -51,6 +52,7 @@ pub use audio::{
 };
 pub use clipboard::ClipboardHistory;
 pub use command::{CommandSpec, Reentrancy};
+pub use delivery::{ClipboardRestore, CopyReason, DeliveryPlan, DeliveryPolicy, DeliveryReport};
 pub use engine::{
     Accelerator, AppearanceCaps, AsrCaps, AudioCaps, EngineCaps, EngineKind, EngineSpec,
     HotkeyCaps, InserterCaps, Language, LanguageSupport, LatencyClass, PolisherCaps, UpdaterCaps,
@@ -62,7 +64,7 @@ pub use events::{
     ModelProgress, SessionStateChanged, SettingsChanged, TranscriptSaved,
 };
 pub use future::BoxFuture;
-pub use hotkey::{HotkeyEvent, HotkeyScope, HotkeySpec, KeyState, Shortcut};
+pub use hotkey::{HotkeyBindFailure, HotkeyEvent, HotkeyScope, HotkeySpec, KeyState, Shortcut};
 pub use ids::{
     AudioDeviceId, EngineId, HotkeyId, InvalidId, MetricId, ModelId, SettingKey, TranscriptId,
 };

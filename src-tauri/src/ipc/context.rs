@@ -1,11 +1,12 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: CommandCtx, CommandDeps, command context, managed state, handler dependencies, SharedSettings, AudioCapture, WorkerScheduler, SystemLauncher, AsrWorker, AppPaths, Db, event sink
+ * SOURCE OF TRUTH KEYWORDS: CommandCtx, CommandDeps, command context, managed state, handler dependencies, SharedSettings, AudioCapture, WorkerScheduler, SystemLauncher, AsrWorker, HotkeyService, ForegroundApp, Notifier, Delivery, AppPaths, Db, event sink
  * WHAT:  CommandCtx: everything a command handler and the factory pipeline may use, managed once by Tauri and
  *        passed to every handler as `&CommandCtx`; CommandDeps: the named parts it is built from.
  * WHY:   Handlers take their dependencies from one place instead of Tauri state lookups, so they stay plain async
  *        fns that tests call with a context built from port fakes and an in-memory database. It holds only ports
  *        (`Arc<dyn …>`, never an adapter, 02 §3.2), the services' `Db` handle, the resolved AppPaths (paths are
- *        resolved only in app/, 05 W23), shared handles (settings, the ASR worker that owns the speech engine) and
+ *        resolved only in app/, 05 W23), shared handles (settings, the ASR worker that owns the speech engine, the
+ *        delivery that owns the paste rules) and
  *        the factory's own reentrancy locks; the registry needs no handle because it is compiled-in `const` data. Events leave
  *        through the `EventSink<AppEvent>` port, so no handler imports Tauri. Built from a named-field struct so a
  *        new dependency (the session actor's inbox, step 14) is one field here plus one line where it is wired.
@@ -17,9 +18,10 @@ use std::sync::Arc;
 
 use super::reentrancy::ReentrancyLocks;
 use crate::{
-    pipeline::asr::AsrWorker,
+    pipeline::{asr::AsrWorker, delivery::Delivery},
     ports::{
-        AudioCapture, EventSink, PrivacyConsent, SystemAppearance, SystemLauncher, WorkerScheduler,
+        AudioCapture, EventSink, ForegroundApp, HotkeyService, Notifier, PrivacyConsent,
+        SystemAppearance, SystemLauncher, WorkerScheduler,
     },
     services::Db,
     types::{AppEvent, AppPaths, SettingsSnapshot, SharedSettings},
@@ -41,6 +43,14 @@ pub struct CommandDeps {
     pub scheduler: Arc<dyn WorkerScheduler>,
     /// The thread that owns the speech engine: startup load, engine switch, takes (the session actor shares it).
     pub asr: AsrWorker,
+    /// System-wide hotkeys: bound by the session actor, rebound when a hotkey setting changes.
+    pub hotkeys: Arc<dyn HotkeyService>,
+    /// The focused window: the take's paste target and paste-last's.
+    pub foreground: Arc<dyn ForegroundApp>,
+    /// Native toasts for moments without a pill (recovered takes, device lost).
+    pub notifier: Arc<dyn Notifier>,
+    /// Clipboard + paste rules for delivered text (takes, history copy, paste-last).
+    pub delivery: Delivery,
     /// Every data and resource location, resolved once by app/bootstrap.
     pub paths: AppPaths,
     /// The database every service call goes through.
@@ -58,6 +68,10 @@ pub struct CommandCtx {
     audio: Arc<dyn AudioCapture>,
     scheduler: Arc<dyn WorkerScheduler>,
     asr: AsrWorker,
+    hotkeys: Arc<dyn HotkeyService>,
+    foreground: Arc<dyn ForegroundApp>,
+    notifier: Arc<dyn Notifier>,
+    delivery: Delivery,
     paths: AppPaths,
     db: Db,
     events: Arc<dyn EventSink<AppEvent>>,
@@ -74,6 +88,10 @@ impl CommandCtx {
             audio,
             scheduler,
             asr,
+            hotkeys,
+            foreground,
+            notifier,
+            delivery,
             paths,
             db,
             events,
@@ -86,6 +104,10 @@ impl CommandCtx {
             audio,
             scheduler,
             asr,
+            hotkeys,
+            foreground,
+            notifier,
+            delivery,
             paths,
             db,
             events,
@@ -133,6 +155,26 @@ impl CommandCtx {
         &self.asr
     }
 
+    /// System-wide hotkeys.
+    pub fn hotkeys(&self) -> Arc<dyn HotkeyService> {
+        Arc::clone(&self.hotkeys)
+    }
+
+    /// The focused window.
+    pub fn foreground(&self) -> &dyn ForegroundApp {
+        self.foreground.as_ref()
+    }
+
+    /// Native toasts.
+    pub fn notifier(&self) -> &dyn Notifier {
+        self.notifier.as_ref()
+    }
+
+    /// Clipboard + paste delivery.
+    pub fn delivery(&self) -> &Delivery {
+        &self.delivery
+    }
+
     /// Every data and resource location.
     pub fn paths(&self) -> &AppPaths {
         &self.paths
@@ -158,10 +200,11 @@ impl CommandCtx {
  * SOURCE OF TRUTH KEYWORDS: command test harness, test CommandCtx, in-memory database context, recorded events
  * WHAT:  `harness`: a CommandCtx over given settings and consent, a Mica-capable appearance fake, a recording
  *        launcher, a 48 kHz stereo capture fake, a recording thread scheduler, an ASR worker whose engines are
- *        English FakeAsrEngines (nothing loaded until a test asks), AppPaths under the system temp
- *        folder (never touched: services take the in-memory database), a fresh in-memory database with the real
- *        migrations and a RecordingSink for events, plus handles to the sink and the fakes; `ctx()` is the
- *        all-defaults one.
+ *        English FakeAsrEngines (nothing loaded until a test asks), a hotkey fake, a focused Notepad target, a
+ *        recording notifier, a delivery over a clipboard fake and a pasting inserter fake, AppPaths under the system
+ *        temp folder (never touched: services take the in-memory database), a fresh in-memory database with the real
+ *        migrations and a RecordingSink for events, plus handles to the sink and the fakes; `ctx()` is the all-defaults
+ *        one.
  * WHY:   Factory, command and app tests all need the same context without a Tauri app or a disk; keeping the
  *        builder here means a new CommandDeps field is added to tests in one place.
  * WHERE: Tests in ipc/factory.rs, ipc/commands and app/bindings.rs.
@@ -172,12 +215,16 @@ pub mod testing {
 
     use super::{CommandCtx, CommandDeps};
     use crate::{
-        pipeline::asr::{AsrWorker, AsrWorkerConfig},
+        pipeline::{
+            asr::{AsrWorker, AsrWorkerConfig},
+            delivery::{Delivery, DeliveryPorts},
+        },
         ports::{
             AsrEngine,
             fakes::{
-                FakeAsrEngine, FakeAudioCapture, FakePrivacyConsent, FakeSystemAppearance,
-                FakeSystemLauncher, FakeWorkerScheduler, RecordingSink,
+                FakeAsrEngine, FakeAudioCapture, FakeClipboard, FakeForegroundApp,
+                FakeHotkeyService, FakeNotifier, FakePrivacyConsent, FakeSystemAppearance,
+                FakeSystemLauncher, FakeTextInserter, FakeWorkerScheduler, RecordingSink,
             },
         },
         registry,
@@ -199,6 +246,11 @@ pub mod testing {
         pub launcher: Arc<FakeSystemLauncher>,
         pub audio: Arc<FakeAudioCapture>,
         pub scheduler: Arc<FakeWorkerScheduler>,
+        pub hotkeys: Arc<FakeHotkeyService>,
+        pub foreground: Arc<FakeForegroundApp>,
+        pub notifier: Arc<FakeNotifier>,
+        pub clipboard: Arc<FakeClipboard>,
+        pub inserter: Arc<FakeTextInserter>,
     }
 
     pub fn harness(settings: SettingsSnapshot, consent: FakePrivacyConsent) -> Harness {
@@ -207,6 +259,19 @@ pub mod testing {
         let launcher = Arc::new(FakeSystemLauncher::default());
         let audio = Arc::new(FakeAudioCapture::new(HARNESS_AUDIO_FORMAT));
         let scheduler = Arc::new(FakeWorkerScheduler::default());
+        let hotkeys = Arc::new(FakeHotkeyService::default());
+        let foreground = Arc::new(FakeForegroundApp::focused(FakeForegroundApp::target(
+            "notepad.exe",
+            false,
+        )));
+        let notifier = Arc::new(FakeNotifier::default());
+        let clipboard = Arc::new(FakeClipboard::default());
+        let inserter = Arc::new(FakeTextInserter::default());
+        let delivery = Delivery::new(DeliveryPorts {
+            clipboard: Arc::clone(&clipboard) as _,
+            inserter: Arc::clone(&inserter) as _,
+            notifier: Arc::clone(&notifier) as _,
+        });
         let root = std::env::temp_dir().join("echo-harness");
         let asr = AsrWorker::spawn(AsrWorkerConfig {
             build: Arc::new(|_: &EngineId| {
@@ -225,6 +290,10 @@ pub mod testing {
             audio: Arc::clone(&audio) as _,
             scheduler: Arc::clone(&scheduler) as _,
             asr,
+            hotkeys: Arc::clone(&hotkeys) as _,
+            foreground: Arc::clone(&foreground) as _,
+            notifier: Arc::clone(&notifier) as _,
+            delivery,
             paths: AppPaths::new(root.join("data"), root.join("resources")),
             db: Db::open_in_memory().unwrap(),
             events: Arc::clone(&events) as _,
@@ -236,6 +305,11 @@ pub mod testing {
             launcher,
             audio,
             scheduler,
+            hotkeys,
+            foreground,
+            notifier,
+            clipboard,
+            inserter,
         }
     }
 

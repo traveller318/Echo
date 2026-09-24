@@ -1,17 +1,18 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: typed setting reads, theme read, transcription reads, polish reads, remove_fillers, dictionary, llm_polisher, trailing_space
+ * SOURCE OF TRUTH KEYWORDS: typed setting reads, theme read, transcription reads, polish reads, remove_fillers, dictionary, llm_polisher, trailing_space, delivery_policy
  * WHAT:  Typed reads of a SettingsSnapshot for the settings the core acts on.
  * WHY:   Values are stored as tagged SettingValues and enum text; spelling them is the registry's job, so the
  *        pipeline asks here instead of matching kinds or comparing strings. A resolved snapshot always holds a
  *        valid value for every key, so each fallback only guards a snapshot built outside `resolve` and uses the
  *        spec's own default.
- * WHERE: Re-exported by registry/settings; read by pipeline/appearance, pipeline/asr and pipeline/polish.
+ * WHERE: Re-exported by registry/settings; read by pipeline/appearance, pipeline/asr, pipeline/polish and
+ *        pipeline/delivery.
  */
 
 use super::{find, keys, values};
 use crate::types::{
-    Accelerator, EngineId, Language, SettingKey, SettingValue, SettingsSnapshot, TextPair,
-    ThemePreference,
+    Accelerator, DeliveryPolicy, EngineId, Language, SettingKey, SettingValue, SettingsSnapshot,
+    TextPair, ThemePreference,
 };
 
 /// The `general.theme` choice in effect; a resolved snapshot always holds a valid one, so the default is only a
@@ -94,6 +95,20 @@ pub fn llm_polisher(settings: &SettingsSnapshot) -> Option<EngineId> {
 /// `output.trailing_space`: end delivered text with a space so the next dictation does not glue on.
 pub fn trailing_space(settings: &SettingsSnapshot) -> bool {
     bool_or_default(settings, &keys::TRAILING_SPACE)
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: delivery_policy, auto_paste setting, keep_on_clipboard setting, output settings read
+ * WHAT:  The DeliveryPolicy the `output.auto_paste` and `output.keep_on_clipboard` settings give.
+ * WHY:   Delivery decides from one typed policy, read when the take is delivered, so a toggle changed during a take
+ *        applies to that take's delivery.
+ * WHERE: pipeline/delivery.rs callers (the session actor, paste-last).
+ */
+pub fn delivery_policy(settings: &SettingsSnapshot) -> DeliveryPolicy {
+    DeliveryPolicy {
+        auto_paste: bool_or_default(settings, &keys::AUTO_PASTE),
+        keep_on_clipboard: bool_or_default(settings, &keys::KEEP_ON_CLIPBOARD),
+    }
 }
 
 /// A Bool setting, or its spec's default when the snapshot lacks it (only outside `resolve`).

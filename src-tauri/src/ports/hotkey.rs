@@ -8,8 +8,8 @@
  *        tracking state (05 W10). `refresh` re-registers every binding after sleep or an explorer restart
  *        (05 W8). Hold mode needs key-up, which only some backends report (`HotkeyCaps.supports_release`); a
  *        low-level keyboard hook adapter (05 W9) plugs in here with no core change.
- * WHERE: Implemented by adapters/hotkey/tauri_global_shortcut.rs (TauriGlobalShortcut) and ports/fakes; wired by
- *        the pipeline from registry/hotkeys and settings; events feed the session actor.
+ * WHERE: Implemented by adapters/hotkey/tauri_global_shortcut.rs (TauriGlobalShortcut) and ports/fakes; driven by
+ *        pipeline/hotkeys.rs from registry/hotkeys and settings; events feed the session actor.
  */
 
 use std::sync::Arc;

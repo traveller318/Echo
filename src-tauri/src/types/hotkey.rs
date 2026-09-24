@@ -1,22 +1,25 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: Shortcut, HotkeyEvent, KeyState, HotkeySpec, HotkeyScope, accelerator string, global shortcut, hold-to-talk
+ * SOURCE OF TRUTH KEYWORDS: Shortcut, HotkeyEvent, KeyState, HotkeySpec, HotkeyScope, HotkeyBindFailure, accelerator string, global shortcut, hold-to-talk
  * WHAT:  Shortcut (a key combination in accelerator syntax, e.g. `Ctrl+Alt+Space`), HotkeyEvent (a bound
- *        hotkey was pressed or released) and HotkeySpec / HotkeyScope (a registry hotkey entry and when it is
- *        registered).
+ *        hotkey was pressed or released), HotkeySpec / HotkeyScope (a registry hotkey entry and when it is
+ *        registered) and HotkeyBindFailure (a hotkey that could not be bound, e.g. another app owns it).
  * WHY:   The combination stays text end to end (setting value, registry default, UI input) and only the hotkey
  *        adapter parses it, so a different hotkey backend (a `WH_KEYBOARD_LL` hook, 05 W9) can accept a different
  *        syntax without touching the core; an unparsable combination is `AppError::Hotkey { reason: invalid }`.
  *        Events carry the registry HotkeyId, never the key text, so the session reacts to *which binding* fired.
  *        Release events exist only when `HotkeyCaps.supports_release` is set (hold mode). The scope keeps Esc
  *        from being stolen outside a take (05 W10): `during_session` bindings are registered only while one runs.
+ *        A failed startup binding is reported per hotkey instead of aborting the rest (05 W7: keep going, badge the
+ *        tray, show it in Settings).
  * WHERE: `HotkeyService::register` / `listen` (ports/hotkey.rs); registry/hotkeys entries and defaults; the
- *        session actor turns HotkeyEvent into RecordPressed / RecordReleased / Esc inputs.
+ *        session actor turns HotkeyEvent into RecordPressed / RecordReleased / Esc inputs; pipeline/hotkeys.rs
+ *        returns HotkeyBindFailure.
  */
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use super::{HotkeyId, SettingKey, StaticStr, ids::static_str_id};
+use super::{HotkeyId, PortError, SettingKey, StaticStr, ids::static_str_id};
 
 static_str_id! {
     /// A key combination in accelerator syntax, e.g. `Ctrl+Alt+Space`. Parsed only by the hotkey adapter.
@@ -56,6 +59,15 @@ pub struct HotkeySpec {
     /// The Hotkey setting the user rebinds it with; None when the combination is fixed.
     pub setting_key: Option<SettingKey>,
     pub scope: HotkeyScope,
+}
+
+/// A hotkey that could not be bound to its combination; the rest of the hotkeys are bound regardless.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HotkeyBindFailure {
+    pub id: HotkeyId,
+    pub shortcut: Shortcut,
+    /// `Hotkey { conflict | invalid }` from the adapter, with its log-only detail.
+    pub error: PortError,
 }
 
 #[cfg(test)]

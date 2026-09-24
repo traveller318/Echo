@@ -1,17 +1,21 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: hotkey registry, HOTKEYS, record hotkey, paste last hotkey, cancel Esc, default accelerator, hotkey scope, effective shortcut
+ * SOURCE OF TRUTH KEYWORDS: hotkey registry, HOTKEYS, record hotkey, paste last hotkey, cancel Esc, default accelerator, hotkey scope, effective shortcut, for_setting
  * WHAT:  Every global hotkey Echo binds (record, paste-last, cancel) with its default combination, the setting
- *        that rebinds it and its scope; typed id constants; and the combination in effect for given settings.
+ *        that rebinds it and its scope; typed id constants; the combination in effect for given settings; and which
+ *        hotkey a setting rebinds (`for_setting`).
  * WHY:   A hotkey is a registry entry (02 §3.3): the session reacts to a HotkeyId, never to key text. The default
  *        combinations are declared once here and reused as the settings defaults (registry/settings), so the two
  *        cannot drift. Cancel is fixed to Esc and scoped to a session so Esc is never taken from other apps
  *        outside a take (05 W10). `Escape` is the accelerator spelling the global-shortcut adapter parses.
- * WHERE: Read by the pipeline's hotkey wiring (register Always entries at startup, DuringSession entries on
- *        RecordPressed), the session actor (which id fired) and registry/settings (defaults).
+ * WHERE: Read by pipeline/hotkeys.rs (register Always entries at startup, DuringSession entries on RecordPressed,
+ *        rebind after a hotkey setting changes), the session actor (which id fired) and registry/settings
+ *        (defaults).
  */
 
 use super::settings::keys;
-use crate::types::{HotkeyId, HotkeyScope, HotkeySpec, SettingsSnapshot, Shortcut, StaticStr};
+use crate::types::{
+    HotkeyId, HotkeyScope, HotkeySpec, SettingKey, SettingsSnapshot, Shortcut, StaticStr,
+};
 
 pub const RECORD: HotkeyId = HotkeyId::from_static("record");
 pub const PASTE_LAST: HotkeyId = HotkeyId::from_static("paste-last");
@@ -50,6 +54,13 @@ pub const HOTKEYS: &[HotkeySpec] = &[
 /// The hotkey `id`.
 pub fn find(id: &HotkeyId) -> Option<&'static HotkeySpec> {
     HOTKEYS.iter().find(|spec| spec.id == *id)
+}
+
+/// The hotkey `key` rebinds; None for a setting that is not a hotkey.
+pub fn for_setting(key: &SettingKey) -> Option<&'static HotkeySpec> {
+    HOTKEYS
+        .iter()
+        .find(|spec| spec.setting_key.as_ref() == Some(key))
 }
 
 /// Every hotkey registered with `scope`.
@@ -103,6 +114,19 @@ mod tests {
                 spec.id
             );
         }
+    }
+
+    #[test]
+    fn settings_lead_back_to_their_hotkey() {
+        assert_eq!(
+            for_setting(&keys::RECORD_HOTKEY).map(|spec| &spec.id),
+            Some(&RECORD)
+        );
+        assert_eq!(
+            for_setting(&keys::PASTE_LAST_HOTKEY).map(|spec| &spec.id),
+            Some(&PASTE_LAST)
+        );
+        assert!(for_setting(&keys::HOTKEY_MODE).is_none());
     }
 
     #[test]

@@ -22,8 +22,8 @@ use parking_lot::Mutex;
 use windows::{
     Win32::{
         Foundation::{
-            CloseHandle, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, ERROR_SUCCESS, HANDLE,
-            WAIT_OBJECT_0, WIN32_ERROR,
+            ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, ERROR_SUCCESS, HANDLE, WAIT_OBJECT_0,
+            WIN32_ERROR,
         },
         System::{
             Registry::{
@@ -38,6 +38,7 @@ use windows::{
 };
 
 use crate::{
+    adapters::win32::OwnedHandle,
     ports::{EventSink, SystemAppearance},
     types::{AppError, AppearanceCaps, PortError, PortResult, Transparency},
 };
@@ -175,7 +176,7 @@ fn watch(stop: &OwnedEvent, sink: &SinkSlot, ready: &mpsc::Sender<PortResult<()>
                 key.0,
                 false,
                 REG_NOTIFY_CHANGE_LAST_SET,
-                Some(change.0),
+                Some(change.raw()),
                 true,
             )
         };
@@ -187,7 +188,7 @@ fn watch(stop: &OwnedEvent, sink: &SinkSlot, ready: &mpsc::Sender<PortResult<()>
             return;
         }
         // SAFETY: both handles stay open until this function returns.
-        let woke = unsafe { WaitForMultipleObjects(&[stop.0, change.0], false, INFINITE) };
+        let woke = unsafe { WaitForMultipleObjects(&[stop.raw(), change.raw()], false, INFINITE) };
         if woke == WAIT_OBJECT_0 {
             return;
         }
@@ -215,33 +216,24 @@ fn watch(stop: &OwnedEvent, sink: &SinkSlot, ready: &mpsc::Sender<PortResult<()>
 }
 
 /// An owned Win32 event handle, closed on drop.
-struct OwnedEvent(HANDLE);
-
-// SAFETY: an event handle names a kernel object; SetEvent, waits and CloseHandle may be called from any thread,
-// and the handle value itself is never mutated after creation.
-unsafe impl Send for OwnedEvent {}
-// SAFETY: see Send; the only shared operation is SetEvent, which the kernel synchronises.
-unsafe impl Sync for OwnedEvent {}
+struct OwnedEvent(OwnedHandle);
 
 impl OwnedEvent {
     /// An auto-reset event, initially not signalled.
     fn new() -> PortResult<Self> {
         // SAFETY: no security attributes and no name; the returned handle is owned by Self.
         unsafe { CreateEventW(None, false, false, PCWSTR::null()) }
-            .map(Self)
+            .map(|event| Self(OwnedHandle::new(event)))
             .map_err(|error| internal(format!("CreateEventW failed: {error}")))
+    }
+
+    fn raw(&self) -> HANDLE {
+        self.0.raw()
     }
 
     fn signal(&self) -> windows::core::Result<()> {
         // SAFETY: the handle is open for the lifetime of self.
-        unsafe { SetEvent(self.0) }
-    }
-}
-
-impl Drop for OwnedEvent {
-    fn drop(&mut self) {
-        // SAFETY: the handle was created by CreateEventW and is closed exactly once here.
-        let _ = unsafe { CloseHandle(self.0) };
+        unsafe { SetEvent(self.0.raw()) }
     }
 }
 

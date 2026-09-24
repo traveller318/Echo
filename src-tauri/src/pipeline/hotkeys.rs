@@ -1,0 +1,236 @@
+/*!
+ * SOURCE OF TRUTH KEYWORDS: hotkey bindings, bind_always, rebind_setting, unbind_always, SessionHotkeys, Esc guard, register hotkeys from registry, hotkey conflict report
+ * WHAT:  Binds the registry's hotkeys through the HotkeyService port: every always-on hotkey at startup
+ *        (`bind_always`, which reports each failure and keeps going), one hotkey after its setting changes
+ *        (`rebind_setting`), all of them off and back on (`unbind_always`, `bind_always`), and the session-scoped
+ *        ones for exactly as long as a SessionHotkeys guard lives.
+ * WHY:   Which hotkeys exist, their defaults and scopes are registry data (registry/hotkeys); this module is the one
+ *        place that turns them into registrations, so the actor, Settings, the tray and power handling cannot
+ *        disagree. A conflict on one hotkey must not leave the others unbound (05 W7), so startup failures are
+ *        collected, not returned early. Esc is taken from every other app while registered (05 W10): the guard
+ *        registers it when a take starts recording and its Drop releases it on every exit path, errors and panics
+ *        included, and a guard that fails half-way releases what it had bound. A hotkey setting is rebound with
+ *        the snapshot the caller is about to store, so a conflict can refuse the write while the previous binding
+ *        stays (the port keeps it); a session-scoped hotkey is never registered outside a session by a rebind.
+ * WHERE: SessionHotkeys is held by the session actor from Recording until the take leaves CancelPending
+ *        (step 14); bind_always runs when the actor starts listening; rebind_setting from settings_set (step 18);
+ *        unbind_always / bind_always from the tray's Pause hotkeys and power resume (step 25).
+ */
+
+use std::sync::Arc;
+
+use crate::{
+    ports::HotkeyService,
+    registry::hotkeys,
+    types::{
+        HotkeyBindFailure, HotkeyId, HotkeyScope, HotkeySpec, PortResult, SettingKey,
+        SettingsSnapshot,
+    },
+};
+
+/// Binds `spec` to the combination its setting gives (its default when it has none).
+pub fn bind(
+    service: &dyn HotkeyService,
+    spec: &HotkeySpec,
+    settings: &SettingsSnapshot,
+) -> PortResult<()> {
+    service.register(&spec.id, &hotkeys::effective_shortcut(spec, settings))
+}
+
+/// Binds every always-on hotkey; returns the ones that failed, while the others stay bound.
+pub fn bind_always(
+    service: &dyn HotkeyService,
+    settings: &SettingsSnapshot,
+) -> Vec<HotkeyBindFailure> {
+    hotkeys::in_scope(HotkeyScope::Always)
+        .filter_map(|spec| {
+            let shortcut = hotkeys::effective_shortcut(spec, settings);
+            let error = service.register(&spec.id, &shortcut).err()?;
+            tracing::warn!(
+                hotkey = %spec.id,
+                %shortcut,
+                code = error.error().code().as_str(),
+                detail = error.detail(),
+                "a hotkey could not be bound"
+            );
+            Some(HotkeyBindFailure {
+                id: spec.id.clone(),
+                shortcut,
+                error,
+            })
+        })
+        .collect()
+}
+
+/// Releases every always-on hotkey (the tray's Pause hotkeys).
+pub fn unbind_always(service: &dyn HotkeyService) -> PortResult<()> {
+    hotkeys::in_scope(HotkeyScope::Always).try_for_each(|spec| service.unregister(&spec.id))
+}
+
+/// Rebinds the always-on hotkey `key` controls to its value in `settings`; None when `key` rebinds no always-on
+/// hotkey. On failure the previous binding stays.
+pub fn rebind_setting(
+    service: &dyn HotkeyService,
+    key: &SettingKey,
+    settings: &SettingsSnapshot,
+) -> Option<PortResult<()>> {
+    let spec = hotkeys::for_setting(key).filter(|spec| spec.scope == HotkeyScope::Always)?;
+    Some(bind(service, spec, settings))
+}
+
+/// The session-scoped hotkeys (Esc), registered while this guard lives.
+pub struct SessionHotkeys {
+    service: Arc<dyn HotkeyService>,
+    bound: Vec<HotkeyId>,
+}
+
+impl SessionHotkeys {
+    /// Registers every session-scoped hotkey; on failure nothing stays registered.
+    pub fn bind(service: Arc<dyn HotkeyService>, settings: &SettingsSnapshot) -> PortResult<Self> {
+        let mut guard = Self {
+            service,
+            bound: Vec::new(),
+        };
+        for spec in hotkeys::in_scope(HotkeyScope::DuringSession) {
+            bind(guard.service.as_ref(), spec, settings)?;
+            guard.bound.push(spec.id.clone());
+        }
+        Ok(guard)
+    }
+}
+
+impl Drop for SessionHotkeys {
+    fn drop(&mut self) {
+        for id in self.bound.drain(..) {
+            if let Err(error) = self.service.unregister(&id) {
+                tracing::warn!(
+                    hotkey = %id,
+                    detail = error.detail(),
+                    "a session hotkey could not be released"
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        ports::fakes::FakeHotkeyService,
+        registry::{
+            hotkeys::{CANCEL, PASTE_LAST, PASTE_LAST_DEFAULT, RECORD, RECORD_DEFAULT},
+            settings::{self, keys},
+        },
+        types::{AppError, HotkeyIssue, SettingValue, Shortcut, StaticStr},
+    };
+
+    fn record_bound_to(combination: &'static str) -> SettingsSnapshot {
+        settings::resolve([(
+            keys::RECORD_HOTKEY,
+            SettingValue::Hotkey(StaticStr::new(combination)),
+        )])
+    }
+
+    fn conflict() -> AppError {
+        AppError::Hotkey {
+            reason: HotkeyIssue::Conflict,
+        }
+    }
+
+    #[test]
+    fn startup_binds_the_always_on_hotkeys_at_their_settings() {
+        let service = FakeHotkeyService::default();
+        let failures = bind_always(&service, &record_bound_to("Ctrl+Shift+F9"));
+        assert!(failures.is_empty(), "{failures:?}");
+        assert_eq!(
+            service.binding(&RECORD),
+            Some(Shortcut::from_static("Ctrl+Shift+F9"))
+        );
+        assert_eq!(
+            service.binding(&PASTE_LAST),
+            Some(Shortcut::from_static(PASTE_LAST_DEFAULT))
+        );
+        assert_eq!(
+            service.binding(&CANCEL),
+            None,
+            "Esc waits for a take (05 W10)"
+        );
+    }
+
+    #[test]
+    fn a_conflict_is_reported_and_the_other_hotkeys_still_bind() {
+        let service = FakeHotkeyService::default();
+        service.occupy(Shortcut::from_static(RECORD_DEFAULT));
+        let failures = bind_always(&service, &settings::defaults());
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].id, RECORD);
+        assert_eq!(failures[0].shortcut, Shortcut::from_static(RECORD_DEFAULT));
+        assert_eq!(failures[0].error.error(), &conflict());
+        assert_eq!(
+            service.binding(&PASTE_LAST),
+            Some(Shortcut::from_static(PASTE_LAST_DEFAULT))
+        );
+    }
+
+    #[test]
+    fn a_hotkey_setting_rebinds_and_a_conflict_keeps_the_old_binding() {
+        let service = FakeHotkeyService::default();
+        assert!(bind_always(&service, &settings::defaults()).is_empty());
+        let moved = record_bound_to("Ctrl+Alt+F8");
+        assert_eq!(
+            rebind_setting(&service, &keys::RECORD_HOTKEY, &moved).map(|result| result.is_ok()),
+            Some(true)
+        );
+        assert_eq!(
+            service.binding(&RECORD),
+            Some(Shortcut::from_static("Ctrl+Alt+F8"))
+        );
+
+        service.occupy(Shortcut::from_static("Ctrl+Alt+F7"));
+        let taken = record_bound_to("Ctrl+Alt+F7");
+        let refused = rebind_setting(&service, &keys::RECORD_HOTKEY, &taken)
+            .map(|result| result.map_err(|error| error.into_app_error()));
+        assert_eq!(refused, Some(Err(conflict())));
+        assert_eq!(
+            service.binding(&RECORD),
+            Some(Shortcut::from_static("Ctrl+Alt+F8"))
+        );
+        assert!(rebind_setting(&service, &keys::THEME, &taken).is_none());
+    }
+
+    #[test]
+    fn pausing_releases_and_rebinding_restores_the_always_on_hotkeys() {
+        let service = FakeHotkeyService::default();
+        assert!(bind_always(&service, &settings::defaults()).is_empty());
+        unbind_always(&service).unwrap();
+        assert_eq!(service.binding(&RECORD), None);
+        assert_eq!(service.binding(&PASTE_LAST), None);
+        assert!(bind_always(&service, &settings::defaults()).is_empty());
+        assert!(service.binding(&RECORD).is_some());
+    }
+
+    #[test]
+    fn the_session_guard_holds_esc_only_while_it_lives() {
+        let service = Arc::new(FakeHotkeyService::default());
+        let guard = SessionHotkeys::bind(service.clone(), &settings::defaults()).unwrap();
+        assert_eq!(
+            service.binding(&CANCEL),
+            Some(Shortcut::from_static("Escape"))
+        );
+        drop(guard);
+        assert_eq!(service.binding(&CANCEL), None);
+    }
+
+    #[test]
+    fn a_session_guard_that_cannot_bind_leaves_nothing_bound() {
+        let service = Arc::new(FakeHotkeyService::default());
+        service.occupy(Shortcut::from_static("Escape"));
+        let result = SessionHotkeys::bind(service.clone(), &settings::defaults());
+        assert_eq!(
+            result.map(|_| ()).map_err(|error| error.into_app_error()),
+            Err(conflict())
+        );
+        assert_eq!(service.binding(&CANCEL), None);
+    }
+}

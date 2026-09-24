@@ -1,9 +1,10 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: FakeClipboard, fake clipboard, clipboard held by another app, clipboard history policy test
- * WHAT:  FakeClipboard: an in-memory Clipboard that records the history policy of the last write and can be
+ * SOURCE OF TRUTH KEYWORDS: FakeClipboard, fake clipboard, clipboard held by another app, clipboard history policy test, clipboard writes log
+ * WHAT:  FakeClipboard: an in-memory Clipboard that records every write (text and history policy) and can be
  *        `hold`-en by "another app" for the next N calls.
  * WHY:   Delivery tests check that transcripts are written with `ClipboardHistory::Exclude` (05 W5) and that a busy
- *        clipboard fails with `PermissionDenied { clipboard }` without losing the take (05 W4).
+ *        clipboard fails with `PermissionDenied { clipboard }` without losing the take (05 W4); the write log shows
+ *        whether a flow wrote once, twice (a paste fallback) or not at all.
  * WHERE: pipeline delivery and session actor tests.
  */
 
@@ -18,7 +19,7 @@ use crate::{
 #[derive(Default)]
 struct ClipboardState {
     text: Option<String>,
-    last_history: Option<ClipboardHistory>,
+    writes: Vec<(String, ClipboardHistory)>,
     held_for: usize,
 }
 
@@ -54,7 +55,12 @@ impl FakeClipboard {
     }
 
     pub fn last_history(&self) -> Option<ClipboardHistory> {
-        lock(&self.state).last_history
+        lock(&self.state).writes.last().map(|(_, history)| *history)
+    }
+
+    /// Every successful write, oldest first.
+    pub fn writes(&self) -> Vec<(String, ClipboardHistory)> {
+        lock(&self.state).writes.clone()
     }
 
     fn held() -> AppError {
@@ -79,7 +85,16 @@ impl Clipboard for FakeClipboard {
             return Err(Self::held().into());
         }
         state.text = Some(text.to_owned());
-        state.last_history = Some(history);
+        state.writes.push((text.to_owned(), history));
+        Ok(())
+    }
+
+    fn clear(&self) -> PortResult<()> {
+        let mut state = lock(&self.state);
+        if state.busy() {
+            return Err(Self::held().into());
+        }
+        state.text = None;
         Ok(())
     }
 }
@@ -113,5 +128,28 @@ mod tests {
             .write_text("take", ClipboardHistory::Include)
             .unwrap();
         assert_eq!(clipboard.text().as_deref(), Some("take"));
+    }
+
+    #[test]
+    fn clear_empties_it_and_writes_are_logged() {
+        let clipboard = FakeClipboard::default();
+        clipboard
+            .write_text("a", ClipboardHistory::Exclude)
+            .unwrap();
+        clipboard
+            .write_text("b", ClipboardHistory::Include)
+            .unwrap();
+        clipboard.hold(1);
+        assert!(clipboard.clear().is_err());
+        assert_eq!(clipboard.text().as_deref(), Some("b"));
+        clipboard.clear().unwrap();
+        assert_eq!(clipboard.text(), None);
+        assert_eq!(
+            clipboard.writes(),
+            [
+                (String::from("a"), ClipboardHistory::Exclude),
+                (String::from("b"), ClipboardHistory::Include),
+            ]
+        );
     }
 }

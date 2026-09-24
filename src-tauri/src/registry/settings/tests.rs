@@ -16,9 +16,9 @@ use super::{
 use crate::{
     registry::{engines, engines::tests::SAMPLE_ENGINES, hotkeys},
     types::{
-        Accelerator, AppError, CapsRequirement, EnumOption, EnumOptions, Language, OptionSource,
-        ResourceKind, SettingKey, SettingKind, SettingValue, SettingsSnapshot, StaticList,
-        StaticStr, TextPair, ThemePreference,
+        Accelerator, AppError, CapsRequirement, DeliveryPolicy, EnumOption, EnumOptions, Language,
+        OptionSource, ResourceKind, SettingKey, SettingKind, SettingValue, SettingsSnapshot,
+        StaticList, StaticStr, TextPair, ThemePreference,
     },
 };
 
@@ -342,4 +342,27 @@ fn polish_reads_follow_the_stored_values_and_their_defaults() {
     );
     assert!(dictionary(&empty).is_empty());
     assert_eq!(llm_polisher(&empty), None);
+}
+
+#[test]
+fn delivery_policy_reads_the_output_toggles() {
+    let policy = |auto_paste, keep_on_clipboard| DeliveryPolicy {
+        auto_paste,
+        keep_on_clipboard,
+    };
+    assert_eq!(
+        delivery_policy(&defaults()),
+        policy(true, true),
+        "02 §3.3: paste and keep by default"
+    );
+    let chosen = resolve([
+        (keys::AUTO_PASTE, SettingValue::Bool(false)),
+        (keys::KEEP_ON_CLIPBOARD, SettingValue::Bool(false)),
+    ]);
+    assert_eq!(delivery_policy(&chosen), policy(false, false));
+    assert_eq!(
+        delivery_policy(&SettingsSnapshot::default()),
+        policy(true, true),
+        "missing values fall back to the spec defaults"
+    );
 }

@@ -9,9 +9,15 @@
 pub mod appearance;
 pub mod asr;
 pub mod audio;
+pub mod clipboard;
 pub mod consent;
+pub mod foreground;
+pub mod hotkey;
+pub mod inserter;
 pub mod launcher;
+pub mod notifier;
 pub mod onnx;
 pub mod polish;
 pub mod scheduler;
 pub mod vad;
+pub mod win32;

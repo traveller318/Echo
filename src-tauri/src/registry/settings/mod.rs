@@ -28,7 +28,7 @@ mod tests;
 pub use list::SETTINGS;
 pub use options::{options, validate};
 pub use reads::{
-    accelerator_preference, asr_engine, dictionary, language_preference, llm_polisher,
-    remove_fillers, theme, trailing_space,
+    accelerator_preference, asr_engine, delivery_policy, dictionary, language_preference,
+    llm_polisher, remove_fillers, theme, trailing_space,
 };
 pub use resolve::{defaults, find, resolve};
