@@ -1,8 +1,9 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: Shortcut, HotkeyEvent, KeyState, HotkeySpec, HotkeyScope, HotkeyBindFailure, accelerator string, global shortcut, hold-to-talk
+ * SOURCE OF TRUTH KEYWORDS: Shortcut, HotkeyEvent, KeyState, HotkeySpec, HotkeyScope, HotkeyBindFailure, RecordMode, accelerator string, global shortcut, hold-to-talk
  * WHAT:  Shortcut (a key combination in accelerator syntax, e.g. `Ctrl+Alt+Space`), HotkeyEvent (a bound
  *        hotkey was pressed or released), HotkeySpec / HotkeyScope (a registry hotkey entry and when it is
- *        registered) and HotkeyBindFailure (a hotkey that could not be bound, e.g. another app owns it).
+ *        registered), HotkeyBindFailure (a hotkey that could not be bound, e.g. another app owns it) and
+ *        RecordMode (whether the record hotkey toggles a take or holds it).
  * WHY:   The combination stays text end to end (setting value, registry default, UI input) and only the hotkey
  *        adapter parses it, so a different hotkey backend (a `WH_KEYBOARD_LL` hook, 05 W9) can accept a different
  *        syntax without touching the core; an unparsable combination is `AppError::Hotkey { reason: invalid }`.
@@ -48,6 +49,23 @@ pub enum HotkeyScope {
     Always,
     /// Only while a take is recording or counting down to cancel.
     DuringSession,
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: RecordMode, toggle mode, hold mode, hold-to-talk, hotkeys.mode, record hotkey behaviour
+ * WHAT:  How the record hotkey drives a take: Toggle (press starts, the next press stops) or Hold (recording lasts
+ *        while the keys are held; the release stops it).
+ * WHY:   The session state machine branches on this value, never on the stored `hotkeys.mode` text, which only the
+ *        registry spells (registry/settings/values.rs). Hold needs release events, which exist only when
+ *        `HotkeyCaps.supports_release` is set; the setting is hidden otherwise, so Toggle is the default.
+ * WHERE: Read from settings by registry::settings::record_mode; carried in SessionPolicy (types/session_machine.rs)
+ *        and acted on by pipeline/session/transition.rs.
+ */
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum RecordMode {
+    #[default]
+    Toggle,
+    Hold,
 }
 
 /// A registry hotkey entry.

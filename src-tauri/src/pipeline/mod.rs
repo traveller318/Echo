@@ -13,3 +13,4 @@ pub mod capture;
 pub mod delivery;
 pub mod hotkeys;
 pub mod polish;
+pub mod session;

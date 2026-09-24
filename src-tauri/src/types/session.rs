@@ -5,9 +5,9 @@
  * WHY:   The session actor is the sole owner of recording state (02 §5); the UI only ever receives this view in
  *        `SessionStateChanged` and never keeps its own copy. SessionUiInput holds only UI-originated inputs, so the
  *        UI cannot fake a hotkey, timer or worker input (05 decision log). The internal state machine types
- *        (state, inputs, effects) belong to pipeline/session.
- * WHERE: Built by pipeline/session; emitted by the SessionStateChanged event; rendered by the pill (src/pill)
- *        and read once through `session_get_state`.
+ *        (state, inputs, effects) are in types/session_machine.rs; this view is projected from them.
+ * WHERE: Built by SessionPhase::view (types/session_machine.rs) in pipeline/session; emitted by the
+ *        SessionStateChanged event; rendered by the pill (src/pill) and read once through `session_get_state`.
  */
 
 use serde::{Deserialize, Serialize};
@@ -25,9 +25,9 @@ pub enum SessionStatus {
     Recording,
     /// Esc pressed: capture paused while the cancel countdown runs.
     CancelPending,
-    /// Capture stopped: tail ASR, segment join and polish are running.
+    /// Capture stopped: the tail segment is being transcribed.
     Finalizing,
-    /// Text is going to the clipboard and the target app.
+    /// The joined text is being polished and delivered to the clipboard and the target app.
     Delivering,
     Done,
     /// The countdown elapsed: row and audio were deleted.
@@ -52,7 +52,7 @@ pub enum DeliveryOutcome {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct SessionView {
     pub status: SessionStatus,
-    /// The take's row, once it exists (from `Arming` on).
+    /// The take's row (from `Arming` on); None when no row exists (a missing model, a discarded take).
     pub transcript_id: Option<TranscriptId>,
     /// Recorded time so far, excluding time paused in `CancelPending`.
     pub elapsed_ms: u32,

@@ -1,18 +1,18 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: typed setting reads, theme read, transcription reads, polish reads, remove_fillers, dictionary, llm_polisher, trailing_space, delivery_policy
+ * SOURCE OF TRUTH KEYWORDS: typed setting reads, theme read, transcription reads, polish reads, remove_fillers, dictionary, llm_polisher, trailing_space, delivery_policy, session_policy, record_mode
  * WHAT:  Typed reads of a SettingsSnapshot for the settings the core acts on.
  * WHY:   Values are stored as tagged SettingValues and enum text; spelling them is the registry's job, so the
  *        pipeline asks here instead of matching kinds or comparing strings. A resolved snapshot always holds a
  *        valid value for every key, so each fallback only guards a snapshot built outside `resolve` and uses the
  *        spec's own default.
- * WHERE: Re-exported by registry/settings; read by pipeline/appearance, pipeline/asr, pipeline/polish and
- *        pipeline/delivery.
+ * WHERE: Re-exported by registry/settings; read by pipeline/appearance, pipeline/asr, pipeline/polish,
+ *        pipeline/delivery and the session actor (session_policy).
  */
 
 use super::{find, keys, values};
 use crate::types::{
-    Accelerator, DeliveryPolicy, EngineId, Language, SettingKey, SettingValue, SettingsSnapshot,
-    TextPair, ThemePreference,
+    Accelerator, DeliveryPolicy, EngineId, Language, RecordMode, SessionPolicy, SettingKey,
+    SettingValue, SettingsSnapshot, TextPair, ThemePreference,
 };
 
 /// The `general.theme` choice in effect; a resolved snapshot always holds a valid one, so the default is only a
@@ -109,6 +109,54 @@ pub fn delivery_policy(settings: &SettingsSnapshot) -> DeliveryPolicy {
         auto_paste: bool_or_default(settings, &keys::AUTO_PASTE),
         keep_on_clipboard: bool_or_default(settings, &keys::KEEP_ON_CLIPBOARD),
     }
+}
+
+/// `hotkeys.mode`: whether the record hotkey toggles a take or records while held.
+pub fn record_mode(settings: &SettingsSnapshot) -> RecordMode {
+    match settings.enum_value(&keys::HOTKEY_MODE) {
+        Some(values::HOLD) => RecordMode::Hold,
+        _ => RecordMode::Toggle,
+    }
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: session_policy, cancel countdown setting, max duration setting, hotkey mode setting, take rules read
+ * WHAT:  The SessionPolicy a take started now runs under: SessionPolicy::DEFAULT's fixed rules with the record mode,
+ *        the Esc countdown and the longest take taken from settings.
+ * WHY:   The session actor reads this once per record press and the state machine copies it into the take, so a
+ *        setting changed mid-take applies from the next take on. `session.max_duration_min` is stored in minutes
+ *        and the machine counts milliseconds; a negative value (only possible outside `resolve`) falls back to the
+ *        spec default like every other read.
+ * WHERE: The session actor (step 14) builds SessionInput::RecordPressed with it.
+ */
+pub fn session_policy(settings: &SettingsSnapshot) -> SessionPolicy {
+    let defaults = SessionPolicy::DEFAULT;
+    let cancel_countdown_ms = int_or_default(settings, &keys::CANCEL_COUNTDOWN_MS)
+        .and_then(|millis| u32::try_from(millis).ok())
+        .unwrap_or(defaults.cancel_countdown_ms);
+    let max_duration_ms = int_or_default(settings, &keys::MAX_DURATION_MIN)
+        .and_then(|minutes| u64::try_from(minutes).ok())
+        .map_or(defaults.max_duration_ms, |minutes| {
+            minutes.saturating_mul(MS_PER_MINUTE)
+        });
+    SessionPolicy {
+        record_mode: record_mode(settings),
+        cancel_countdown_ms,
+        max_duration_ms,
+        ..defaults
+    }
+}
+
+const MS_PER_MINUTE: u64 = 60_000;
+
+/// An Int setting, or its spec's default when the snapshot lacks it (only outside `resolve`).
+fn int_or_default(settings: &SettingsSnapshot, key: &SettingKey) -> Option<i32> {
+    settings
+        .int(key)
+        .or_else(|| match find(key).map(|spec| &spec.default) {
+            Some(SettingValue::Int(value)) => Some(*value),
+            _ => None,
+        })
 }
 
 /// A Bool setting, or its spec's default when the snapshot lacks it (only outside `resolve`).

@@ -17,8 +17,8 @@ use crate::{
     registry::{engines, engines::tests::SAMPLE_ENGINES, hotkeys},
     types::{
         Accelerator, AppError, CapsRequirement, DeliveryPolicy, EnumOption, EnumOptions, Language,
-        OptionSource, ResourceKind, SettingKey, SettingKind, SettingValue, SettingsSnapshot,
-        StaticList, StaticStr, TextPair, ThemePreference,
+        OptionSource, RecordMode, ResourceKind, SessionPolicy, SettingKey, SettingKind,
+        SettingValue, SettingsSnapshot, StaticList, StaticStr, TextPair, ThemePreference,
     },
 };
 
@@ -364,5 +364,46 @@ fn delivery_policy_reads_the_output_toggles() {
         delivery_policy(&SettingsSnapshot::default()),
         policy(true, true),
         "missing values fall back to the spec defaults"
+    );
+}
+
+#[test]
+fn session_policy_reads_the_mode_countdown_and_longest_take() {
+    assert_eq!(
+        session_policy(&defaults()),
+        SessionPolicy::DEFAULT,
+        "02 §3.3 defaults are the policy's defaults"
+    );
+    let chosen = resolve([
+        (
+            keys::HOTKEY_MODE,
+            SettingValue::Enum(StaticStr::new(values::HOLD)),
+        ),
+        (keys::CANCEL_COUNTDOWN_MS, SettingValue::Int(5_000)),
+        (keys::MAX_DURATION_MIN, SettingValue::Int(60)),
+    ]);
+    let policy = session_policy(&chosen);
+    assert_eq!(policy.record_mode, RecordMode::Hold);
+    assert_eq!(record_mode(&chosen), RecordMode::Hold);
+    assert_eq!(policy.cancel_countdown_ms, 5_000);
+    assert_eq!(policy.max_duration_ms, 60 * 60_000);
+    assert_eq!(
+        (policy.debounce_ms, policy.min_speech_ms),
+        (150, 250),
+        "fixed rules are not settings"
+    );
+    assert_eq!(
+        session_policy(&SettingsSnapshot::default()),
+        SessionPolicy::DEFAULT,
+        "missing values fall back to the spec defaults"
+    );
+    assert_eq!(
+        session_policy(&SettingsSnapshot::from_resolved([(
+            keys::MAX_DURATION_MIN,
+            SettingValue::Int(-1),
+        )]))
+        .max_duration_ms,
+        SessionPolicy::DEFAULT.max_duration_ms,
+        "a negative value from outside resolve never becomes a zero-length take"
     );
 }

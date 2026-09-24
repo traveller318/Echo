@@ -35,6 +35,7 @@ mod power;
 mod registry;
 mod scheduling;
 mod session;
+mod session_machine;
 mod settings;
 mod static_data;
 mod target;
@@ -64,7 +65,9 @@ pub use events::{
     ModelProgress, SessionStateChanged, SettingsChanged, TranscriptSaved,
 };
 pub use future::BoxFuture;
-pub use hotkey::{HotkeyBindFailure, HotkeyEvent, HotkeyScope, HotkeySpec, KeyState, Shortcut};
+pub use hotkey::{
+    HotkeyBindFailure, HotkeyEvent, HotkeyScope, HotkeySpec, KeyState, RecordMode, Shortcut,
+};
 pub use ids::{
     AudioDeviceId, EngineId, HotkeyId, InvalidId, MetricId, ModelId, SettingKey, TranscriptId,
 };
@@ -86,6 +89,11 @@ pub use power::PowerEvent;
 pub use registry::RegistryView;
 pub use scheduling::WorkerPriority;
 pub use session::{DeliveryOutcome, SessionStatus, SessionUiInput, SessionView};
+pub use session_machine::{
+    ArmingTake, CancelPendingTake, DeliveringTake, FinalizingTake, IgnoreReason, IgnoredInput,
+    RecordClock, RecordingTake, SessionCue, SessionEffect, SessionInput, SessionPhase,
+    SessionPolicy, SessionState, SessionTimer, SettledTake, StopCause, TakeData, TimerToken,
+};
 pub use settings::{
     CapsRequirement, EnumOption, EnumOptions, OptionSource, SettingEntry, SettingKind,
     SettingSection, SettingSpec, SettingUnit, SettingValue, SettingsResetInput, SettingsSetInput,
@@ -97,5 +105,5 @@ pub use transcript::{
     NewTranscript, Page, PageCursor, Transcript, TranscriptChange, TranscriptRef,
     TranscriptSelector, TranscriptStatus, TranscriptSummary,
 };
-pub use units::{ByteCount, UnixMs};
+pub use units::{ByteCount, MonotonicMs, UnixMs};
 pub use update::UpdateStatus;

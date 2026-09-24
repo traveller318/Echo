@@ -478,9 +478,9 @@ export type SessionStatus = "idle" |
 "arming" | "recording" | 
 /**  Esc pressed: capture paused while the cancel countdown runs. */
 "cancel_pending" | 
-/**  Capture stopped: tail ASR, segment join and polish are running. */
+/**  Capture stopped: the tail segment is being transcribed. */
 "finalizing" | 
-/**  Text is going to the clipboard and the target app. */
+/**  The joined text is being polished and delivered to the clipboard and the target app. */
 "delivering" | "done" | 
 /**  The countdown elapsed: row and audio were deleted. */
 "discarded" | 
@@ -495,7 +495,7 @@ export type SessionUiInput =
 /**  Everything the UI may know about the current take. */
 export type SessionView = {
 	status: SessionStatus,
-	/**  The take's row, once it exists (from `Arming` on). */
+	/**  The take's row (from `Arming` on); None when no row exists (a missing model, a discarded take). */
 	transcript_id: TranscriptId | null,
 	/**  Recorded time so far, excluding time paused in `CancelPending`. */
 	elapsed_ms: number,
