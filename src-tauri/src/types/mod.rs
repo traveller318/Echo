@@ -44,7 +44,7 @@ mod units;
 mod update;
 
 pub use appearance::{AppearanceView, Backdrop, ThemePreference, Transparency};
-pub use asr::AsrOutput;
+pub use asr::{AsrEvent, AsrLoadRequest, AsrLoaded, AsrOutput, AsrReadiness};
 pub use audio::{
     AudioDevice, AudioTestLevelInput, CaptureEvent, CaptureFormat, CaptureSummary, MicCheck,
     MicVerdict, PIPELINE_SAMPLE_RATE_HZ, SegmentPolicy, SpeechSegment, VadEvent, samples_to_ms,

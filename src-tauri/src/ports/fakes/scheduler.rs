@@ -1,7 +1,7 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: FakeWorkerScheduler, fake thread priority, recorded priorities, worker thread test
+ * SOURCE OF TRUTH KEYWORDS: FakeWorkerScheduler, fake thread priority, recorded priorities, worker thread test, full speed requests
  * WHAT:  FakeWorkerScheduler: a WorkerScheduler that records every requested priority with the name of the thread
- *        that asked, and can fail the next request.
+ *        that asked and counts full-speed requests, and can fail the next priority request.
  * WHY:   Pipeline tests prove each worker asks for its class from its own thread (05 A9) and keeps running when
  *        the request fails, without changing real thread priorities.
  * WHERE: pipeline/capture tests and the ipc command harness.
@@ -19,6 +19,7 @@ use crate::{
 struct SchedulerState {
     requests: Vec<(Option<String>, WorkerPriority)>,
     next_error: Option<PortError>,
+    full_speed: usize,
 }
 
 /// A recording thread-priority setter.
@@ -36,6 +37,11 @@ impl FakeWorkerScheduler {
     pub fn fail_next(&self, error: PortError) {
         lock(&self.state).next_error = Some(error);
     }
+
+    /// How many times the process was asked to run at full speed.
+    pub fn full_speed_requests(&self) -> usize {
+        lock(&self.state).full_speed
+    }
 }
 
 impl WorkerScheduler for FakeWorkerScheduler {
@@ -46,6 +52,11 @@ impl WorkerScheduler for FakeWorkerScheduler {
         }
         let name = thread::current().name().map(str::to_owned);
         state.requests.push((name, priority));
+        Ok(())
+    }
+
+    fn keep_full_speed(&self) -> PortResult<()> {
+        lock(&self.state).full_speed += 1;
         Ok(())
     }
 }

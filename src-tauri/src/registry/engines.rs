@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: engine registry, EngineEntry, EnginePort, BuildCtx, build_asr, build_polisher, build_vad, SILERO_VAD, default_vad, lazy adapter construction
+ * SOURCE OF TRUTH KEYWORDS: engine registry, EngineEntry, EnginePort, BuildCtx, build_asr, build_polisher, build_vad, PARAKEET_TDT_V3, SILERO_VAD, default_vad, lazy adapter construction
  * WHAT:  The list of every local AI engine (ASR, polisher, VAD): id, label, model, declared caps and a lazy
  *        `build` fn; lookups by id and kind; the IPC view (EngineSpec); and the typed builders the composition
  *        root and pipeline call. BuildCtx is what a build fn may use.
@@ -7,19 +7,20 @@
  *        constructor sit in one EnginePort variant, so an entry cannot declare ASR caps and build a polisher.
  *        Only the selected engine is ever constructed: `build` runs when bootstrap or an engine switch asks
  *        for that id, never at startup for the whole list (02 §3.5). VAD builds a fresh `Box` because detectors
- *        are stateful per stream (05 A11). BuildCtx lives here, not in types/, because it holds a port handle
- *        and types/ may not import ports (02 §3.2). Concrete entries arrive with their adapters: Silero VAD
- *        (step 09) is here; Parakeet (step 10), rules (step 11) and Qwen3 (step 23) follow.
- * WHERE: Built through by app/bootstrap and pipeline/models.rs (engine switch); read by registry/settings
- *        (runtime options), `registry_get` and the Models page (via `specs`).
+ *        are stateful per stream (05 A11). A build fn only constructs: an ASR engine receives its model folder
+ *        later through `AsrEngine::load`, so BuildCtx carries paths, not the model store (the pipeline locates
+ *        models). BuildCtx lives here with the entries that take it. Concrete entries arrive with their adapters:
+ *        Parakeet TDT v3 (the default ASR) and Silero VAD are here; rules (step 11) and Qwen3 (step 23) follow.
+ * WHERE: Built through by the ASR worker's loader (pipeline/asr, startup load and engine switch) and the session
+ *        actor (VAD); read by registry/settings (runtime options), `registry_get` and the Models page (via `specs`).
  */
 
 use std::sync::Arc;
 
 use super::models;
 use crate::{
-    adapters::vad::SileroVad,
-    ports::{AsrEngine, ModelStore, TextPolisher, VoiceActivity},
+    adapters::{asr::ParakeetOnnx, vad::SileroVad},
+    ports::{AsrEngine, TextPolisher, VoiceActivity},
     types::{
         AppError, AppPaths, AsrCaps, EngineCaps, EngineId, EngineKind, EngineSpec, ModelId,
         ModelManifest, PolisherCaps, PortError, PortResult, ResourceKind, StaticStr, VadCaps,
@@ -27,11 +28,10 @@ use crate::{
 };
 
 /// Everything an engine's build fn may use.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildCtx {
     /// Data and resource locations (bundled Silero model, ONNX Runtime DLLs, `models/`, `runtimes/`).
     pub paths: AppPaths,
-    /// Finds installed model files; engines that load lazily keep it to locate their model later.
-    pub model_store: Arc<dyn ModelStore>,
 }
 
 pub type BuildAsr = fn(&BuildCtx) -> PortResult<Arc<dyn AsrEngine>>;
@@ -96,21 +96,43 @@ impl EngineEntry {
     pub fn manifest(&self) -> Option<&'static ModelManifest> {
         self.model_id.as_ref().and_then(models::find)
     }
+
+    /// The declared caps when this entry builds an ASR engine.
+    pub const fn asr_caps(&self) -> Option<&AsrCaps> {
+        match &self.port {
+            EnginePort::Asr { caps, .. } => Some(caps),
+            _ => None,
+        }
+    }
 }
+
+/// Registry id of the Parakeet TDT 0.6B v3 speech engine (the `transcription.engine` default).
+pub const PARAKEET_TDT_V3: EngineId = EngineId::from_static("parakeet-tdt-0.6b-v3");
 
 /// Registry id of the Silero VAD v5 detector.
 pub const SILERO_VAD: EngineId = EngineId::from_static("silero-vad-v5");
 
 /// Every engine, in the order the Models page lists them.
-pub const ENGINES: &[EngineEntry] = &[EngineEntry {
-    id: SILERO_VAD,
-    label: StaticStr::new("Silero VAD"),
-    model_id: Some(models::SILERO_VAD_V5),
-    port: EnginePort::Vad {
-        caps: SileroVad::CAPS,
-        build: build_silero_vad,
+pub const ENGINES: &[EngineEntry] = &[
+    EngineEntry {
+        id: PARAKEET_TDT_V3,
+        label: StaticStr::new("Parakeet TDT 0.6B v3"),
+        model_id: Some(models::PARAKEET_TDT_V3),
+        port: EnginePort::Asr {
+            caps: ParakeetOnnx::CAPS,
+            build: build_parakeet,
+        },
     },
-}];
+    EngineEntry {
+        id: SILERO_VAD,
+        label: StaticStr::new("Silero VAD"),
+        model_id: Some(models::SILERO_VAD_V5),
+        port: EnginePort::Vad {
+            caps: SileroVad::CAPS,
+            build: build_silero_vad,
+        },
+    },
+];
 
 /// The engine with `id`.
 pub fn find(id: &EngineId) -> Option<&'static EngineEntry> {
@@ -137,6 +159,14 @@ pub fn build_default_vad(ctx: &BuildCtx) -> PortResult<Box<dyn VoiceActivity>> {
         })
         .with_detail("no VAD engine is registered")),
     }
+}
+
+/// Parakeet TDT v3 on ONNX Runtime, unloaded: the ASR worker loads it from the model folder (05 A1).
+fn build_parakeet(ctx: &BuildCtx) -> PortResult<Arc<dyn AsrEngine>> {
+    Ok(Arc::new(ParakeetOnnx::new(
+        ctx.paths.clone(),
+        models::PARAKEET_TDT_V3,
+    )))
 }
 
 /// Silero VAD v5 on the bundled model (05 A11).
@@ -228,9 +258,7 @@ pub(super) mod tests {
 
     use super::*;
     use crate::{
-        ports::fakes::{
-            FakeAsrEngine, FakeModelStore, FakePolish, FakeTextPolisher, FakeVoiceActivity,
-        },
+        ports::fakes::{FakeAsrEngine, FakePolish, FakeTextPolisher, FakeVoiceActivity},
         registry::tests::is_registry_id,
         types::{
             Accelerator, Language, LanguageSupport, LatencyClass, StaticList,
@@ -328,7 +356,6 @@ pub(super) mod tests {
     fn ctx() -> BuildCtx {
         BuildCtx {
             paths: AppPaths::new("data", "resources"),
-            model_store: Arc::new(FakeModelStore::new("data")),
         }
     }
 
@@ -403,13 +430,49 @@ pub(super) mod tests {
         let data = TempDir::new("engines-vad");
         let ctx = BuildCtx {
             paths: source_resource_paths(data.path()),
-            model_store: Arc::new(FakeModelStore::new(data.path())),
         };
         assert_eq!(default_vad().map(|entry| &entry.id), Some(&SILERO_VAD));
         let mut vad = build_default_vad(&ctx).unwrap();
         assert_eq!(vad.caps(), SileroVad::CAPS);
         vad.reset().unwrap();
         assert!(vad.push(&[0.0; 512]).is_ok());
+    }
+
+    #[test]
+    fn parakeet_is_the_default_asr_engine_and_builds_unloaded() {
+        let entry = find(&PARAKEET_TDT_V3).unwrap();
+        assert_eq!(entry.kind(), EngineKind::Asr);
+        assert_eq!(
+            of_kind(EngineKind::Asr).next().map(|entry| &entry.id),
+            Some(&PARAKEET_TDT_V3)
+        );
+        let engine = build_asr(&PARAKEET_TDT_V3, &ctx()).unwrap();
+        assert_eq!(engine.caps(), ParakeetOnnx::CAPS);
+        assert_eq!(
+            engine
+                .transcribe(&[0.0; 16], None)
+                .err()
+                .map(PortError::into_app_error),
+            Some(AppError::Asr),
+            "nothing loads until the ASR worker asks"
+        );
+    }
+
+    /// The manifest the model manager installs and the files the adapter opens must be the same list.
+    #[test]
+    fn parakeet_manifest_lists_exactly_the_adapter_files() {
+        let manifest = find(&PARAKEET_TDT_V3)
+            .and_then(EngineEntry::manifest)
+            .unwrap();
+        let mut listed: Vec<&str> = manifest
+            .files
+            .iter()
+            .map(|file| file.name.as_str())
+            .collect();
+        let mut needed = ParakeetOnnx::FILES.to_vec();
+        listed.sort_unstable();
+        needed.sort_unstable();
+        assert_eq!(listed, needed);
     }
 
     #[test]

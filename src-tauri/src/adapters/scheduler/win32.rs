@@ -1,18 +1,24 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: Win32WorkerScheduler, SetThreadPriority, THREAD_PRIORITY_ABOVE_NORMAL, capture worker priority, GetCurrentThread
- * WHAT:  Win32WorkerScheduler: WorkerScheduler on `SetThreadPriority` for the calling thread.
+ * SOURCE OF TRUTH KEYWORDS: Win32WorkerScheduler, SetThreadPriority, THREAD_PRIORITY_ABOVE_NORMAL, capture worker priority, GetCurrentThread, SetProcessInformation, ProcessPowerThrottling, EcoQoS
+ * WHAT:  Win32WorkerScheduler: WorkerScheduler on `SetThreadPriority` for the calling thread, and on
+ *        `SetProcessInformation(ProcessPowerThrottling)` with the execution-speed bit controlled and cleared for the
+ *        whole process.
  * WHY:   The capture worker must keep up with the microphone while ONNX inference saturates other cores, so it runs
  *        one step above normal; the ASR thread stays normal (05 A9). Above normal (not time-critical) is enough for
  *        a thread that drains a 2 s ring every 10 ms, and it cannot starve the UI or the device callback thread
  *        (which Windows audio already runs at its own elevated priority). The pseudo-handle from GetCurrentThread
- *        needs no closing.
+ *        needs no closing. Clearing PROCESS_POWER_THROTTLING_EXECUTION_SPEED in StateMask while setting it in
+ *        ControlMask is Microsoft's documented way to turn EcoQoS off for a process (05 W35); the pseudo-handle from
+ *        GetCurrentProcess needs no closing either.
  * WHERE: Built by app/bootstrap into CommandCtx (and the session actor later); used through `dyn WorkerScheduler`
  *        by pipeline/capture and the ASR worker.
  */
 
 use windows::Win32::System::Threading::{
-    GetCurrentThread, SetThreadPriority, THREAD_PRIORITY, THREAD_PRIORITY_ABOVE_NORMAL,
-    THREAD_PRIORITY_NORMAL,
+    GetCurrentProcess, GetCurrentThread, PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+    PROCESS_POWER_THROTTLING_EXECUTION_SPEED, PROCESS_POWER_THROTTLING_STATE,
+    ProcessPowerThrottling, SetProcessInformation, SetThreadPriority, THREAD_PRIORITY,
+    THREAD_PRIORITY_ABOVE_NORMAL, THREAD_PRIORITY_NORMAL,
 };
 
 use crate::{
@@ -41,7 +47,34 @@ impl WorkerScheduler for Win32WorkerScheduler {
             },
         )
     }
+
+    fn keep_full_speed(&self) -> PortResult<()> {
+        // The struct is three u32s, so its size always fits the u32 the API takes.
+        let size = u32::try_from(size_of::<PROCESS_POWER_THROTTLING_STATE>()).unwrap_or(u32::MAX);
+        // SAFETY: GetCurrentProcess returns a pseudo-handle that is always valid and never closed; the pointer and
+        // size describe FULL_SPEED, a constant that outlives the call and is only read.
+        unsafe {
+            SetProcessInformation(
+                GetCurrentProcess(),
+                ProcessPowerThrottling,
+                std::ptr::from_ref(&FULL_SPEED).cast(),
+                size,
+            )
+        }
+        .map_err(|error| {
+            PortError::new(AppError::Internal).with_detail(format!(
+                "SetProcessInformation(ProcessPowerThrottling) failed: {error}"
+            ))
+        })
+    }
 }
+
+/// The power-throttling state that turns EcoQoS off for the process: execution speed controlled, not throttled.
+const FULL_SPEED: PROCESS_POWER_THROTTLING_STATE = PROCESS_POWER_THROTTLING_STATE {
+    Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+    ControlMask: PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+    StateMask: 0,
+};
 
 fn win32_priority(priority: WorkerPriority) -> THREAD_PRIORITY {
     match priority {
@@ -68,6 +101,11 @@ mod tests {
         })
         .join()
         .unwrap()
+    }
+
+    #[test]
+    fn the_process_can_opt_out_of_power_throttling() {
+        Win32WorkerScheduler::new().keep_full_speed().unwrap();
     }
 
     #[test]

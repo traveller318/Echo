@@ -7,6 +7,7 @@
  */
 
 pub mod appearance;
+pub mod asr;
 pub mod audio;
 pub mod consent;
 pub mod launcher;

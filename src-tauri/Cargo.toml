@@ -27,8 +27,8 @@ tauri-build = { version = "=2.6.3", features = [] }
 cpal = "=0.18.2"
 garde = { version = "=0.23.0", default-features = false, features = ["derive"] }
 hound = "=3.5.1"
-# The exact `ort` transcribe-rs pins, so the two unify (05 A17). ONNX Runtime API 24 = ONNX Runtime 1.24.x;
-# `load-dynamic` links nothing and downloads nothing: the bundled DLL is loaded by absolute path (05 A5).
+# The `ort` transcribe-rs 0.3.11 pinned when it was evaluated (05 A17); Parakeet now runs on it directly (05 A10).
+# ONNX Runtime API 24 = ONNX Runtime 1.24.x; `load-dynamic` links nothing and downloads nothing: the bundled DLL is loaded by absolute path (05 A5).
 ort = { version = "=2.0.0-rc.12", default-features = false, features = ["api-24", "load-dynamic", "std"] }
 parking_lot = "=0.12.5"
 rtrb = "=0.4.0"
@@ -57,6 +57,7 @@ windows = { version = "=0.61.3", features = [
     "Win32_System_LibraryLoader",
     "Win32_System_Com",
     "Win32_System_Registry",
+    "Win32_System_SystemInformation",
     "Win32_System_Threading",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",

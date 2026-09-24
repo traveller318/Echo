@@ -1,11 +1,12 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: CommandCtx, CommandDeps, command context, managed state, handler dependencies, SharedSettings, AudioCapture, WorkerScheduler, SystemLauncher, AppPaths, Db, event sink
+ * SOURCE OF TRUTH KEYWORDS: CommandCtx, CommandDeps, command context, managed state, handler dependencies, SharedSettings, AudioCapture, WorkerScheduler, SystemLauncher, AsrWorker, AppPaths, Db, event sink
  * WHAT:  CommandCtx: everything a command handler and the factory pipeline may use, managed once by Tauri and
  *        passed to every handler as `&CommandCtx`; CommandDeps: the named parts it is built from.
  * WHY:   Handlers take their dependencies from one place instead of Tauri state lookups, so they stay plain async
  *        fns that tests call with a context built from port fakes and an in-memory database. It holds only ports
  *        (`Arc<dyn …>`, never an adapter, 02 §3.2), the services' `Db` handle, the resolved AppPaths (paths are
- *        resolved only in app/, 05 W23), shared handles and the factory's own reentrancy locks; the registry needs no handle because it is compiled-in `const` data. Events leave
+ *        resolved only in app/, 05 W23), shared handles (settings, the ASR worker that owns the speech engine) and
+ *        the factory's own reentrancy locks; the registry needs no handle because it is compiled-in `const` data. Events leave
  *        through the `EventSink<AppEvent>` port, so no handler imports Tauri. Built from a named-field struct so a
  *        new dependency (the session actor's inbox, step 14) is one field here plus one line where it is wired.
  * WHERE: Built by app/bootstrap and managed on the Tauri app; read by ipc/factory.rs (preflight, reentrancy)
@@ -16,6 +17,7 @@ use std::sync::Arc;
 
 use super::reentrancy::ReentrancyLocks;
 use crate::{
+    pipeline::asr::AsrWorker,
     ports::{
         AudioCapture, EventSink, PrivacyConsent, SystemAppearance, SystemLauncher, WorkerScheduler,
     },
@@ -37,6 +39,8 @@ pub struct CommandDeps {
     pub audio: Arc<dyn AudioCapture>,
     /// Thread priorities for the pipeline workers a command starts (the microphone check's capture worker).
     pub scheduler: Arc<dyn WorkerScheduler>,
+    /// The thread that owns the speech engine: startup load, engine switch, takes (the session actor shares it).
+    pub asr: AsrWorker,
     /// Every data and resource location, resolved once by app/bootstrap.
     pub paths: AppPaths,
     /// The database every service call goes through.
@@ -53,6 +57,7 @@ pub struct CommandCtx {
     launcher: Arc<dyn SystemLauncher>,
     audio: Arc<dyn AudioCapture>,
     scheduler: Arc<dyn WorkerScheduler>,
+    asr: AsrWorker,
     paths: AppPaths,
     db: Db,
     events: Arc<dyn EventSink<AppEvent>>,
@@ -68,6 +73,7 @@ impl CommandCtx {
             launcher,
             audio,
             scheduler,
+            asr,
             paths,
             db,
             events,
@@ -79,6 +85,7 @@ impl CommandCtx {
             launcher,
             audio,
             scheduler,
+            asr,
             paths,
             db,
             events,
@@ -121,6 +128,11 @@ impl CommandCtx {
         Arc::clone(&self.scheduler)
     }
 
+    /// The ASR worker (speech engine owner).
+    pub fn asr(&self) -> &AsrWorker {
+        &self.asr
+    }
+
     /// Every data and resource location.
     pub fn paths(&self) -> &AppPaths {
         &self.paths
@@ -145,7 +157,8 @@ impl CommandCtx {
 /**
  * SOURCE OF TRUTH KEYWORDS: command test harness, test CommandCtx, in-memory database context, recorded events
  * WHAT:  `harness`: a CommandCtx over given settings and consent, a Mica-capable appearance fake, a recording
- *        launcher, a 48 kHz stereo capture fake, a recording thread scheduler, AppPaths under the system temp
+ *        launcher, a 48 kHz stereo capture fake, a recording thread scheduler, an ASR worker whose engines are
+ *        English FakeAsrEngines (nothing loaded until a test asks), AppPaths under the system temp
  *        folder (never touched: services take the in-memory database), a fresh in-memory database with the real
  *        migrations and a RecordingSink for events, plus handles to the sink and the fakes; `ctx()` is the
  *        all-defaults one.
@@ -159,13 +172,17 @@ pub mod testing {
 
     use super::{CommandCtx, CommandDeps};
     use crate::{
-        ports::fakes::{
-            FakeAudioCapture, FakePrivacyConsent, FakeSystemAppearance, FakeSystemLauncher,
-            FakeWorkerScheduler, RecordingSink,
+        pipeline::asr::{AsrWorker, AsrWorkerConfig},
+        ports::{
+            AsrEngine,
+            fakes::{
+                FakeAsrEngine, FakeAudioCapture, FakePrivacyConsent, FakeSystemAppearance,
+                FakeSystemLauncher, FakeWorkerScheduler, RecordingSink,
+            },
         },
         registry,
         services::Db,
-        types::{AppEvent, AppPaths, CaptureFormat, SettingsSnapshot, SharedSettings},
+        types::{AppEvent, AppPaths, CaptureFormat, EngineId, SettingsSnapshot, SharedSettings},
     };
 
     /// The format the harness microphone delivers.
@@ -191,6 +208,15 @@ pub mod testing {
         let audio = Arc::new(FakeAudioCapture::new(HARNESS_AUDIO_FORMAT));
         let scheduler = Arc::new(FakeWorkerScheduler::default());
         let root = std::env::temp_dir().join("echo-harness");
+        let asr = AsrWorker::spawn(AsrWorkerConfig {
+            build: Arc::new(|_: &EngineId| {
+                Ok(Arc::new(FakeAsrEngine::english()) as Arc<dyn AsrEngine>)
+            }),
+            // Its own scheduler: the worker thread's request must not race the harness scheduler's assertions.
+            scheduler: Arc::new(FakeWorkerScheduler::default()),
+            readiness: None,
+        })
+        .unwrap();
         let ctx = CommandCtx::new(CommandDeps {
             settings: SharedSettings::new(settings),
             consent: Arc::new(consent),
@@ -198,6 +224,7 @@ pub mod testing {
             launcher: Arc::clone(&launcher) as _,
             audio: Arc::clone(&audio) as _,
             scheduler: Arc::clone(&scheduler) as _,
+            asr,
             paths: AppPaths::new(root.join("data"), root.join("resources")),
             db: Db::open_in_memory().unwrap(),
             events: Arc::clone(&events) as _,

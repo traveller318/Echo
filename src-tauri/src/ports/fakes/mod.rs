@@ -1,7 +1,8 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: port fakes, test doubles, fake adapters, RecordingSink, poll_once, pipeline tests, cfg(test)
+ * SOURCE OF TRUTH KEYWORDS: port fakes, test doubles, fake adapters, RecordingSink, ChannelSink, poll_once, pipeline tests, cfg(test)
  * WHAT:  One scriptable in-memory fake per port (test builds only), plus RecordingSink (an EventSink that keeps
- *        every event) and `poll_once` (drives a fake's future without an async runtime).
+ *        every event), ChannelSink (an EventSink a test can wait on, for events a worker thread emits later) and
+ *        `poll_once` (drives a fake's future without an async runtime).
  * WHY:   Pipeline, factory and registry tests (02 §13) need every port without a microphone, a model, a GPU or a
  *        desktop. The fakes live in ports/ because pipeline and ipc may import ports but not adapters (02 §3.2),
  *        and they are compiled only under `#[cfg(test)]`, so nothing here ships. Each fake enforces its port's
@@ -32,8 +33,12 @@ mod vad;
 use std::{
     future::Future,
     pin::pin,
-    sync::{Mutex, MutexGuard, PoisonError},
+    sync::{
+        Mutex, MutexGuard, PoisonError,
+        mpsc::{self, Receiver, RecvTimeoutError, Sender},
+    },
     task::{Context, Poll, Waker},
+    time::Duration,
 };
 
 pub use appearance::FakeSystemAppearance;
@@ -94,6 +99,53 @@ impl<E: Send> EventSink<E> for RecordingSink<E> {
     }
 }
 
+/// How long `ChannelSink::next` waits before it calls the event missing: generous, so a loaded machine never flakes.
+pub const EVENT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: ChannelSink, wait for event, worker thread events, next event timeout
+ * WHAT:  An EventSink that queues events for a test to take in order, waiting up to EVENT_TIMEOUT for each.
+ * WHY:   Workers (the ASR thread, the session actor) emit from their own threads at their own pace; a test must wait
+ *        for the next event without sleeping or polling, and `nothing_within` proves an event does not come.
+ * WHERE: pipeline/asr tests; any test of a threaded pipeline stage.
+ */
+pub struct ChannelSink<E> {
+    sender: Mutex<Sender<E>>,
+    receiver: Mutex<Receiver<E>>,
+}
+
+impl<E> Default for ChannelSink<E> {
+    fn default() -> Self {
+        let (sender, receiver) = mpsc::channel();
+        Self {
+            sender: Mutex::new(sender),
+            receiver: Mutex::new(receiver),
+        }
+    }
+}
+
+impl<E> ChannelSink<E> {
+    /// The next event, waiting up to EVENT_TIMEOUT; None if none arrived.
+    pub fn next(&self) -> Option<E> {
+        lock(&self.receiver).recv_timeout(EVENT_TIMEOUT).ok()
+    }
+
+    /// True when no event arrives within `window`.
+    pub fn nothing_within(&self, window: Duration) -> bool {
+        matches!(
+            lock(&self.receiver).recv_timeout(window),
+            Err(RecvTimeoutError::Timeout)
+        )
+    }
+}
+
+impl<E: Send> EventSink<E> for ChannelSink<E> {
+    fn emit(&self, event: E) {
+        // The receiver lives as long as the sink, so the send cannot fail.
+        let _ = lock(&self.sender).send(event);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::future;
@@ -104,6 +156,21 @@ mod tests {
     fn poll_once_reports_ready_and_pending() {
         assert_eq!(poll_once(future::ready(7)), Poll::Ready(7));
         assert_eq!(poll_once(future::pending::<u8>()), Poll::Pending);
+    }
+
+    #[test]
+    fn channel_sink_hands_events_over_across_threads() {
+        let sink = std::sync::Arc::new(ChannelSink::default());
+        let emitter = std::sync::Arc::clone(&sink);
+        std::thread::spawn(move || {
+            emitter.emit(1);
+            emitter.emit(2);
+        })
+        .join()
+        .unwrap();
+        assert_eq!(sink.next(), Some(1));
+        assert_eq!(sink.next(), Some(2));
+        assert!(sink.nothing_within(Duration::from_millis(20)));
     }
 
     #[test]

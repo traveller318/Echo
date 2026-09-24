@@ -10,7 +10,8 @@
  *        compile instead of silently reading a default. Hotkey defaults come from registry/hotkeys so a hotkey
  *        and its setting cannot disagree.
  * WHERE: Read by services/settings callers (commands validate writes with `validate`), the pipeline (via
- *        `resolve`), registry/permissions (offline mode), registry/hotkeys and `registry_get`.
+ *        `resolve` and the typed transcription reads), registry/permissions (offline mode), registry/hotkeys and
+ *        `registry_get`.
  */
 
 use super::{
@@ -19,8 +20,8 @@ use super::{
 };
 use crate::types::{
     Accelerator, AppError, AsrCaps, CapsRequirement, EngineId, EngineKind, EnumOption, EnumOptions,
-    OptionSource, ResourceKind, SettingKey, SettingKind, SettingSection, SettingSpec, SettingUnit,
-    SettingValue, SettingsSnapshot, StaticList, StaticStr, ThemePreference,
+    Language, OptionSource, ResourceKind, SettingKey, SettingKind, SettingSection, SettingSpec,
+    SettingUnit, SettingValue, SettingsSnapshot, StaticList, StaticStr, ThemePreference,
 };
 
 /**
@@ -70,6 +71,10 @@ pub mod values {
     pub const TOGGLE: &str = "toggle";
     /// `hotkeys.mode`: record while the keys are held.
     pub const HOLD: &str = "hold";
+    /// `transcription.accelerator`: run on the processor.
+    pub const CPU: &str = "cpu";
+    /// `transcription.accelerator`: run on the graphics card (DirectML).
+    pub const GPU: &str = "gpu";
 }
 
 const THEME_OPTIONS: &[EnumOption] = &[
@@ -500,6 +505,46 @@ pub fn theme(settings: &SettingsSnapshot) -> ThemePreference {
         .unwrap_or_default()
 }
 
+/**
+ * SOURCE OF TRUTH KEYWORDS: asr_engine setting, language_preference, accelerator_preference, transcription settings read
+ * WHAT:  Typed reads of the transcription settings: the selected ASR engine id, the preferred language and the
+ *        preferred accelerator, where `None` means `auto` (let the engine decide).
+ * WHY:   The enum values are stored as text; spelling them (and the `auto` sentinel) is this registry's job, so the
+ *        pipeline asks here instead of comparing strings. A preference is not yet a choice: the pipeline narrows it
+ *        to what the loaded engine's caps offer (pipeline/asr/plan.rs), because the stored value was validated
+ *        against the engine selected when it was written.
+ * WHERE: pipeline/asr (the load request at startup and engine switch, the language of each take).
+ */
+pub fn asr_engine(settings: &SettingsSnapshot) -> Option<EngineId> {
+    settings
+        .enum_value(&keys::ASR_ENGINE)
+        .map(|id| EngineId::from(id.to_owned()))
+}
+
+/// `transcription.language`; None for `auto` (or an unset value).
+pub fn language_preference(settings: &SettingsSnapshot) -> Option<Language> {
+    settings
+        .enum_value(&keys::LANGUAGE)
+        .filter(|value| *value != values::AUTO)
+        .map(|value| Language::from(value.to_owned()))
+}
+
+/// `transcription.accelerator`; None for `auto` (or a value no accelerator is stored as).
+pub fn accelerator_preference(settings: &SettingsSnapshot) -> Option<Accelerator> {
+    let value = settings.enum_value(&keys::ACCELERATOR)?;
+    [Accelerator::Cpu, Accelerator::Gpu]
+        .into_iter()
+        .find(|accelerator| accelerator_value(*accelerator) == value)
+}
+
+/// How an accelerator is stored in `transcription.accelerator`.
+const fn accelerator_value(accelerator: Accelerator) -> &'static str {
+    match accelerator {
+        Accelerator::Cpu => values::CPU,
+        Accelerator::Gpu => values::GPU,
+    }
+}
+
 /// The options `source` offers right now, given the current settings (the selected ASR engine).
 pub fn options(source: OptionSource, settings: &SettingsSnapshot) -> Vec<EnumOption> {
     options_in(engines::ENGINES, source, settings)
@@ -605,11 +650,11 @@ fn selected_asr_caps<'a>(
     entries: &'a [EngineEntry],
     settings: &SettingsSnapshot,
 ) -> Option<&'a AsrCaps> {
-    let selected = EngineId::from(settings.enum_value(&keys::ASR_ENGINE)?.to_owned());
-    entries.iter().find_map(|entry| match &entry.port {
-        EnginePort::Asr { caps, .. } if entry.id == selected => Some(caps),
-        _ => None,
-    })
+    let selected = asr_engine(settings)?;
+    entries
+        .iter()
+        .find(|entry| entry.id == selected)
+        .and_then(EngineEntry::asr_caps)
 }
 
 fn engine_option(entry: &EngineEntry) -> EnumOption {
@@ -629,14 +674,11 @@ fn auto_option(label: &'static str) -> EnumOption {
 }
 
 fn accelerator_option(accelerator: Accelerator) -> EnumOption {
-    let (value, label, requires) = match accelerator {
-        Accelerator::Cpu => ("cpu", "Processor (CPU)", None),
-        Accelerator::Gpu => (
-            "gpu",
-            "Graphics card (GPU)",
-            Some(CapsRequirement::GpuAccelerator),
-        ),
+    let (label, requires) = match accelerator {
+        Accelerator::Cpu => ("Processor (CPU)", None),
+        Accelerator::Gpu => ("Graphics card (GPU)", Some(CapsRequirement::GpuAccelerator)),
     };
+    let value = accelerator_value(accelerator);
     EnumOption {
         value: StaticStr::new(value),
         label: StaticStr::new(label),
@@ -678,6 +720,33 @@ mod tests {
         assert_eq!(theme(&defaults()), ThemePreference::System);
         let dark = resolve([(keys::THEME, SettingValue::Enum(text("dark")))]);
         assert_eq!(theme(&dark), ThemePreference::Dark);
+    }
+
+    #[test]
+    fn transcription_preferences_read_auto_as_none() {
+        let defaults = defaults();
+        assert_eq!(
+            asr_engine(&defaults),
+            Some(engines::PARAKEET_TDT_V3),
+            "the default engine is registered"
+        );
+        assert_eq!(language_preference(&defaults), None);
+        assert_eq!(accelerator_preference(&defaults), None);
+        let chosen = resolve([
+            (keys::LANGUAGE, SettingValue::Enum(text("de"))),
+            (keys::ACCELERATOR, SettingValue::Enum(text("cpu"))),
+        ]);
+        assert_eq!(
+            language_preference(&chosen),
+            Some(Language::from_static("de"))
+        );
+        assert_eq!(accelerator_preference(&chosen), Some(Accelerator::Cpu));
+        for accelerator in [Accelerator::Cpu, Accelerator::Gpu] {
+            assert_eq!(
+                accelerator_option(accelerator).value.as_str(),
+                accelerator_value(accelerator)
+            );
+        }
     }
 
     #[test]

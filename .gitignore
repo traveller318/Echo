@@ -27,6 +27,7 @@
 /src-tauri/target
 /src-tauri/gen/schemas
 
+
 # Local app data that must never be committed (history database, journals, downloaded models, logs)
 *.db
 *.db-shm
@@ -38,8 +39,8 @@
 *.log
 logs/
 # Bundled installer resources (Silero VAD model, sound cues, runtime DLLs) and test fixtures are source, not app data
-/src-tauri/resources/**
-/src-tauri/tests/fixtures/**
+!/src-tauri/resources/**
+!/src-tauri/tests/fixtures/**
 
 # Secrets and local environment
 .env

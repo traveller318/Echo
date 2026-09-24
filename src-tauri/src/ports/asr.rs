@@ -9,7 +9,7 @@
  *        session that fails to start falls back to CPU silently (05 A6). All calls block; the ASR worker runs
  *        them on its own OS thread (02 §6.1).
  * WHERE: Implemented by adapters/asr/parakeet_onnx.rs (ParakeetOnnx) and ports/fakes; built by the registry
- *        engines entry; owned by pipeline/asr_worker.rs; loaded by pipeline/models.rs.
+ *        engines entry; owned, loaded and warmed by the ASR worker (pipeline/asr).
  */
 
 use std::path::Path;

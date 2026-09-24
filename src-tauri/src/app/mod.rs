@@ -25,7 +25,8 @@ use std::process::ExitCode;
  *        before the event loop creates the windows, so no command or emit can run without them. A failure before
  *        logging exists goes to stderr; after that bootstrap has also written it to the log.
  *        Native window appearance (Mica, theme) is applied on RunEvent::Ready, the first moment the config
- *        windows exist; window events (close → hide) go to app/windows.rs.
+ *        windows exist, and the speech engine starts loading in the background right after, so the UI is never
+ *        held up by it; window events (close → hide) go to app/windows.rs.
  * WHERE: Called once by main.rs.
  */
 pub fn run() -> ExitCode {
@@ -49,6 +50,7 @@ pub fn run() -> ExitCode {
     let code = app.run_return(|handle, event| {
         if matches!(event, tauri::RunEvent::Ready) {
             windows::setup(handle);
+            bootstrap::start_speech_engine(handle);
         }
     });
     ExitCode::from(u8::try_from(code).unwrap_or(u8::MAX))

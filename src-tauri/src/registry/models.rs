@@ -1,12 +1,12 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: model registry, MODELS, model manifests, find model, pinned revision, sha256, license, SILERO_VAD_V5, bundled_file
+ * SOURCE OF TRUTH KEYWORDS: model registry, MODELS, model manifests, find model, pinned revision, sha256, license, PARAKEET_TDT_V3, SILERO_VAD_V5, bundled_file
  * WHAT:  The list of every model manifest Echo knows (files, pinned revision, SHA-256, size, license) and lookup
  *        by id.
  * WHY:   A model is a registry entry (02 §3.3), so the model manager, the Models page and About → Models &
  *        licenses (05 A15) all read one list. Manifests pin an exact upstream revision, never a branch (05 §6).
- *        Entries arrive with their adapters: Silero VAD v5 (bundled, so it is located in the resources folder by
- *        `bundled_file`, never downloaded), then Parakeet and Qwen3. The tests below hold every entry to the
- *        manifest rules and prove each bundled file matches its pinned SHA-256.
+ *        Entries arrive with their adapters: Parakeet TDT 0.6B v3 (downloaded into `models/<id>/`), Silero VAD v5
+ *        (bundled, so it is located in the resources folder by `bundled_file`, never downloaded), then Qwen3. The
+ *        tests below hold every entry to the manifest rules and prove each bundled file matches its pinned SHA-256.
  * WHERE: Read by registry/engines (an engine's `model_id`), pipeline/models.rs (download, verify, import,
  *        switch), `models_list` and About.
  */
@@ -18,8 +18,65 @@ use crate::types::{
     ResourceKind, Sha256Hex, StaticList, StaticStr,
 };
 
+/// NVIDIA Parakeet TDT 0.6B v3, int8 ONNX export, downloaded on first run (02 §2.5).
+pub const PARAKEET_TDT_V3: ModelId = ModelId::from_static("parakeet-tdt-0.6b-v3");
+
 /// Silero VAD v5, bundled in the installer (02 §2.5).
 pub const SILERO_VAD_V5: ModelId = ModelId::from_static("silero-vad-v5");
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: Parakeet manifest, istupakov parakeet-tdt-0.6b-v3-onnx, pinned Hugging Face revision, model files sha256
+ * WHAT:  The four files of the Parakeet TDT 0.6B v3 int8 ONNX export (05 A1) at Hugging Face commit
+ *        8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce of `istupakov/parakeet-tdt-0.6b-v3-onnx`, with SHA-256 and size.
+ * WHY:   URLs resolve the pinned commit, never `main`, so the bytes can never change under the hashes (05 §6
+ *        resolved 2026-09-24). The ONNX digests are the repository's LFS object ids; vocab.txt is a plain git file,
+ *        so its digest was computed from the download. The ParakeetOnnx adapter loads exactly these names (a test
+ *        below checks the lists agree).
+ * WHERE: MODELS; the model manager downloads and verifies them (step 21); the adapter reads them from
+ *        `AppPaths::model_dir`.
+ */
+const PARAKEET_TDT_V3_FILES: &[ModelFile] = &[
+    ModelFile {
+        name: StaticStr::new("encoder-model.int8.onnx"),
+        url: StaticStr::new(
+            "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce/encoder-model.int8.onnx",
+        ),
+        sha256: Sha256Hex::from_static(
+            "6139d2fa7e1b086097b277c7149725edbab89cc7c7ae64b23c741be4055aff09",
+        ),
+        bytes: ByteCount::new(652_183_999),
+    },
+    ModelFile {
+        name: StaticStr::new("decoder_joint-model.int8.onnx"),
+        url: StaticStr::new(
+            "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce/decoder_joint-model.int8.onnx",
+        ),
+        sha256: Sha256Hex::from_static(
+            "eea7483ee3d1a30375daedc8ed83e3960c91b098812127a0d99d1c8977667a70",
+        ),
+        bytes: ByteCount::new(18_202_004),
+    },
+    ModelFile {
+        name: StaticStr::new("nemo128.onnx"),
+        url: StaticStr::new(
+            "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce/nemo128.onnx",
+        ),
+        sha256: Sha256Hex::from_static(
+            "a9fde1486ebfcc08f328d75ad4610c67835fea58c73ba57e3209a6f6cf019e9f",
+        ),
+        bytes: ByteCount::new(139_764),
+    },
+    ModelFile {
+        name: StaticStr::new("vocab.txt"),
+        url: StaticStr::new(
+            "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce/vocab.txt",
+        ),
+        sha256: Sha256Hex::from_static(
+            "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d",
+        ),
+        bytes: ByteCount::new(93_939),
+    },
+];
 
 const SILERO_VAD_V5_FILES: &[ModelFile] = &[ModelFile {
     name: StaticStr::new("silero_vad.onnx"),
@@ -33,18 +90,31 @@ const SILERO_VAD_V5_FILES: &[ModelFile] = &[ModelFile {
 }];
 
 /// Every model manifest, in the order the Models page lists them.
-pub const MODELS: &[ModelManifest] = &[ModelManifest {
-    id: SILERO_VAD_V5,
-    label: StaticStr::new("Silero VAD v5"),
-    license: StaticStr::new("MIT"),
-    attribution: Some(StaticStr::new(
-        "Silero VAD by the Silero Team (MIT License)",
-    )),
-    // Tag v5.1.2.
-    revision: StaticStr::new("6478567951ae5c9979ad7b234185b5515f4be7a1"),
-    files: StaticList::new(SILERO_VAD_V5_FILES),
-    bundled: true,
-}];
+pub const MODELS: &[ModelManifest] = &[
+    ModelManifest {
+        id: PARAKEET_TDT_V3,
+        label: StaticStr::new("Parakeet TDT 0.6B v3"),
+        license: StaticStr::new("CC-BY-4.0"),
+        attribution: Some(StaticStr::new(
+            "NVIDIA Parakeet TDT 0.6B v3 by NVIDIA (CC BY 4.0), ONNX export by Ilya Stupakov (onnx-asr)",
+        )),
+        revision: StaticStr::new("8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce"),
+        files: StaticList::new(PARAKEET_TDT_V3_FILES),
+        bundled: false,
+    },
+    ModelManifest {
+        id: SILERO_VAD_V5,
+        label: StaticStr::new("Silero VAD v5"),
+        license: StaticStr::new("MIT"),
+        attribution: Some(StaticStr::new(
+            "Silero VAD by the Silero Team (MIT License)",
+        )),
+        // Tag v5.1.2.
+        revision: StaticStr::new("6478567951ae5c9979ad7b234185b5515f4be7a1"),
+        files: StaticList::new(SILERO_VAD_V5_FILES),
+        bundled: true,
+    },
+];
 
 /// The manifest with `id`.
 pub fn find(id: &ModelId) -> Option<&'static ModelManifest> {
@@ -144,6 +214,11 @@ mod tests {
             if !file.url.starts_with("https://") {
                 return Err(format!("{id}: `{name}` must download over https"));
             }
+            if !file.url.contains(revision) || !file.url.ends_with(&format!("/{name}")) {
+                return Err(format!(
+                    "{id}: `{name}` must be fetched from the pinned revision under its own name"
+                ));
+            }
             let digest = file.sha256.as_str();
             if digest.len() != 64
                 || !digest
@@ -178,6 +253,15 @@ mod tests {
             revision: StaticStr::new("main"),
             ..SAMPLE.clone()
         };
+        let moving_url = vec![ModelFile {
+            url: StaticStr::new("https://huggingface.co/org/repo/resolve/main/model.onnx"),
+            ..SAMPLE_FILES[0].clone()
+        }];
+        let floating = ModelManifest {
+            files: StaticList::from(moving_url),
+            ..SAMPLE.clone()
+        };
+        assert!(check_manifest(&floating).is_err());
         let escaping = ModelManifest {
             files: StaticList::from(traversal),
             ..SAMPLE.clone()
@@ -220,6 +304,21 @@ mod tests {
                 manifest.id
             );
         }
+    }
+
+    #[test]
+    fn parakeet_is_downloaded_and_weighs_what_the_docs_say() {
+        let manifest = find(&PARAKEET_TDT_V3).unwrap();
+        assert!(!manifest.bundled);
+        assert_eq!(manifest.license.as_str(), "CC-BY-4.0");
+        // 02 §2.5: about 670 MB.
+        assert_eq!(manifest.total_bytes().get(), 670_619_706);
+        assert_eq!(
+            bundled_file(&AppPaths::new("data", "resources"), &PARAKEET_TDT_V3)
+                .err()
+                .map(PortError::into_app_error),
+            Some(AppError::Internal)
+        );
     }
 
     #[test]

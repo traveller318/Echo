@@ -1,22 +1,26 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: open_session, ONNX session, SessionThreads, intra-op threads, inter-op threads, onnx_failure, ort error mapping
+ * SOURCE OF TRUTH KEYWORDS: open_session, ONNX session, SessionThreads, for_asr, intra-op threads, inter-op threads, onnx_failure, ort error mapping
  * WHAT:  `open_session` makes sure the bundled runtime is loaded, then builds an ONNX Runtime CPU session for a model
  *        file with the given thread counts and full graph optimization; `onnx_failure` turns an `ort` error into
  *        a PortError with the cause as log detail.
  * WHY:   Every ONNX adapter (Silero VAD, Parakeet, a future engine) must start from the bundled runtime (05 A5) and
  *        must choose its own threads: small models run single-threaded so they never compete with ASR, and ASR
- *        takes cores − 1 (05 A9). Keeping the builder here means an adapter states only its model and threads, and
- *        the GPU (DirectML) path joins in one place (step 22). An `ort` error text can name files but never user
+ *        takes physical cores − 1 (the performance cores on a hybrid CPU), at least 2 (05 A9, W35,
+ *        `SessionThreads::for_asr`). Keeping the builder here means an
+ *        adapter states only its model and threads, and the GPU (DirectML) path joins in one place (step 22). An `ort` error text can name files but never user
  *        audio or text, so it is safe as log detail; the user-facing code is `Internal` unless the caller knows
  *        better (a missing model is the caller's `ModelMissing`).
- * WHERE: adapters/vad/silero.rs; adapters/asr (next step).
+ * WHERE: adapters/vad/silero.rs (SINGLE); adapters/asr/parakeet_onnx (for_asr).
  */
 
 use std::path::Path;
 
 use ort::session::{Session, builder::GraphOptimizationLevel};
 
-use super::runtime::ensure_runtime;
+use super::{
+    cpu::{CpuCores, cpu_cores},
+    runtime::ensure_runtime,
+};
 use crate::types::{AppError, AppPaths, PortError, PortResult};
 
 /// How many threads one ONNX session may use.
@@ -34,6 +38,32 @@ impl SessionThreads {
         intra_op: 1,
         inter_op: 1,
     };
+
+    /**
+     * SOURCE OF TRUTH KEYWORDS: for_asr, ASR thread count, 05 A9 rule, hybrid CPU threads
+     * WHAT:  The ASR session's threads on this machine; `for_asr_on` is the rule for given core counts: operators
+     *        in sequence (inter-op 1) and an intra-op pool of physical cores − 1 (one core stays free for audio
+     *        capture and the UI), or on a hybrid CPU of the performance cores only (the efficiency cores are then
+     *        what stays free), never fewer than 2.
+     * WHY:   05 A9, refined by the hybrid measurement in 05 W35: ONNX Runtime waits for its slowest thread, so a
+     *        pool that spills onto efficiency cores runs slower than one sized to the fast cores.
+     * WHERE: adapters/asr/parakeet_onnx (preprocessor and encoder sessions).
+     */
+    pub fn for_asr() -> Self {
+        Self::for_asr_on(cpu_cores())
+    }
+
+    pub const fn for_asr_on(cores: CpuCores) -> Self {
+        let pool = if cores.is_hybrid() {
+            cores.performance
+        } else {
+            cores.physical.saturating_sub(1)
+        };
+        Self {
+            intra_op: if pool < 2 { 2 } else { pool },
+            inter_op: 1,
+        }
+    }
 }
 
 /// Opens `model` on the CPU with `threads`, loading the bundled ONNX Runtime first if needed.
@@ -59,4 +89,38 @@ pub fn open_session(
 pub fn onnx_failure(action: &str, error: &dyn std::fmt::Display) -> PortError {
     PortError::new(AppError::Internal)
         .with_detail(format!("ONNX Runtime could not {action}: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn asr_threads_leave_one_core_free_and_never_drop_below_two() {
+        let uniform = |physical| CpuCores {
+            physical,
+            performance: physical,
+        };
+        assert_eq!(
+            SessionThreads::for_asr_on(uniform(8)),
+            SessionThreads {
+                intra_op: 7,
+                inter_op: 1
+            }
+        );
+        assert_eq!(SessionThreads::for_asr_on(uniform(2)).intra_op, 2);
+        assert_eq!(SessionThreads::for_asr_on(uniform(1)).intra_op, 2);
+        assert!(SessionThreads::for_asr().intra_op >= 2);
+    }
+
+    #[test]
+    fn hybrid_cpus_run_asr_on_their_performance_cores() {
+        let hybrid = |physical, performance| CpuCores {
+            physical,
+            performance,
+        };
+        assert_eq!(SessionThreads::for_asr_on(hybrid(8, 4)).intra_op, 4);
+        assert_eq!(SessionThreads::for_asr_on(hybrid(14, 6)).intra_op, 6);
+        assert_eq!(SessionThreads::for_asr_on(hybrid(10, 1)).intra_op, 2);
+    }
 }

@@ -1,12 +1,16 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: TempDir, test temp folder, source_resource_paths, bundled resources in tests, cfg(test) helper
+ * SOURCE OF TRUTH KEYWORDS: TempDir, test temp folder, source_resource_paths, installed_app_paths, dev model install, bundled resources in tests, cfg(test) helper
  * WHAT:  TempDir: a fresh, uniquely named folder under the OS temp dir for one test, removed when dropped;
- *        `source_resource_paths`: AppPaths whose resources dir is the repository's `src-tauri/resources`.
+ *        `source_resource_paths`: AppPaths whose resources dir is the repository's `src-tauri/resources`;
+ *        `installed_app_paths`: the same, over this machine's real Echo data folder (where downloaded models live).
  * WHY:   Database, journal, logging and adapter tests all need real files without touching the user's data;
  *        one helper keeps the naming (unique per call, so parallel tests never share a folder) and the cleanup in
  *        one place. The bundle maps every resource to the same relative path it has in `src-tauri/resources`, so
  *        tests of bundled files (ONNX Runtime, Silero) read the source folder exactly as the app reads the installed
- *        one. It lives in types/ because that is the one layer every other layer's tests may import
+ *        one. Downloaded models (Parakeet, 670 MB) cannot live in the repository, so the tests that need one read the
+ *        developer's installed copy, read-only, from the folder Tauri's `app_local_data_dir()` resolves to (the
+ *        local app data folder plus the identifier in tauri.conf.json); the step 10 dev install puts it there.
+ *        It lives in types/ because that is the one layer every other layer's tests may import
  *        (02 §3.2); it is `#[cfg(test)]`, so it never ships.
  * WHERE: `use crate::types::testing::TempDir` from tests in services/, pipeline/, adapters/ and app/.
  */
@@ -51,4 +55,14 @@ pub fn source_resource_paths(data: &Path) -> AppPaths {
         data,
         Path::new(env!("CARGO_MANIFEST_DIR")).join("resources"),
     )
+}
+
+/// AppPaths over this machine's installed Echo data folder (read-only use: downloaded models) with the repository's
+/// resources; the same data folder the app resolves through `app_local_data_dir()`.
+pub fn installed_app_paths() -> AppPaths {
+    let config: serde_json::Value =
+        serde_json::from_str(include_str!("../../tauri.conf.json")).unwrap();
+    let identifier = config["identifier"].as_str().unwrap();
+    let local_data = std::env::var_os("LOCALAPPDATA").unwrap();
+    source_resource_paths(&PathBuf::from(local_data).join(identifier))
 }
