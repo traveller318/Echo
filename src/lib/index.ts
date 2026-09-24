@@ -16,6 +16,12 @@ export {
   type AppErrorCopy,
   type AppErrorOf,
 } from "./app-error";
+export {
+  APP_ERROR_ACTION_TARGETS,
+  performAppErrorAction,
+  type AppErrorActionTarget,
+  type PerformAppErrorActionOptions,
+} from "./app-error-actions";
 export { applyAppearance, syncAppearance, type SyncAppearanceOptions } from "./appearance";
 export { cn, THEME_SCALE } from "./cn";
 export { runCommand, type CommandResult } from "./command";

@@ -1,9 +1,9 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: hotkey bindings, bind_always, rebind_setting, unbind_always, SessionHotkeys, Esc guard, register hotkeys from registry, hotkey conflict report
+ * SOURCE OF TRUTH KEYWORDS: hotkey bindings, bind_always, bind_always_where, rebind_setting, unbind_always, SessionHotkeys, Esc guard, register hotkeys from registry, hotkey conflict report
  * WHAT:  Binds the registry's hotkeys through the HotkeyService port: every always-on hotkey at startup
- *        (`bind_always`, which reports each failure and keeps going), one hotkey after its setting changes
- *        (`rebind_setting`), all of them off and back on (`unbind_always`, `bind_always`), and the session-scoped
- *        ones for exactly as long as a SessionHotkeys guard lives.
+ *        (`bind_always`, or `bind_always_where` for a subset, which report each failure and keep going), one hotkey
+ *        after its setting changes (`rebind_setting`), all of them off and back on (`unbind_always`, `bind_always`),
+ *        and the session-scoped ones for exactly as long as a SessionHotkeys guard lives (`abandon` at exit only).
  * WHY:   Which hotkeys exist, their defaults and scopes are registry data (registry/hotkeys); this module is the one
  *        place that turns them into registrations, so the actor, Settings, the tray and power handling cannot
  *        disagree. A conflict on one hotkey must not leave the others unbound (05 W7), so startup failures are
@@ -13,8 +13,9 @@
  *        the snapshot the caller is about to store, so a conflict can refuse the write while the previous binding
  *        stays (the port keeps it); a session-scoped hotkey is never registered outside a session by a rebind.
  * WHERE: SessionHotkeys is held by the session actor from Recording until the take leaves CancelPending
- *        (step 14); bind_always runs when the actor starts listening; rebind_setting from settings_set (step 18);
- *        unbind_always / bind_always from the tray's Pause hotkeys and power resume (step 25).
+ *        (pipeline/session/runner.rs); bind_always_where runs when the actor starts listening, with the actions it
+ *        handles (pipeline/session/actor.rs); rebind_setting from settings_set (step 18); unbind_always /
+ *        bind_always from the tray's Pause hotkeys and power resume (step 25).
  */
 
 use std::sync::Arc;
@@ -42,7 +43,18 @@ pub fn bind_always(
     service: &dyn HotkeyService,
     settings: &SettingsSnapshot,
 ) -> Vec<HotkeyBindFailure> {
+    bind_always_where(service, settings, |_| true)
+}
+
+/// Binds the always-on hotkeys `include` accepts (the session actor: those whose action it handles); returns the
+/// ones that failed, while the others stay bound.
+pub fn bind_always_where(
+    service: &dyn HotkeyService,
+    settings: &SettingsSnapshot,
+    include: impl Fn(&HotkeySpec) -> bool,
+) -> Vec<HotkeyBindFailure> {
     hotkeys::in_scope(HotkeyScope::Always)
+        .filter(|spec| include(spec))
         .filter_map(|spec| {
             let shortcut = hotkeys::effective_shortcut(spec, settings);
             let error = service.register(&spec.id, &shortcut).err()?;
@@ -97,6 +109,12 @@ impl SessionHotkeys {
         }
         Ok(guard)
     }
+
+    /// Drops the guard without releasing: only at process exit, when Windows removes the process's keyboard hook anyway
+    /// and nothing should wait on a hotkey backend that is shutting down.
+    pub fn abandon(mut self) {
+        self.bound.clear();
+    }
 }
 
 impl Drop for SessionHotkeys {
@@ -122,7 +140,7 @@ mod tests {
             hotkeys::{CANCEL, PASTE_LAST, PASTE_LAST_DEFAULT, RECORD, RECORD_DEFAULT},
             settings::{self, keys},
         },
-        types::{AppError, HotkeyIssue, SettingValue, Shortcut, StaticStr},
+        types::{AppError, HotkeyAction, HotkeyIssue, SettingValue, Shortcut, StaticStr},
     };
 
     fn record_bound_to(combination: &'static str) -> SettingsSnapshot {
@@ -220,6 +238,29 @@ mod tests {
         );
         drop(guard);
         assert_eq!(service.binding(&CANCEL), None);
+    }
+
+    #[test]
+    fn a_subset_binds_only_the_hotkeys_it_includes() {
+        let service = FakeHotkeyService::default();
+        let failures = bind_always_where(&service, &settings::defaults(), |spec| {
+            spec.action == HotkeyAction::Record
+        });
+        assert!(failures.is_empty(), "{failures:?}");
+        assert!(service.binding(&RECORD).is_some());
+        assert_eq!(
+            service.binding(&PASTE_LAST),
+            None,
+            "a hotkey nobody handles stays free for other apps"
+        );
+    }
+
+    #[test]
+    fn an_abandoned_session_guard_leaves_its_binding_to_the_process_exit() {
+        let service = Arc::new(FakeHotkeyService::default());
+        let guard = SessionHotkeys::bind(service.clone(), &settings::defaults()).unwrap();
+        guard.abandon();
+        assert!(service.binding(&CANCEL).is_some());
     }
 
     #[test]

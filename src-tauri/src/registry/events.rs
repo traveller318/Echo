@@ -15,7 +15,7 @@ use tauri_specta::{Event, Events, collect_events};
 
 use crate::types::{
     AppEvent, AppearanceChanged, AudioLevel, HistoryChanged, MetricsChanged, ModelProgress,
-    SessionStateChanged, SettingsChanged, TranscriptSaved,
+    NavigationRequested, SessionStateChanged, SettingsChanged, TranscriptSaved,
 };
 
 /**
@@ -60,6 +60,7 @@ event_catalog![
     SettingsChanged,
     ModelProgress,
     AppearanceChanged,
+    NavigationRequested,
 ];
 
 #[cfg(test)]
@@ -79,6 +80,7 @@ mod tests {
                 "SettingsChanged",
                 "ModelProgress",
                 "AppearanceChanged",
+                "NavigationRequested",
             ]
         );
         assert_eq!(SessionStateChanged::NAME, "SessionStateChanged");

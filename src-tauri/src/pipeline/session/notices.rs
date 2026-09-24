@@ -1,13 +1,13 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: session toasts, DEVICE_LOST_TOAST, MAX_DURATION_TOAST, TAKE_FAILED_TOAST, START_FAILED_TOAST, stop_toast, failure toast
+ * SOURCE OF TRUTH KEYWORDS: session toasts, DEVICE_LOST_TOAST, MAX_DURATION_TOAST, TAKE_FAILED_TOAST, START_FAILED_TOAST, HOTKEY_UNAVAILABLE_TOAST, stop_toast, failure toast
  * WHAT:  The native toasts a take can raise: the microphone went away (05 W12), the longest take was reached, the
- *        take failed after recording, or it could not start.
+ *        take failed after recording, it could not start, or the dictation hotkey could not be bound.
  * WHY:   The pill disappears after a few seconds and may be on another monitor, so a stop the user did not ask for
  *        and every failure also leave a toast (01 "no silent failures"). Copy is calm and never contains transcript
  *        text (types/notification.rs). A failed take keeps its audio (02 §5), so its toast points to History for a
  *        retry; a take that never started has no audio, so its toast points to the microphone instead.
- * WHERE: Chosen by pipeline/session/transition.rs as SessionEffect::Toast; shown by the session actor through the
- *        Notifier port.
+ * WHERE: Chosen by pipeline/session/transition.rs as SessionEffect::Toast (the hotkey one by runner.rs when it
+ *        prepares); shown by the session actor's runner through the Notifier port.
  */
 
 use crate::types::{StaticStr, StopCause, Toast, ToastKind};
@@ -38,6 +38,16 @@ pub const START_FAILED_TOAST: Toast = Toast {
     kind: ToastKind::Error,
     title: StaticStr::new("Couldn't start dictation"),
     body: StaticStr::new("Check your microphone in Settings, then try again."),
+};
+
+/// A hotkey the session needs could not be bound: another app owns the combination (05 W7), or hotkeys cannot be
+/// received at all. Echo keeps running; the combination can be changed in Settings.
+pub const HOTKEY_UNAVAILABLE_TOAST: Toast = Toast {
+    kind: ToastKind::Warning,
+    title: StaticStr::new("Dictation hotkey unavailable"),
+    body: StaticStr::new(
+        "Echo couldn't set it up. Restart Echo, or choose a different one in Settings.",
+    ),
 };
 
 /// The toast a stop for `cause` shows; None for the stops the user asked for.

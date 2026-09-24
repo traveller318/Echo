@@ -1,10 +1,11 @@
 /*!
  * SOURCE OF TRUTH KEYWORDS: FakeHotkeyService, fake hotkeys, press hotkey, release hotkey, hotkey conflict test, occupied shortcut
- * WHAT:  FakeHotkeyService: a HotkeyService with an in-memory binding table; tests `press` / `release` bound ids
- *        and `occupy` combinations as if another app owned them.
+ * WHAT:  FakeHotkeyService: a HotkeyService with an in-memory binding table; tests `press` / `release` /
+ *        `interrupt` bound ids and `occupy` combinations as if another app owned them.
  * WHY:   Session tests drive the record, cancel and paste-last hotkeys directly, and settings tests need the
  *        conflict path (05 W7): a failed `register` must keep the previous binding. Releases are only emitted when
- *        the caps declare `supports_release`, mirroring what hold mode may rely on.
+ *        the caps declare `supports_release` and interruptions only with `supports_modifier_only`, mirroring what
+ *        the session may rely on.
  * WHERE: pipeline hotkey wiring, session actor and settings tests.
  */
 
@@ -74,6 +75,11 @@ impl FakeHotkeyService {
     /// The user released it; emitted only when the caps report releases.
     pub fn release(&self, id: &HotkeyId) -> bool {
         self.caps.supports_release && self.fire(id, KeyState::Released)
+    }
+
+    /// Another key joined the held combination; emitted only when the caps allow modifier-only combinations.
+    pub fn interrupt(&self, id: &HotkeyId) -> bool {
+        self.caps.supports_modifier_only && self.fire(id, KeyState::Interrupted)
     }
 
     fn fire(&self, id: &HotkeyId, state: KeyState) -> bool {
@@ -169,6 +175,28 @@ mod tests {
     }
 
     #[test]
+    fn interruptions_need_modifier_only_caps() {
+        let hotkeys = FakeHotkeyService::new(HotkeyCaps {
+            supports_release: true,
+            supports_modifier_only: true,
+        });
+        let sink = Arc::new(RecordingSink::default());
+        hotkeys.listen(sink.clone()).unwrap();
+        hotkeys
+            .register(&RECORD, &Shortcut::from_static("Ctrl+Alt"))
+            .unwrap();
+        assert!(hotkeys.interrupt(&RECORD));
+        assert_eq!(
+            sink.events(),
+            [HotkeyEvent {
+                id: RECORD,
+                state: KeyState::Interrupted
+            }]
+        );
+        assert!(!FakeHotkeyService::default().interrupt(&RECORD));
+    }
+
+    #[test]
     fn a_conflict_keeps_the_previous_binding() {
         let hotkeys = FakeHotkeyService::default();
         hotkeys.register(&RECORD, &DEFAULT).unwrap();
@@ -203,6 +231,7 @@ mod tests {
             .register(&CANCEL, &Shortcut::from_static("Esc"))
             .unwrap();
         assert!(!hotkeys.release(&CANCEL));
+        assert!(!hotkeys.interrupt(&CANCEL));
         hotkeys.unregister(&CANCEL).unwrap();
         hotkeys.unregister(&CANCEL).unwrap();
         assert!(!hotkeys.press(&CANCEL));

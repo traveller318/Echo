@@ -11,3 +11,5 @@ export { Sidebar } from "./Sidebar";
 export { Titlebar } from "./Titlebar";
 export { Toaster } from "./Toaster";
 export { useAppErrorAction } from "./use-app-error-action";
+export { useNavigationRequests } from "./use-navigation-requests";
+export { useOpenPage } from "./use-open-page";

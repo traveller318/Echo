@@ -38,6 +38,22 @@ impl NavId {
     }
 }
 
+/**
+ * SOURCE OF TRUTH KEYWORDS: OpenPageInput, app_open_page input, open main window on a page, pill Set up, pill Open
+ * WHAT:  The input of `app_open_page`: which main-window page to show.
+ * WHY:   The pill has no router and no rights on the main window (capabilities/pill.json), so its "Set up" and
+ *        "Open" buttons ask Rust to bring the main window forward on a page; the page is a NavId, so only pages the
+ *        registry has can be named, and serde already refuses anything else (nothing left for garde to check).
+ * WHERE: ipc/commands/system.rs (`app_open_page`); sent by the pill (src/pill) and any surface without the router.
+ */
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type, garde::Validate,
+)]
+pub struct OpenPageInput {
+    #[garde(skip)]
+    pub page: NavId,
+}
+
 /// A sidebar icon, serialized as its lucide-react name (e.g. `layout-dashboard`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(rename_all = "kebab-case")]

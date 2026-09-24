@@ -286,6 +286,7 @@ fn every_input(phase: &SessionPhase, mode: RecordMode) -> Vec<SessionInput> {
             policy: policy(mode),
         },
         SessionInput::RecordReleased,
+        SessionInput::RecordInterrupted,
         SessionInput::Stop,
         SessionInput::Esc,
         SessionInput::Armed {
@@ -330,7 +331,9 @@ fn expected(from: SessionStatus, input: &SessionInput, mode: RecordMode) -> Sess
         (S::Arming, SessionInput::Armed { .. }) => S::Recording,
         (S::Arming, SessionInput::ModelMissing { .. } | SessionInput::Error { .. }) => S::Failed,
         (S::Recording, SessionInput::RecordPressed { .. }) if !hold => S::Finalizing,
-        (S::Recording, SessionInput::RecordReleased) if hold => S::Finalizing,
+        (S::Recording, SessionInput::RecordReleased | SessionInput::RecordInterrupted) if hold => {
+            S::Finalizing
+        }
         (
             S::Recording,
             SessionInput::Stop
@@ -964,6 +967,102 @@ fn hold_mode_records_while_held_and_stops_on_release() {
     let mut toggle = Rig::recording(RecordMode::Toggle);
     toggle.after(500).send(SessionInput::RecordReleased);
     assert_eq!(toggle.status(), SessionStatus::Recording);
+}
+
+/// A dropped take leaves no trace: no cue, no toast, no row write; its row and audio are deleted and the pill hides.
+fn assert_dropped_silently(rig: &Rig, take: TranscriptId) {
+    let effects = &rig.effects;
+    assert_eq!(rig.status(), SessionStatus::Discarded);
+    assert_eq!(rig.view().transcript_id, None);
+    assert!(effects.contains(&SessionEffect::AbortCapture { take }));
+    assert!(effects.contains(&SessionEffect::DeleteTake { take }));
+    assert!(!has(effects, |effect| matches!(
+        effect,
+        SessionEffect::Cue(_)
+            | SessionEffect::Toast(_)
+            | SessionEffect::UpdateRow { .. }
+            | SessionEffect::TakeSettled { .. }
+    )));
+    assert!(has(effects, |effect| matches!(
+        effect,
+        SessionEffect::StartTimer {
+            kind: SessionTimer::Settle,
+            after_ms: 0,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn an_interrupted_press_drops_a_take_that_is_still_arming() {
+    for mode in [RecordMode::Hold, RecordMode::Toggle] {
+        let mut rig = Rig::new(mode);
+        rig.press();
+        let take = rig.take();
+        assert!(
+            rig.after(30)
+                .send(SessionInput::RecordInterrupted)
+                .is_empty()
+        );
+        assert_eq!(rig.status(), SessionStatus::Arming);
+        // A release after it does not turn the drop back into a delivery.
+        rig.after(20).send(SessionInput::RecordReleased);
+        rig.after(50).armed();
+        assert_dropped_silently(&rig, take);
+        assert!(
+            !rig.effects.contains(&SessionEffect::RegisterEsc),
+            "Esc is never taken for a dropped take"
+        );
+    }
+}
+
+#[test]
+fn an_interrupted_press_drops_a_young_take_and_releases_everything() {
+    for mode in [RecordMode::Hold, RecordMode::Toggle] {
+        let mut rig = Rig::recording(mode);
+        let take = rig.take();
+        let timer = rig.timer();
+        rig.after(policy(mode).interrupt_grace_ms - 1)
+            .send(SessionInput::RecordInterrupted);
+        assert_dropped_silently(&rig, take);
+        assert!(rig.effects.contains(&SessionEffect::UnregisterEsc));
+        assert!(rig.effects.contains(&SessionEffect::CancelTimer { timer }));
+        rig.fire(SessionTimer::Settle);
+        assert_eq!(rig.status(), SessionStatus::Idle);
+    }
+}
+
+#[test]
+fn a_late_interruption_is_a_slip_while_dictating() {
+    // Hold mode: the keys are no longer the chord, so the take stops and delivers what was said.
+    let mut hold = Rig::recording(RecordMode::Hold);
+    hold.after(1_000).segment(0, "Keep this.");
+    hold.after(500).send(SessionInput::RecordInterrupted);
+    assert_eq!(hold.status(), SessionStatus::Finalizing);
+    assert!(
+        hold.effects
+            .contains(&SessionEffect::StopCapture { take: hold.take() })
+    );
+
+    // Toggle mode: the take was started by an earlier press and keeps recording.
+    let mut toggle = Rig::recording(RecordMode::Toggle);
+    let effects = toggle
+        .after(1_500)
+        .send(SessionInput::RecordInterrupted)
+        .to_vec();
+    assert_eq!(toggle.status(), SessionStatus::Recording);
+    assert_eq!(
+        ignored(&effects).map(|i| i.reason),
+        Some(IgnoreReason::NotValidNow)
+    );
+
+    // During the Esc countdown in hold mode it counts as the release: undoing delivers.
+    let mut pending = Rig::recording(RecordMode::Hold);
+    pending.after(200).send(SessionInput::Esc);
+    pending.after(100).send(SessionInput::RecordInterrupted);
+    assert_eq!(pending.status(), SessionStatus::CancelPending);
+    pending.after(100).send(SessionInput::Esc);
+    assert_eq!(pending.status(), SessionStatus::Finalizing);
 }
 
 #[test]

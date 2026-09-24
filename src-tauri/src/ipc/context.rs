@@ -1,15 +1,17 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: CommandCtx, CommandDeps, command context, managed state, handler dependencies, SharedSettings, AudioCapture, WorkerScheduler, SystemLauncher, AsrWorker, HotkeyService, ForegroundApp, Notifier, Delivery, AppPaths, Db, event sink
+ * SOURCE OF TRUTH KEYWORDS: CommandCtx, CommandDeps, command context, managed state, handler dependencies, SharedSettings, AudioCapture, WorkerScheduler, SystemLauncher, AsrWorker, HotkeyService, ForegroundApp, Notifier, Delivery, SessionHandle, PillPresenter, MainWindow, AppPaths, Db, event sink
  * WHAT:  CommandCtx: everything a command handler and the factory pipeline may use, managed once by Tauri and
  *        passed to every handler as `&CommandCtx`; CommandDeps: the named parts it is built from.
  * WHY:   Handlers take their dependencies from one place instead of Tauri state lookups, so they stay plain async
  *        fns that tests call with a context built from port fakes and an in-memory database. It holds only ports
  *        (`Arc<dyn …>`, never an adapter, 02 §3.2), the services' `Db` handle, the resolved AppPaths (paths are
  *        resolved only in app/, 05 W23), shared handles (settings, the ASR worker that owns the speech engine, the
- *        delivery that owns the paste rules) and
- *        the factory's own reentrancy locks; the registry needs no handle because it is compiled-in `const` data. Events leave
- *        through the `EventSink<AppEvent>` port, so no handler imports Tauri. Built from a named-field struct so a
- *        new dependency (the session actor's inbox, step 14) is one field here plus one line where it is wired.
+ *        delivery that owns the paste rules, the session actor's handle) and the factory's own reentrancy locks; the
+ *        registry needs no handle because it is compiled-in `const` data. Events leave through the
+ *        `EventSink<AppEvent>` port, so no handler imports Tauri. Built from a named-field struct so a new
+ *        dependency is one field here plus one line where it is wired. The session actor is reached through its
+ *        SessionHandle (the pill's stop, the current view), never through a copy of its state; the pill window
+ *        through its PillPresenter (button areas, exit animation) and the main window through the MainWindow port.
  * WHERE: Built by app/bootstrap and managed on the Tauri app; read by ipc/factory.rs (preflight, reentrancy)
  *        and every handler in ipc/commands. Tests build it with `testing::harness`.
  */
@@ -18,10 +20,10 @@ use std::sync::Arc;
 
 use super::reentrancy::ReentrancyLocks;
 use crate::{
-    pipeline::{asr::AsrWorker, delivery::Delivery},
+    pipeline::{asr::AsrWorker, delivery::Delivery, pill::PillPresenter, session::SessionHandle},
     ports::{
-        AudioCapture, EventSink, ForegroundApp, HotkeyService, Notifier, PrivacyConsent,
-        SystemAppearance, SystemLauncher, WorkerScheduler,
+        AudioCapture, EventSink, ForegroundApp, HotkeyService, MainWindow, Notifier,
+        PrivacyConsent, SystemAppearance, SystemLauncher, WorkerScheduler,
     },
     services::Db,
     types::{AppEvent, AppPaths, SettingsSnapshot, SharedSettings},
@@ -51,6 +53,12 @@ pub struct CommandDeps {
     pub notifier: Arc<dyn Notifier>,
     /// Clipboard + paste rules for delivered text (takes, history copy, paste-last).
     pub delivery: Delivery,
+    /// The session actor (sole owner of recording state): the current view and the pill's inputs.
+    pub session: SessionHandle,
+    /// The pill window's presenter: where the page's buttons are, when its exit animation ended.
+    pub pill: PillPresenter,
+    /// Echo's main window, brought forward by surfaces outside it (the pill, later the tray).
+    pub main_window: Arc<dyn MainWindow>,
     /// Every data and resource location, resolved once by app/bootstrap.
     pub paths: AppPaths,
     /// The database every service call goes through.
@@ -72,6 +80,9 @@ pub struct CommandCtx {
     foreground: Arc<dyn ForegroundApp>,
     notifier: Arc<dyn Notifier>,
     delivery: Delivery,
+    session: SessionHandle,
+    pill: PillPresenter,
+    main_window: Arc<dyn MainWindow>,
     paths: AppPaths,
     db: Db,
     events: Arc<dyn EventSink<AppEvent>>,
@@ -92,6 +103,9 @@ impl CommandCtx {
             foreground,
             notifier,
             delivery,
+            session,
+            pill,
+            main_window,
             paths,
             db,
             events,
@@ -108,6 +122,9 @@ impl CommandCtx {
             foreground,
             notifier,
             delivery,
+            session,
+            pill,
+            main_window,
             paths,
             db,
             events,
@@ -175,6 +192,21 @@ impl CommandCtx {
         &self.delivery
     }
 
+    /// The session actor's handle.
+    pub fn session(&self) -> &SessionHandle {
+        &self.session
+    }
+
+    /// The pill window's presenter.
+    pub fn pill(&self) -> &PillPresenter {
+        &self.pill
+    }
+
+    /// Echo's main window.
+    pub fn main_window(&self) -> &dyn MainWindow {
+        self.main_window.as_ref()
+    }
+
     /// Every data and resource location.
     pub fn paths(&self) -> &AppPaths {
         &self.paths
@@ -201,10 +233,11 @@ impl CommandCtx {
  * WHAT:  `harness`: a CommandCtx over given settings and consent, a Mica-capable appearance fake, a recording
  *        launcher, a 48 kHz stereo capture fake, a recording thread scheduler, an ASR worker whose engines are
  *        English FakeAsrEngines (nothing loaded until a test asks), a hotkey fake, a focused Notepad target, a
- *        recording notifier, a delivery over a clipboard fake and a pasting inserter fake, AppPaths under the system
- *        temp folder (never touched: services take the in-memory database), a fresh in-memory database with the real
- *        migrations and a RecordingSink for events, plus handles to the sink and the fakes; `ctx()` is the all-defaults
- *        one.
+ *        recording notifier, a delivery over a clipboard fake and a pasting inserter fake, a session handle whose
+ *        actor (fake detector, registry polishers) is built but not running, a pill presenter over an overlay fake,
+ *        a main-window fake, AppPaths under the system temp folder
+ *        (never touched: services take the in-memory database), a fresh in-memory database with the real migrations
+ *        and a RecordingSink for events, plus handles to the sink and the fakes; `ctx()` is the all-defaults one.
  * WHY:   Factory, command and app tests all need the same context without a Tauri app or a disk; keeping the
  *        builder here means a new CommandDeps field is added to tests in one place.
  * WHERE: Tests in ipc/factory.rs, ipc/commands and app/bindings.rs.
@@ -218,16 +251,19 @@ pub mod testing {
         pipeline::{
             asr::{AsrWorker, AsrWorkerConfig},
             delivery::{Delivery, DeliveryPorts},
+            pill::{PillPresenter, PillTiming},
+            session::{SessionActor, SessionConfig, SessionEngines, SessionHandle},
         },
         ports::{
             AsrEngine,
             fakes::{
                 FakeAsrEngine, FakeAudioCapture, FakeClipboard, FakeForegroundApp,
-                FakeHotkeyService, FakeNotifier, FakePrivacyConsent, FakeSystemAppearance,
-                FakeSystemLauncher, FakeTextInserter, FakeWorkerScheduler, RecordingSink,
+                FakeHotkeyService, FakeMainWindow, FakeNotifier, FakeOverlayWindow,
+                FakePrivacyConsent, FakeSystemAppearance, FakeSystemLauncher, FakeTextInserter,
+                FakeVoiceActivity, FakeWorkerScheduler, RecordingSink,
             },
         },
-        registry,
+        registry::{self, engines::BuildCtx},
         services::Db,
         types::{AppEvent, AppPaths, CaptureFormat, EngineId, SettingsSnapshot, SharedSettings},
     };
@@ -241,6 +277,9 @@ pub mod testing {
     /// A test context, the sink its events land in and its fakes (appearance: Mica, transparency on).
     pub struct Harness {
         pub ctx: CommandCtx,
+        /// The session actor over the same fakes, not running: a test spawns `run` on its own runtime, or drops
+        /// it (the session commands then answer `Internal`).
+        pub session_actor: SessionActor,
         pub events: Arc<RecordingSink<AppEvent>>,
         pub appearance: Arc<FakeSystemAppearance>,
         pub launcher: Arc<FakeSystemLauncher>,
@@ -251,6 +290,8 @@ pub mod testing {
         pub notifier: Arc<FakeNotifier>,
         pub clipboard: Arc<FakeClipboard>,
         pub inserter: Arc<FakeTextInserter>,
+        pub overlay: Arc<FakeOverlayWindow>,
+        pub main_window: Arc<FakeMainWindow>,
     }
 
     pub fn harness(settings: SettingsSnapshot, consent: FakePrivacyConsent) -> Harness {
@@ -267,12 +308,21 @@ pub mod testing {
         let notifier = Arc::new(FakeNotifier::default());
         let clipboard = Arc::new(FakeClipboard::default());
         let inserter = Arc::new(FakeTextInserter::default());
+        let overlay = Arc::new(FakeOverlayWindow::default());
+        let main_window = Arc::new(FakeMainWindow::default());
+        let pill = PillPresenter::spawn(
+            Arc::clone(&overlay) as _,
+            Arc::clone(&foreground) as _,
+            PillTiming::DEFAULT,
+        )
+        .unwrap();
         let delivery = Delivery::new(DeliveryPorts {
             clipboard: Arc::clone(&clipboard) as _,
             inserter: Arc::clone(&inserter) as _,
             notifier: Arc::clone(&notifier) as _,
         });
         let root = std::env::temp_dir().join("echo-harness");
+        let paths = AppPaths::new(root.join("data"), root.join("resources"));
         let asr = AsrWorker::spawn(AsrWorkerConfig {
             build: Arc::new(|_: &EngineId| {
                 Ok(Arc::new(FakeAsrEngine::english()) as Arc<dyn AsrEngine>)
@@ -282,8 +332,37 @@ pub mod testing {
             readiness: None,
         })
         .unwrap();
+        let settings = SharedSettings::new(settings);
+        let db = Db::open_in_memory().unwrap();
+        let (session, inbox) = SessionHandle::new();
+        let polish_ctx = BuildCtx {
+            paths: paths.clone(),
+        };
+        let session_actor = SessionActor::new(
+            SessionConfig {
+                settings: settings.clone(),
+                audio: Arc::clone(&audio) as _,
+                // Its own scheduler, for the same reason as the ASR worker's.
+                scheduler: Arc::new(FakeWorkerScheduler::default()),
+                asr: asr.clone(),
+                hotkeys: Arc::clone(&hotkeys) as _,
+                foreground: Arc::clone(&foreground) as _,
+                notifier: Arc::clone(&notifier) as _,
+                delivery: delivery.clone(),
+                paths: paths.clone(),
+                db: db.clone(),
+                events: Arc::clone(&events) as _,
+                engines: SessionEngines {
+                    vad: Arc::new(|| Ok(Box::new(FakeVoiceActivity::new(32)) as _)),
+                    polisher: Arc::new(move |id: &EngineId| {
+                        registry::engines::build_polisher(id, &polish_ctx)
+                    }),
+                },
+            },
+            inbox,
+        );
         let ctx = CommandCtx::new(CommandDeps {
-            settings: SharedSettings::new(settings),
+            settings,
             consent: Arc::new(consent),
             appearance: Arc::clone(&appearance) as _,
             launcher: Arc::clone(&launcher) as _,
@@ -294,12 +373,16 @@ pub mod testing {
             foreground: Arc::clone(&foreground) as _,
             notifier: Arc::clone(&notifier) as _,
             delivery,
-            paths: AppPaths::new(root.join("data"), root.join("resources")),
-            db: Db::open_in_memory().unwrap(),
+            session,
+            pill,
+            main_window: Arc::clone(&main_window) as _,
+            paths,
+            db,
             events: Arc::clone(&events) as _,
         });
         Harness {
             ctx,
+            session_actor,
             events,
             appearance,
             launcher,
@@ -310,6 +393,8 @@ pub mod testing {
             notifier,
             clipboard,
             inserter,
+            overlay,
+            main_window,
         }
     }
 

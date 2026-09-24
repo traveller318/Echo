@@ -127,6 +127,7 @@
   --delay-loading: 150ms;
   --motion-scale-from: 0.96;
   --press-scale: 0.97;
+  --duration-breathe: 1600ms;
 
   /* 3.8 Layers and focus */
   --z-base: 0;
@@ -157,6 +158,25 @@
   --tooltip-max-width: 240px;
   --popover-max-height: 320px;
   --opacity-disabled: 0.45;
+
+  /* 3.10 Sizes: the pill (4) */
+  --pill-height: 44px;
+  --pill-width-recording: 212px;
+  --pill-width-cancel: 248px;
+  --pill-width-processing: 132px;
+  --pill-width-done: 44px;
+  --pill-width-copied: 112px;
+  --pill-width-notice: 200px;
+  --pill-width-error: 280px;
+  --pill-width-setup: 260px;
+  --record-dot: 8px;
+  --ring-size: 20px;
+  --ring-stroke: 2px;
+  --waveform-bar-width: 3px;
+  --waveform-bar-gap: 2px;
+  --waveform-min: 4px;
+  --waveform-max: 24px;
+  --opacity-waveform: 0.85;
 }
 
 /* Dark: explicit choice (general.theme = dark). Keep identical to the media-query copy below. */

@@ -6,9 +6,9 @@
  *        previous one stays active, so a bad edit in Settings never leaves the user without a record hotkey.
  *        `unregister` of an unknown id succeeds, so the effect runner can release Esc on every exit path without
  *        tracking state (05 W10). `refresh` re-registers every binding after sleep or an explorer restart
- *        (05 W8). Hold mode needs key-up, which only some backends report (`HotkeyCaps.supports_release`); a
- *        low-level keyboard hook adapter (05 W9) plugs in here with no core change.
- * WHERE: Implemented by adapters/hotkey/tauri_global_shortcut.rs (TauriGlobalShortcut) and ports/fakes; driven by
+ *        (05 W8). Hold mode needs key-up (`HotkeyCaps.supports_release`) and Ctrl+Alt needs modifier-only chords
+ *        (`supports_modifier_only`), which the low-level keyboard hook adapter reports (05 W9).
+ * WHERE: Implemented by adapters/hotkey/low_level_hook (LowLevelKeyboardHotkeys) and ports/fakes; driven by
  *        pipeline/hotkeys.rs from registry/hotkeys and settings; events feed the session actor.
  */
 

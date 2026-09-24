@@ -27,6 +27,7 @@ mod metrics;
 mod model;
 mod nav;
 mod notification;
+mod overlay;
 mod paths;
 mod permission;
 mod polish;
@@ -62,11 +63,12 @@ pub use engine::{
 pub use error::{AppError, AppErrorCode, HotkeyIssue, ResourceKind};
 pub use events::{
     AppEvent, AppearanceChanged, AudioLevel, HistoryChangeReason, HistoryChanged, MetricsChanged,
-    ModelProgress, SessionStateChanged, SettingsChanged, TranscriptSaved,
+    ModelProgress, NavigationRequested, SessionStateChanged, SettingsChanged, TranscriptSaved,
 };
 pub use future::BoxFuture;
 pub use hotkey::{
-    HotkeyBindFailure, HotkeyEvent, HotkeyScope, HotkeySpec, KeyState, RecordMode, Shortcut,
+    HotkeyAction, HotkeyBindFailure, HotkeyEvent, HotkeyScope, HotkeySpec, KeyState, RecordMode,
+    Shortcut,
 };
 pub use ids::{
     AudioDeviceId, EngineId, HotkeyId, InvalidId, MetricId, ModelId, SettingKey, TranscriptId,
@@ -77,8 +79,9 @@ pub use metrics::{
     MetricUnit, MetricValue, MetricsRange, MetricsSummary, TranscriptTotals,
 };
 pub use model::{ModelFile, ModelManifest, ModelPhase, ModelStatus, Sha256Hex};
-pub use nav::{NavIcon, NavId, NavItem};
+pub use nav::{NavIcon, NavId, NavItem, OpenPageInput};
 pub use notification::{Toast, ToastKind};
+pub use overlay::{OverlayRect, PillHitAreas};
 pub use paths::{AppPaths, ONNX_RUNTIME_LOAD_ORDER, OnnxRuntimeLibrary};
 pub use permission::{Permission, PermissionState};
 pub use polish::{

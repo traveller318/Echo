@@ -29,14 +29,17 @@ use super::{
 };
 
 /**
- * SOURCE OF TRUTH KEYWORDS: SessionPolicy, record debounce, cancel countdown, max duration, min speech, empty take, result hold
+ * SOURCE OF TRUTH KEYWORDS: SessionPolicy, record debounce, cancel countdown, max duration, min speech, empty take, result hold, interrupt grace
  * WHAT:  The rules one take runs under: the record mode, the 150 ms record debounce, the Esc countdown, the longest
- *        take, the least speech that is delivered, and how long each result stays on the pill.
+ *        take, the least speech that is delivered, how long each result stays on the pill, and how young a take
+ *        must be to be dropped when its record press turns out to be another app's shortcut.
  * WHY:   Countdown, longest take and mode are settings (02 §3.3); the rest are fixed product rules kept in one
  *        const so tests and the actor agree: the debounce (02 §5), the empty-take threshold (05 A4: under 250 ms of
  *        speech the engine hallucinates a word), the ✓ hold (04 §4: 900 ms) and the error hold (04 §4: 3 s, also
  *        used for "No speech detected" and "Model not installed", which must stay long enough to read). A
- *        discarded take has no pill state of its own (02 §5: "hide pill"), so it holds for 0 ms.
+ *        discarded take has no pill state of its own (02 §5: "hide pill"), so it holds for 0 ms. A shortcut such
+ *        as Ctrl+Alt+T is typed within a second of its modifiers going down, so an interruption inside
+ *        `interrupt_grace_ms` of recorded time drops the take; a later one is a slip while dictating.
  * WHERE: registry::settings::session_policy builds it from a snapshot; carried by SessionInput::RecordPressed and
  *        stored in the take; read by pipeline/session/transition.rs.
  */
@@ -57,12 +60,14 @@ pub struct SessionPolicy {
     pub notice_hold_ms: u32,
     /// How long a discarded take stays in `Discarded`, in ms.
     pub discard_hold_ms: u32,
+    /// Recorded time under which an interrupted record press drops its take, in ms.
+    pub interrupt_grace_ms: u64,
 }
 
 impl SessionPolicy {
     /// The product rules with every setting at its default.
     pub const DEFAULT: Self = Self {
-        record_mode: RecordMode::Toggle,
+        record_mode: RecordMode::Hold,
         debounce_ms: 150,
         cancel_countdown_ms: 3_000,
         max_duration_ms: 15 * 60_000,
@@ -70,6 +75,7 @@ impl SessionPolicy {
         done_hold_ms: 900,
         notice_hold_ms: 3_000,
         discard_hold_ms: 0,
+        interrupt_grace_ms: 1_000,
     };
 }
 
@@ -234,6 +240,8 @@ pub struct ArmingTake {
     pub policy: SessionPolicy,
     /// A stop that arrived before the microphone was open; the take finalizes as soon as it is.
     pub stop: Option<StopCause>,
+    /// The press turned out to be another shortcut: the take is dropped as soon as the microphone is open.
+    pub interrupted: bool,
 }
 
 /// The microphone is open and the take is being transcribed while the user speaks.
@@ -429,9 +437,9 @@ impl SessionState {
 }
 
 /**
- * SOURCE OF TRUTH KEYWORDS: SessionInput, RecordPressed, RecordReleased, Esc, Armed, SegmentDone, AllSegmentsDone, Delivered, DeviceLost, ModelMissing
+ * SOURCE OF TRUTH KEYWORDS: SessionInput, RecordPressed, RecordReleased, RecordInterrupted, Esc, Armed, SegmentDone, AllSegmentsDone, Delivered, DeviceLost, ModelMissing
  * WHAT:  Everything that can happen to a take, stamped by the actor: hotkeys and the pill (RecordPressed,
- *        RecordReleased, Stop, Esc), timers (CountdownElapsed, MaxDurationReached, SettleElapsed) and the replies
+ *        RecordReleased, RecordInterrupted, Stop, Esc), timers (CountdownElapsed, MaxDurationReached, SettleElapsed) and the replies
  *        of the effects the actor runs (Armed, SegmentDone, AllSegmentsDone, Delivered, Error, DeviceLost,
  *        ModelMissing).
  * WHY:   Replies name their take and timers their token, so a late reply from an ended take or a timer that was
@@ -449,6 +457,8 @@ pub enum SessionInput {
     },
     /// The record hotkey came back up (only with `HotkeyCaps.supports_release`).
     RecordReleased,
+    /// Another key joined the held (modifier-only) record hotkey: the press was part of another shortcut.
+    RecordInterrupted,
     /// The pill's stop button.
     Stop,
     /// The Esc session hotkey.
@@ -506,6 +516,7 @@ impl SessionInput {
         match self {
             Self::RecordPressed { .. } => "RecordPressed",
             Self::RecordReleased => "RecordReleased",
+            Self::RecordInterrupted => "RecordInterrupted",
             Self::Stop => "Stop",
             Self::Esc => "Esc",
             Self::Armed { .. } => "Armed",
@@ -533,6 +544,7 @@ impl SessionInput {
             | Self::ModelMissing { take, .. } => Some(*take),
             Self::RecordPressed { .. }
             | Self::RecordReleased
+            | Self::RecordInterrupted
             | Self::Stop
             | Self::Esc
             | Self::CountdownElapsed { .. }

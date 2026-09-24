@@ -1,18 +1,18 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: typed setting reads, theme read, transcription reads, polish reads, remove_fillers, dictionary, llm_polisher, trailing_space, delivery_policy, session_policy, record_mode
+ * SOURCE OF TRUTH KEYWORDS: typed setting reads, theme read, transcription reads, polish reads, remove_fillers, dictionary, llm_polisher, trailing_space, delivery_policy, input_device, session_policy, record_mode
  * WHAT:  Typed reads of a SettingsSnapshot for the settings the core acts on.
  * WHY:   Values are stored as tagged SettingValues and enum text; spelling them is the registry's job, so the
  *        pipeline asks here instead of matching kinds or comparing strings. A resolved snapshot always holds a
  *        valid value for every key, so each fallback only guards a snapshot built outside `resolve` and uses the
  *        spec's own default.
  * WHERE: Re-exported by registry/settings; read by pipeline/appearance, pipeline/asr, pipeline/polish,
- *        pipeline/delivery and the session actor (session_policy).
+ *        pipeline/delivery and the session actor (session_policy, input_device, delivery_policy).
  */
 
 use super::{find, keys, values};
 use crate::types::{
-    Accelerator, DeliveryPolicy, EngineId, Language, RecordMode, SessionPolicy, SettingKey,
-    SettingValue, SettingsSnapshot, TextPair, ThemePreference,
+    Accelerator, AudioDeviceId, DeliveryPolicy, EngineId, Language, RecordMode, SessionPolicy,
+    SettingKey, SettingValue, SettingsSnapshot, TextPair, ThemePreference,
 };
 
 /// The `general.theme` choice in effect; a resolved snapshot always holds a valid one, so the default is only a
@@ -111,11 +111,21 @@ pub fn delivery_policy(settings: &SettingsSnapshot) -> DeliveryPolicy {
     }
 }
 
-/// `hotkeys.mode`: whether the record hotkey toggles a take or records while held.
+/// `audio.input_device`: the microphone the user pinned; None follows the Windows default input.
+pub fn input_device(settings: &SettingsSnapshot) -> Option<AudioDeviceId> {
+    settings
+        .device(&keys::INPUT_DEVICE)
+        .flatten()
+        .map(|id| AudioDeviceId::from(id.to_owned()))
+}
+
+/// `hotkeys.mode`: whether the record hotkey toggles a take or records while held; a missing value is the default
+/// (hold).
 pub fn record_mode(settings: &SettingsSnapshot) -> RecordMode {
     match settings.enum_value(&keys::HOTKEY_MODE) {
+        Some(values::TOGGLE) => RecordMode::Toggle,
         Some(values::HOLD) => RecordMode::Hold,
-        _ => RecordMode::Toggle,
+        _ => RecordMode::default(),
     }
 }
 

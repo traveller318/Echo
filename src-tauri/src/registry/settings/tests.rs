@@ -368,6 +368,20 @@ fn delivery_policy_reads_the_output_toggles() {
 }
 
 #[test]
+fn input_device_is_the_pinned_microphone_or_none_for_the_windows_default() {
+    assert_eq!(input_device(&defaults()), None);
+    let pinned = resolve([(
+        keys::INPUT_DEVICE,
+        SettingValue::Device(Some(StaticStr::new("usb-mic"))),
+    )]);
+    assert_eq!(
+        input_device(&pinned),
+        Some(crate::types::AudioDeviceId::from("usb-mic".to_owned()))
+    );
+    assert_eq!(input_device(&SettingsSnapshot::default()), None);
+}
+
+#[test]
 fn session_policy_reads_the_mode_countdown_and_longest_take() {
     assert_eq!(
         session_policy(&defaults()),

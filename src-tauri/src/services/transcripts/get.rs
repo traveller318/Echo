@@ -1,10 +1,11 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: get transcript, history_get, latest transcript, paste last, transcript by id
- * WHAT:  `get`: one take in full by id (`NotFound { transcript }` if absent). `latest`: the newest take with a
- *        given status, if any.
+ * SOURCE OF TRUTH KEYWORDS: get transcript, history_get, latest transcript, paste last, transcript by id, transcript summary, TranscriptSaved row
+ * WHAT:  `get`: one take in full by id (`NotFound { transcript }` if absent). `summary`: the same take as its history
+ *        list row (the TranscriptSaved payload). `latest`: the newest take with a given status, if any.
  * WHY:   The history detail view, copy and retry read a take by id; paste-last reads the newest completed take.
  *        Newest is by id, which is a ULID and therefore creation order (02 §7.2), so no extra index is needed.
- * WHERE: history_get / history_copy / session_retry / history_paste_last (their steps); service tests.
+ * WHERE: history_get / history_copy / session_retry / history_paste_last (their steps); `summary` by the session
+ *        actor when a take settles; service tests.
  */
 
 use rusqlite::{OptionalExtension, params};
@@ -14,6 +15,7 @@ use crate::{
     services::db::Db,
     types::{
         AppError, PortError, PortResult, ResourceKind, Transcript, TranscriptId, TranscriptStatus,
+        TranscriptSummary,
     },
 };
 
@@ -26,6 +28,23 @@ pub fn get(db: &Db, id: TranscriptId) -> PortResult<Transcript> {
         connection
             .prepare_cached(&sql)?
             .query_row(params![row::id_text(id)], row::transcript)
+            .optional()
+    })?
+    .ok_or(PortError::new(AppError::NotFound {
+        resource: ResourceKind::Transcript,
+    }))
+}
+
+/// One take as its history list row (`NotFound { transcript }` if absent), for TranscriptSaved.
+pub fn summary(db: &Db, id: TranscriptId) -> PortResult<TranscriptSummary> {
+    let sql = format!(
+        "SELECT {} FROM transcripts t WHERE t.id = ?2",
+        row::SUMMARY_COLUMNS
+    );
+    db.read(|connection| {
+        connection
+            .prepare_cached(&sql)?
+            .query_row(params![row::PREVIEW_CHARS, row::id_text(id)], row::summary)
             .optional()
     })?
     .ok_or(PortError::new(AppError::NotFound {
@@ -63,6 +82,24 @@ mod tests {
         assert_eq!(take.status, TranscriptStatus::Done);
         assert_eq!(
             get(&db, id_at(2_000)).unwrap_err().error(),
+            &AppError::NotFound {
+                resource: ResourceKind::Transcript
+            }
+        );
+    }
+
+    #[test]
+    fn summary_is_the_history_row_of_the_take() {
+        let db = Db::open_in_memory().unwrap();
+        let id = done(&db, 1_000, "  First take.  ", 2, 100);
+        let row = summary(&db, id).unwrap();
+        assert_eq!(row.id, id);
+        assert_eq!(row.status, TranscriptStatus::Done);
+        assert_eq!(row.preview.as_deref(), Some("First take."));
+        assert_eq!(row.word_count, Some(2));
+        assert!(row.has_audio);
+        assert_eq!(
+            summary(&db, id_at(2_000)).unwrap_err().error(),
             &AppError::NotFound {
                 resource: ResourceKind::Transcript
             }

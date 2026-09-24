@@ -11,7 +11,8 @@
  *        call fails rather than pasting into whatever is in front now. UIPI drops input into an elevated window
  *        while SendInput still reports success (05 W2), so an elevated target is refused up front with
  *        `PermissionDenied { input_injection }`; delivery then copies instead. Every event carries
- *        SYNTHETIC_INPUT_TAG so a future low-level keyboard hook adapter (05 W9) can ignore Echo's own keys.
+ *        SYNTHETIC_INPUT_TAG (adapters/win32/keyboard.rs) so the low-level keyboard hook (05 W9) ignores Echo's
+ *        own keys.
  *        `text` is not used: the text is already on the clipboard (`InserterCaps.uses_clipboard`).
  * WHERE: Built by app/bootstrap into pipeline/delivery.rs's Delivery; called through `dyn TextInserter`.
  */
@@ -25,8 +26,6 @@ use windows::Win32::{
     Foundation::HWND,
     UI::{
         Input::KeyboardAndMouse::{
-            GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT,
-            KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, MAPVK_VK_TO_VSC, MapVirtualKeyW, SendInput,
             VIRTUAL_KEY, VK_CONTROL, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_RCONTROL,
             VK_RMENU, VK_RSHIFT, VK_RWIN, VK_V,
         },
@@ -35,13 +34,10 @@ use windows::Win32::{
 };
 
 use crate::{
-    adapters::win32::hwnd,
+    adapters::win32::{KeyStroke, MASK_TAP, hwnd, is_key_down, send_strokes},
     ports::TextInserter,
     types::{AppError, AppTarget, InserterCaps, Permission, PortError, PortResult},
 };
-
-/// `dwExtraInfo` of every event Echo synthesises ("ECHO" in ASCII), so Echo's own keyboard hooks can skip them.
-pub const SYNTHETIC_INPUT_TAG: usize = 0x4543_484F;
 
 /// Longest wait for the user to let go of the hotkey's modifiers (05 W1).
 const MODIFIER_RELEASE_TIMEOUT: Duration = Duration::from_millis(400);
@@ -63,9 +59,6 @@ const MODIFIERS: [VIRTUAL_KEY; 8] = [
     VK_LWIN,
     VK_RWIN,
 ];
-
-/// An unassigned virtual key: tapping it makes a following Alt or Win release not "lone" (no menu, no Start).
-const MENU_MASK_KEY: VIRTUAL_KEY = VIRTUAL_KEY(0xE8);
 
 /// Pastes with SendInput.
 #[derive(Debug, Default)]
@@ -101,24 +94,7 @@ impl TextInserter for Win32SendInputInserter {
                 "modifiers still held after the wait; releasing them"
             );
         }
-        send(&paste_strokes(&held))
-    }
-}
-
-/// One synthetic key event.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct KeyStroke {
-    key: VIRTUAL_KEY,
-    up: bool,
-}
-
-impl KeyStroke {
-    const fn down(key: VIRTUAL_KEY) -> Self {
-        Self { key, up: false }
-    }
-
-    const fn up(key: VIRTUAL_KEY) -> Self {
-        Self { key, up: true }
+        send_strokes(&paste_strokes(&held))
     }
 }
 
@@ -135,7 +111,7 @@ fn paste_strokes(held: &[VIRTUAL_KEY]) -> Vec<KeyStroke> {
         .iter()
         .any(|key| matches!(*key, VK_LMENU | VK_RMENU | VK_LWIN | VK_RWIN))
     {
-        strokes.extend([KeyStroke::down(MENU_MASK_KEY), KeyStroke::up(MENU_MASK_KEY)]);
+        strokes.extend(MASK_TAP);
     }
     strokes.extend(held.iter().copied().map(KeyStroke::up));
     strokes.extend([
@@ -147,67 +123,14 @@ fn paste_strokes(held: &[VIRTUAL_KEY]) -> Vec<KeyStroke> {
     strokes
 }
 
-/// Keys whose scan code needs the extended-key prefix (right-hand modifiers and both Win keys).
-const fn is_extended(key: VIRTUAL_KEY) -> bool {
-    matches!(key, VK_RCONTROL | VK_RMENU | VK_LWIN | VK_RWIN)
-}
-
-fn keyboard_input(stroke: KeyStroke) -> INPUT {
-    let mut flags = KEYBD_EVENT_FLAGS(0);
-    if stroke.up {
-        flags |= KEYEVENTF_KEYUP;
-    }
-    if is_extended(stroke.key) {
-        flags |= KEYEVENTF_EXTENDEDKEY;
-    }
-    // SAFETY: MapVirtualKeyW reads only its value arguments; 0 (no scan code) is a valid answer for unassigned keys.
-    let scan = unsafe { MapVirtualKeyW(u32::from(stroke.key.0), MAPVK_VK_TO_VSC) };
-    INPUT {
-        r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 {
-            ki: KEYBDINPUT {
-                wVk: stroke.key,
-                wScan: u16::try_from(scan).unwrap_or(0),
-                dwFlags: flags,
-                time: 0,
-                dwExtraInfo: SYNTHETIC_INPUT_TAG,
-            },
-        },
-    }
-}
-
-/// Sends `strokes` as one uninterruptible batch.
-fn send(strokes: &[KeyStroke]) -> PortResult<()> {
-    let inputs: Vec<INPUT> = strokes.iter().copied().map(keyboard_input).collect();
-    let size = i32::try_from(size_of::<INPUT>()).unwrap_or(i32::MAX);
-    // SAFETY: `inputs` is a slice of initialised keyboard INPUTs and `size` is the size of one INPUT.
-    let sent = unsafe { SendInput(&inputs, size) };
-    if usize::try_from(sent).is_ok_and(|sent| sent == inputs.len()) {
-        return Ok(());
-    }
-    Err(PortError::new(AppError::PermissionDenied {
-        permission: Permission::InputInjection,
-    })
-    .with_detail(format!(
-        "SendInput sent {sent} of {} events: {}",
-        inputs.len(),
-        windows::core::Error::from_win32()
-    )))
-}
-
-/// True while `key` is physically down.
-fn is_down(key: VIRTUAL_KEY) -> bool {
-    // SAFETY: reads the asynchronous key state of one virtual key; no pointers.
-    let state = unsafe { GetAsyncKeyState(i32::from(key.0)) };
-    // The most significant bit is set while the key is down.
-    state < 0
-}
-
 /// Waits until no modifier is held or `timeout` passes; returns the ones still held.
 fn wait_for_modifier_release(timeout: Duration) -> Vec<VIRTUAL_KEY> {
     let deadline = Instant::now() + timeout;
     loop {
-        let held: Vec<VIRTUAL_KEY> = MODIFIERS.into_iter().filter(|key| is_down(*key)).collect();
+        let held: Vec<VIRTUAL_KEY> = MODIFIERS
+            .into_iter()
+            .filter(|key| is_key_down(*key))
+            .collect();
         if held.is_empty() || Instant::now() >= deadline {
             return held;
         }
@@ -283,30 +206,14 @@ mod tests {
             assert_eq!(
                 strokes[..4],
                 [
-                    KeyStroke::down(MENU_MASK_KEY),
-                    KeyStroke::up(MENU_MASK_KEY),
+                    MASK_TAP[0],
+                    MASK_TAP[1],
                     KeyStroke::up(VK_LCONTROL),
                     KeyStroke::up(key),
                 ]
             );
             assert_eq!(strokes[4..], PASTE);
         }
-    }
-
-    #[test]
-    fn inputs_carry_the_tag_and_the_right_flags() {
-        let up = keyboard_input(KeyStroke::up(VK_RCONTROL));
-        // SAFETY: built as a keyboard input just above.
-        let key = unsafe { up.Anonymous.ki };
-        assert_eq!(up.r#type, INPUT_KEYBOARD);
-        assert_eq!(key.dwExtraInfo, SYNTHETIC_INPUT_TAG);
-        assert!(key.dwFlags.contains(KEYEVENTF_KEYUP));
-        assert!(key.dwFlags.contains(KEYEVENTF_EXTENDEDKEY));
-        assert_ne!(key.wScan, 0);
-        let down = keyboard_input(KeyStroke::down(VK_V));
-        // SAFETY: as above.
-        let key = unsafe { down.Anonymous.ki };
-        assert_eq!(key.dwFlags, KEYBD_EVENT_FLAGS(0));
     }
 
     #[test]

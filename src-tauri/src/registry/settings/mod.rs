@@ -28,7 +28,8 @@ mod tests;
 pub use list::SETTINGS;
 pub use options::{options, validate};
 pub use reads::{
-    accelerator_preference, asr_engine, delivery_policy, dictionary, language_preference,
-    llm_polisher, record_mode, remove_fillers, session_policy, theme, trailing_space,
+    accelerator_preference, asr_engine, delivery_policy, dictionary, input_device,
+    language_preference, llm_polisher, record_mode, remove_fillers, session_policy, theme,
+    trailing_space,
 };
 pub use resolve::{defaults, find, resolve};

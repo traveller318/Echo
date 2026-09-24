@@ -17,7 +17,7 @@ mod windows;
 use std::process::ExitCode;
 
 /**
- * SOURCE OF TRUTH KEYWORDS: run, app entry, exit code, startup failure, invoke handler, mount events, run_return, RunEvent Ready
+ * SOURCE OF TRUTH KEYWORDS: run, app entry, exit code, startup failure, invoke handler, mount events, run_return, RunEvent Ready, RunEvent Exit
  * WHAT:  Builds the Tauri app, mounts the event catalog, runs the bootstrap sequence, then runs the event loop
  *        until exit; returns the loop's exit code, or failure if Echo could not start.
  * WHY:   Returns an ExitCode instead of panicking (denied) or calling process::exit, and uses `run_return`, so
@@ -26,8 +26,9 @@ use std::process::ExitCode;
  *        before the event loop creates the windows, so no command or emit can run without them. A failure before
  *        logging exists goes to stderr; after that bootstrap has also written it to the log.
  *        Native window appearance (Mica, theme) is applied on RunEvent::Ready, the first moment the config
- *        windows exist, and the speech engine starts loading in the background right after, so the UI is never
- *        held up by it; window events (close → hide) go to app/windows.rs.
+ *        windows exist, and the speech engine starts loading and the session binds its hotkeys right after, so the
+ *        UI is never held up by them; on RunEvent::Exit the session finalizes an open recording before the process
+ *        ends (02 §5); window events (close → hide) go to app/windows.rs.
  * WHERE: Called once by main.rs.
  */
 pub fn run() -> ExitCode {
@@ -48,11 +49,14 @@ pub fn run() -> ExitCode {
         eprintln!("Echo could not start: {error}");
         return ExitCode::FAILURE;
     }
-    let code = app.run_return(|handle, event| {
-        if matches!(event, tauri::RunEvent::Ready) {
+    let code = app.run_return(|handle, event| match event {
+        tauri::RunEvent::Ready => {
             windows::setup(handle);
             bootstrap::start_speech_engine(handle);
+            bootstrap::prepare_session(handle);
         }
+        tauri::RunEvent::Exit => bootstrap::stop_session(handle),
+        _ => {}
     });
     ExitCode::from(u8::try_from(code).unwrap_or(u8::MAX))
 }

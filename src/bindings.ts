@@ -15,6 +15,14 @@ export const commands = {
 	audioListDevices: () => typedError<AudioDevice[], AppError>(__TAURI_INVOKE("audio_list_devices")),
 	/**  Listens to an input device (none = the Windows default) for `window_ms` and reports how it sounded. */
 	audioTestLevel: (input: AudioTestLevelInput) => typedError<MicCheck, AppError>(__TAURI_INVOKE("audio_test_level", { input })),
+	/**  The current take as the pill renders it; Idle when no take is running. */
+	sessionGetState: () => typedError<SessionView, AppError>(__TAURI_INVOKE("session_get_state")),
+	/**  Sends a pill input (`stop`) to the current take. */
+	sessionInput: (input: SessionUiInput) => typedError<null, AppError>(__TAURI_INVOKE("session_input", { input })),
+	/**  Where the pill's buttons are now, in the page's CSS pixels; an empty list when it shows none. */
+	pillSetHitAreas: (input: PillHitAreas) => typedError<null, AppError>(__TAURI_INVOKE("pill_set_hit_areas", { input })),
+	/**  The pill finished its exit animation. */
+	pillExited: () => typedError<null, AppError>(__TAURI_INVOKE("pill_exited")),
 	/**  Every registry list the UI renders from. Compiled in, so it never changes while the app runs. */
 	registryGet: () => typedError<RegistryView, AppError>(__TAURI_INVOKE("registry_get")),
 	/**  Every setting's effective value (the stored value, or the registry default), ordered by key. */
@@ -32,6 +40,8 @@ export const commands = {
 	appOpenLogsDir: () => typedError<null, AppError>(__TAURI_INVOKE("app_open_logs_dir")),
 	/**  Opens the Windows privacy page where microphone access for desktop apps is turned on. */
 	appOpenMicPrivacySettings: () => typedError<null, AppError>(__TAURI_INVOKE("app_open_mic_privacy_settings")),
+	/**  Brings the main window forward on a page (the pill's "Set up" and "Open"). */
+	appOpenPage: (input: OpenPageInput) => typedError<null, AppError>(__TAURI_INVOKE("app_open_page", { input })),
 };
 
 /** Events */
@@ -41,6 +51,7 @@ export const events = {
 	historyChanged: makeEvent<HistoryChanged>("HistoryChanged"),
 	metricsChanged: makeEvent<MetricsChanged>("MetricsChanged"),
 	modelProgress: makeEvent<ModelProgress>("ModelProgress"),
+	navigationRequested: makeEvent<NavigationRequested>("NavigationRequested"),
 	sessionStateChanged: makeEvent<SessionStateChanged>("SessionStateChanged"),
 	settingsChanged: makeEvent<SettingsChanged>("SettingsChanged"),
 	transcriptSaved: makeEvent<TranscriptSaved>("TranscriptSaved"),
@@ -209,6 +220,27 @@ export type HistoryChanged = {
 	reason: HistoryChangeReason,
 };
 
+/**
+ * 
+ *  * SOURCE OF TRUTH KEYWORDS: HotkeyAction, hotkey action, record action, cancel take action, paste last action, hotkey routing
+ *  * WHAT:  What pressing (and releasing) a registry hotkey does: start or stop a take, cancel it with the Esc
+ *  *        countdown, or paste the last transcript.
+ *  * WHY:   The session actor turns a HotkeyEvent into a session input by the action its registry entry declares, so
+ *  *        a new hotkey that reuses an action is one registry entry, and a new action fails to compile until the
+ *  *        actor says what it does. The actor binds only the Always-scoped hotkeys whose action it handles, so a
+ *  *        combination is never taken from other apps while pressing it would do nothing.
+ *  * WHERE: HotkeySpec.action (registry/hotkeys.rs); read by the session actor (pipeline/session/hotkey_input.rs)
+ *  *        through registry::hotkeys::find.
+ *  
+ */
+export type HotkeyAction = 
+/**  Starts a take, or stops it (toggle mode); in hold mode the release stops it. */
+"record" | 
+/**  The Esc countdown: a first press pauses and counts down, a second one undoes (05 W10). */
+"cancel_take" | 
+/**  Pastes the most recent delivered transcript again. */
+"paste_last";
+
 /**  Caps of a `HotkeyService` adapter. */
 export type HotkeyCaps = {
 	/**  Key-up events are reported, so hold-to-talk is possible. */
@@ -222,7 +254,10 @@ export type HotkeyId = string;
 
 /**  Why a hotkey could not be registered. */
 export type HotkeyIssue = 
-/**  Another app already owns the combination (05 W7). */
+/**
+ *  The combination is already taken: by another Echo hotkey, or (with a RegisterHotKey backend) by another app
+ *  (05 W7).
+ */
 "conflict" | 
 /**  The combination cannot be registered (no key, or not allowed by the hotkey adapter's caps). */
 "invalid";
@@ -242,6 +277,8 @@ export type HotkeySpec = {
 	/**  The Hotkey setting the user rebinds it with; None when the combination is fixed. */
 	setting_key: SettingKey | null,
 	scope: HotkeyScope,
+	/**  What pressing it does. */
+	action: HotkeyAction,
 };
 
 /**  Caps of a `TextInserter` adapter. */
@@ -413,6 +450,28 @@ export type NavItem = {
 	order: number,
 };
 
+/**
+ *  Something outside the main window's router (the pill's "Set up" or "Open") asked for a page; the main window
+ *  navigates there. Sent after the main window was brought forward.
+ */
+export type NavigationRequested = {
+	page: NavId,
+};
+
+/**
+ * 
+ *  * SOURCE OF TRUTH KEYWORDS: OpenPageInput, app_open_page input, open main window on a page, pill Set up, pill Open
+ *  * WHAT:  The input of `app_open_page`: which main-window page to show.
+ *  * WHY:   The pill has no router and no rights on the main window (capabilities/pill.json), so its "Set up" and
+ *  *        "Open" buttons ask Rust to bring the main window forward on a page; the page is a NavId, so only pages the
+ *  *        registry has can be named, and serde already refuses anything else (nothing left for garde to check).
+ *  * WHERE: ipc/commands/system.rs (`app_open_page`); sent by the pill (src/pill) and any surface without the router.
+ *  
+ */
+export type OpenPageInput = {
+	page: NavId,
+};
+
 /**  Where the options of an `Enum` setting come from when they depend on what is registered or installed. */
 export type OptionSource = 
 /**  Every registered engine of kind `asr`. */
@@ -423,6 +482,14 @@ export type OptionSource =
 "asr_languages" | 
 /**  `auto` plus every accelerator of the selected ASR engine. */
 "asr_accelerators";
+
+/**  A rectangle on the pill's page, in whole CSS pixels from its top-left corner. */
+export type OverlayRect = {
+	x: number,
+	y: number,
+	width: number,
+	height: number,
+};
 
 /**  A slice of a longer list, newest first unless the command says otherwise. */
 export type Page<T> = {
@@ -446,6 +513,11 @@ export type Permission =
 
 /**  Whether a permission holds right now. */
 export type PermissionState = "granted" | "denied";
+
+/**  The pill's clickable rectangles; everything else passes clicks through. */
+export type PillHitAreas = {
+	areas: OverlayRect[],
+};
 
 /**  Caps of a `TextPolisher` adapter. */
 export type PolisherCaps = {
@@ -487,7 +559,10 @@ export type SessionStatus = "idle" |
 /**  The take failed; its audio and row are kept for retry. */
 "failed";
 
-/**  Session inputs the UI is allowed to send through `session_input`. */
+/**
+ *  Session inputs the UI is allowed to send through `session_input`; every variant is valid as sent, so the
+ *  factory's validation only checks the shape (serde already refused anything else).
+ */
 export type SessionUiInput = 
 /**  The pill's stop button: same effect as pressing the record hotkey while recording. */
 "stop";

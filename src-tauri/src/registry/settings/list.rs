@@ -125,7 +125,7 @@ pub const SETTINGS: &[SettingSpec] = &[
                 list: StaticList::new(HOTKEY_MODE_OPTIONS),
             },
         },
-        default: SettingValue::Enum(StaticStr::new(values::TOGGLE)),
+        default: SettingValue::Enum(StaticStr::new(values::HOLD)),
         restart_required: false,
         visible: true,
         requires: None,

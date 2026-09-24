@@ -151,12 +151,12 @@ const APP_ERROR_COPY: { readonly [C in AppErrorCode]: (error: AppErrorOf<C>) => 
     error.reason === "conflict"
       ? {
           title: "That shortcut is taken",
-          body: "Another app already uses it. Pick a different one.",
+          body: "Another Echo shortcut already uses it. Pick a different one.",
           action: null,
         }
       : {
           title: "That shortcut can't be used",
-          body: "Combine a key with at least one modifier, like Ctrl or Alt.",
+          body: "Use a key with modifiers, like Ctrl+Alt+Space, or two modifiers, like Ctrl+Alt.",
           action: null,
         },
   Internal: () => ({

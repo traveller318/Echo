@@ -21,3 +21,4 @@ pub mod polish;
 pub mod scheduler;
 pub mod vad;
 pub mod win32;
+pub mod window;

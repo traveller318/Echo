@@ -14,6 +14,10 @@
  *          mode only the release stops; repeated presses while held are ignored.
  *        - A stop that arrives while the microphone is still opening is remembered and applied the moment it is
  *          open, so a quick tap is a (probably empty) take instead of a take that never stops.
+ *        - A record press that turns out to be another shortcut (RecordInterrupted: Ctrl+Alt, then T) drops its
+ *          take silently, row and audio included, while it is arming or has recorded under `interrupt_grace_ms`;
+ *          later, in hold mode, it is a slip while dictating and stops the take like a release; in toggle mode the
+ *          take keeps recording.
  *        - Esc is registered only on entering Recording and released on every exit from Recording or
  *          CancelPending: stop, discard, error, and an undo that must finalize (05 W10).
  *        - Recorded time excludes the countdown; the undo restarts the max-duration timer with what is left.
@@ -251,6 +255,7 @@ impl Step {
             id,
             policy,
             stop: None,
+            interrupted: false,
         });
         self.publish(&phase);
         self.push(SessionEffect::Cue(SessionCue::Start));
@@ -287,6 +292,13 @@ impl Step {
                     target,
                     segments: BTreeMap::new(),
                 };
+                if arming.interrupted {
+                    let held = Held {
+                        capture: true,
+                        ..Held::NOTHING
+                    };
+                    return self.drop_take(&take, 0, held);
+                }
                 match arming.stop {
                     Some(cause) => self.finalize(take, 0, cause, Held::NOTHING),
                     None => self.begin_recording(take),
@@ -306,6 +318,10 @@ impl Step {
             }
             SessionInput::RecordReleased if mode == RecordMode::Hold => {
                 arming.stop.get_or_insert(StopCause::Released);
+                SessionPhase::Arming(arming)
+            }
+            SessionInput::RecordInterrupted => {
+                arming.interrupted = true;
                 SessionPhase::Arming(arming)
             }
             SessionInput::Stop => {
@@ -378,6 +394,7 @@ impl Step {
             SessionInput::RecordReleased if mode == RecordMode::Hold => {
                 self.stop_recording(recording, StopCause::Released)
             }
+            SessionInput::RecordInterrupted => self.interrupted(recording, name),
             SessionInput::Stop => self.stop_recording(recording, StopCause::Ui),
             SessionInput::MaxDurationReached { .. } => {
                 self.stop_recording(recording, StopCause::MaxDuration)
@@ -413,6 +430,39 @@ impl Step {
                 IgnoreReason::NotValidNow,
             ),
         }
+    }
+
+    /// The record press was another shortcut: a young take is dropped; an older one stops in hold mode (a slip
+    /// while dictating) and keeps recording in toggle mode.
+    fn interrupted(&mut self, recording: RecordingTake, name: &'static str) -> SessionPhase {
+        let elapsed_ms = recording.clock.elapsed_ms(self.now);
+        if elapsed_ms < recording.take.policy.interrupt_grace_ms {
+            let held = Held {
+                esc: true,
+                timer: Some(recording.timer),
+                capture: true,
+            };
+            return self.drop_take(&recording.take, elapsed_ms, held);
+        }
+        match recording.take.policy.record_mode {
+            RecordMode::Hold => self.stop_recording(recording, StopCause::Released),
+            RecordMode::Toggle => self.reject(
+                SessionPhase::Recording(recording),
+                name,
+                IgnoreReason::NotValidNow,
+            ),
+        }
+    }
+
+    /// Drops a take nobody meant to start: release what it holds, delete its row and audio, hide the pill. No cue
+    /// and no toast, since the user was typing another shortcut.
+    fn drop_take(&mut self, take: &TakeData, elapsed_ms: u64, held: Held) -> SessionPhase {
+        self.release(take.id, held);
+        self.push(SessionEffect::DeleteTake { take: take.id });
+        // No id: the row no longer exists, so any late reply for it is stale.
+        self.settle(None, elapsed_ms, take.policy.discard_hold_ms, |settled| {
+            SessionPhase::Discarded { settled }
+        })
     }
 
     fn stop_recording(&mut self, recording: RecordingTake, cause: StopCause) -> SessionPhase {
@@ -453,7 +503,9 @@ impl Step {
         match input {
             SessionInput::Esc => self.undo(pending),
             SessionInput::CountdownElapsed { .. } => self.discard(pending),
-            SessionInput::RecordReleased if mode == RecordMode::Hold => {
+            SessionInput::RecordReleased | SessionInput::RecordInterrupted
+                if mode == RecordMode::Hold =>
+            {
                 pending.stop_on_undo.get_or_insert(StopCause::Released);
                 SessionPhase::CancelPending(pending)
             }

@@ -153,6 +153,8 @@
   --animate-slide-out-right: echo-slide-out-right var(--duration-slow) var(--ease-exit) both;
   --animate-slide-in-up: echo-slide-in-up var(--duration-base) var(--ease-standard) both;
   --animate-indeterminate: echo-indeterminate calc(var(--duration-slow) * 4) var(--ease-linear) infinite;
+  --animate-breathe: echo-breathe var(--duration-breathe) var(--ease-standard) infinite;
+  --animate-shimmer: echo-shimmer calc(var(--duration-slow) * 4) var(--ease-linear) infinite;
 }
 
 @keyframes echo-fade-in {
@@ -206,6 +208,21 @@
   }
   to {
     translate: 250% 0;
+  }
+}
+
+@keyframes echo-breathe {
+  50% {
+    opacity: 0.4;
+  }
+}
+
+@keyframes echo-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
   }
 }
 

@@ -33,7 +33,8 @@ pub enum ResourceKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum HotkeyIssue {
-    /// Another app already owns the combination (05 W7).
+    /// The combination is already taken: by another Echo hotkey, or (with a RegisterHotKey backend) by another app
+    /// (05 W7).
     Conflict,
     /// The combination cannot be registered (no key, or not allowed by the hotkey adapter's caps).
     Invalid,

@@ -1,28 +1,31 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: hotkey registry, HOTKEYS, record hotkey, paste last hotkey, cancel Esc, default accelerator, hotkey scope, effective shortcut, for_setting
+ * SOURCE OF TRUTH KEYWORDS: hotkey registry, HOTKEYS, record hotkey, paste last hotkey, cancel Esc, default accelerator, hotkey scope, hotkey action, effective shortcut, for_setting
  * WHAT:  Every global hotkey Echo binds (record, paste-last, cancel) with its default combination, the setting
- *        that rebinds it and its scope; typed id constants; the combination in effect for given settings; and which
- *        hotkey a setting rebinds (`for_setting`).
- * WHY:   A hotkey is a registry entry (02 §3.3): the session reacts to a HotkeyId, never to key text. The default
- *        combinations are declared once here and reused as the settings defaults (registry/settings), so the two
- *        cannot drift. Cancel is fixed to Esc and scoped to a session so Esc is never taken from other apps
- *        outside a take (05 W10). `Escape` is the accelerator spelling the global-shortcut adapter parses.
- * WHERE: Read by pipeline/hotkeys.rs (register Always entries at startup, DuringSession entries on RecordPressed,
- *        rebind after a hotkey setting changes), the session actor (which id fired) and registry/settings
- *        (defaults).
+ *        that rebinds it, its scope and its action; typed id constants; the combination in effect for given settings;
+ *        and which hotkey a setting rebinds (`for_setting`).
+ * WHY:   A hotkey is a registry entry (02 §3.3): the session reacts to the HotkeyAction of the HotkeyId that fired,
+ *        never to key text or to an id. The default combinations are declared once here and reused as the settings
+ *        defaults (registry/settings), so the two cannot drift. Cancel is fixed to Esc and scoped to a session so Esc
+ *        is never taken from other apps outside a take (05 W10). `Escape` is the accelerator spelling the hotkey
+ *        adapter parses; the record default is the modifier-only chord Ctrl+Alt, held to talk.
+ * WHERE: Read by pipeline/hotkeys.rs (register Always entries once the session actor is ready, DuringSession
+ *        entries while a take records, rebind after a hotkey setting changes), the session actor (the action of the
+ *        id that fired) and registry/settings (defaults).
  */
 
 use super::settings::keys;
 use crate::types::{
-    HotkeyId, HotkeyScope, HotkeySpec, SettingKey, SettingsSnapshot, Shortcut, StaticStr,
+    HotkeyAction, HotkeyId, HotkeyScope, HotkeySpec, SettingKey, SettingsSnapshot, Shortcut,
+    StaticStr,
 };
 
 pub const RECORD: HotkeyId = HotkeyId::from_static("record");
 pub const PASTE_LAST: HotkeyId = HotkeyId::from_static("paste-last");
 pub const CANCEL: HotkeyId = HotkeyId::from_static("cancel");
 
-/// Default combinations (05 decision log: rarely bound by other apps).
-pub const RECORD_DEFAULT: &str = "Ctrl+Alt+Space";
+/// Default combinations (05 decision log): hold Ctrl+Alt to dictate (a modifier-only chord the keyboard hook binds),
+/// Ctrl+Alt+V to paste the last transcript again.
+pub const RECORD_DEFAULT: &str = "Ctrl+Alt";
 pub const PASTE_LAST_DEFAULT: &str = "Ctrl+Alt+V";
 pub const CANCEL_DEFAULT: &str = "Escape";
 
@@ -34,6 +37,7 @@ pub const HOTKEYS: &[HotkeySpec] = &[
         default_accelerator: Shortcut::from_static(RECORD_DEFAULT),
         setting_key: Some(keys::RECORD_HOTKEY),
         scope: HotkeyScope::Always,
+        action: HotkeyAction::Record,
     },
     HotkeySpec {
         id: PASTE_LAST,
@@ -41,6 +45,7 @@ pub const HOTKEYS: &[HotkeySpec] = &[
         default_accelerator: Shortcut::from_static(PASTE_LAST_DEFAULT),
         setting_key: Some(keys::PASTE_LAST_HOTKEY),
         scope: HotkeyScope::Always,
+        action: HotkeyAction::PasteLast,
     },
     HotkeySpec {
         id: CANCEL,
@@ -48,12 +53,18 @@ pub const HOTKEYS: &[HotkeySpec] = &[
         default_accelerator: Shortcut::from_static(CANCEL_DEFAULT),
         setting_key: None,
         scope: HotkeyScope::DuringSession,
+        action: HotkeyAction::CancelTake,
     },
 ];
 
 /// The hotkey `id`.
 pub fn find(id: &HotkeyId) -> Option<&'static HotkeySpec> {
     HOTKEYS.iter().find(|spec| spec.id == *id)
+}
+
+/// What the hotkey `id` does; None for an id no entry has (a stale event after a registry change).
+pub fn action_of(id: &HotkeyId) -> Option<HotkeyAction> {
+    find(id).map(|spec| spec.action)
 }
 
 /// The hotkey `key` rebinds; None for a setting that is not a hotkey.
@@ -140,6 +151,16 @@ mod tests {
             find(&CANCEL).map(|spec| spec.setting_key.is_none()),
             Some(true)
         );
+    }
+
+    #[test]
+    fn every_action_has_exactly_one_hotkey() {
+        assert_eq!(action_of(&RECORD), Some(HotkeyAction::Record));
+        assert_eq!(action_of(&PASTE_LAST), Some(HotkeyAction::PasteLast));
+        assert_eq!(action_of(&CANCEL), Some(HotkeyAction::CancelTake));
+        assert_eq!(action_of(&HotkeyId::from_static("unknown")), None);
+        let actions: HashSet<_> = HOTKEYS.iter().map(|spec| spec.action).collect();
+        assert_eq!(actions.len(), HOTKEYS.len());
     }
 
     #[test]

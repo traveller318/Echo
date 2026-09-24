@@ -76,8 +76,11 @@ impl SessionView {
     };
 }
 
-/// Session inputs the UI is allowed to send through `session_input`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+/// Session inputs the UI is allowed to send through `session_input`; every variant is valid as sent, so the
+/// factory's validation only checks the shape (serde already refused anything else).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type, garde::Validate,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionUiInput {
     /// The pill's stop button: same effect as pressing the record hotkey while recording.

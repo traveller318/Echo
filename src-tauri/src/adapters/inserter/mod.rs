@@ -8,4 +8,4 @@
 
 mod win32_send_input;
 
-pub use win32_send_input::{SYNTHETIC_INPUT_TAG, Win32SendInputInserter};
+pub use win32_send_input::Win32SendInputInserter;

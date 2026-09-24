@@ -7,7 +7,18 @@
  * WHERE: Runs in the `web` Vitest project (jsdom).
  */
 import { afterEach, describe, expect, it } from "vitest";
-import { MissingDesignTokenError, readDurationToken, readEaseToken, SPRINGS, transitionFor } from "./motion";
+import {
+  MissingDesignTokenError,
+  PILL_ENTER_FROM,
+  PILL_EXIT_TO,
+  PILL_REST,
+  readDurationToken,
+  readEaseToken,
+  readLengthToken,
+  SPRINGS,
+  stillPose,
+  transitionFor,
+} from "./motion";
 
 describe("motion tokens", () => {
   afterEach(() => {
@@ -36,6 +47,20 @@ describe("motion tokens", () => {
   it("reads seconds and milliseconds", () => {
     document.documentElement.style.setProperty("--duration-slow", "0.32s");
     expect(readDurationToken("--duration-slow")).toBe(0.32);
+  });
+
+  it("reads lengths in px", () => {
+    document.documentElement.style.setProperty("--pill-width-recording", "184px");
+    expect(readLengthToken("--pill-width-recording")).toBe(184);
+    document.documentElement.style.setProperty("--pill-width-recording", "11.5rem");
+    expect(() => readLengthToken("--pill-width-recording")).toThrow(MissingDesignTokenError);
+  });
+
+  it("holds the pill poses of docs/04 and keeps only their opacity under reduced motion", () => {
+    expect(PILL_ENTER_FROM).toEqual({ opacity: 0, scale: 0.92, y: 12 });
+    expect(PILL_EXIT_TO).toEqual({ opacity: 0, scale: 0.96, y: 8 });
+    expect(stillPose(PILL_ENTER_FROM, true)).toEqual({ opacity: 0, scale: 1, y: 0 });
+    expect(stillPose(PILL_REST, false)).toBe(PILL_REST);
   });
 
   it("fails loudly instead of guessing when a token is missing or malformed", () => {

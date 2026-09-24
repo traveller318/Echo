@@ -1,8 +1,9 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: window setup, Mica backdrop, native theme, close to hide, CloseRequested, prevent_close, on_window_event, main window
+ * SOURCE OF TRUTH KEYWORDS: window setup, Mica backdrop, native theme, close to hide, CloseRequested, prevent_close, on_window_event, main window, pill window attach, PILL_WINDOW
  * WHAT:  Native behaviour of the config windows: puts the Mica material behind the main window when the OS has
- *        it, applies the `general.theme` choice to every window now and whenever AppearanceChanged fires, and
- *        turns a close of the main window (titlebar close, Alt+F4, taskbar "Close window") into a hide.
+ *        it, applies the `general.theme` choice to every window now and whenever AppearanceChanged fires, hands
+ *        the pill window to the overlay adapter, and turns a close of the main window (titlebar close, Alt+F4,
+ *        taskbar "Close window") into a hide.
  * WHY:   CSS cannot blur the desktop, so Mica comes from Rust (04 §2); the page then stops painting --color-bg
  *        (`data-backdrop="mica"`). Mica is applied only when SystemAppearance caps say the OS supports it, so
  *        Windows 10 never gets a half-applied effect (Tauri swallows that error). The native theme is applied too
@@ -13,9 +14,11 @@
  *        Closing the main window hides it (04 §5, 02 §9): Echo keeps running for the global hotkey, and the
  *        window is shown again from the tray (step 25). The rule lives here, on the native CloseRequested event,
  *        so every way of closing behaves the same and the UI only asks to close.
+ *        The pill window is created by Tauri (tauri.conf.json: transparent, undecorated, always on top, hidden,
+ *        not focusable) but from here on only the overlay adapter touches its visibility and styles (05 W3, W16): it
+ *        is attached as soon as the window exists, and Tauri's show/hide are never called on it.
  * WHERE: `setup` is called once by app::run on RunEvent::Ready and `on_window_event` is the builder's window
- *        event handler; reads the managed CommandCtx and pipeline/appearance. The pill's own shape and focus rules
- *        (05 W3, W16) join this file with step 15.
+ *        event handler; reads the managed CommandCtx, the managed Win32OverlayWindow and pipeline/appearance.
  */
 
 use tauri::{
@@ -24,7 +27,10 @@ use tauri::{
 };
 use tauri_specta::Event;
 
+use std::sync::Arc;
+
 use crate::{
+    adapters::{win32::window_handle, window::Win32OverlayWindow},
     ipc::CommandCtx,
     pipeline::appearance,
     types::{AppearanceChanged, ThemePreference},
@@ -32,6 +38,9 @@ use crate::{
 
 /// Label of the main window in tauri.conf.json.
 pub const MAIN_WINDOW: &str = "main";
+
+/// Label of the pill window in tauri.conf.json.
+pub const PILL_WINDOW: &str = "pill";
 
 /// Applies the backdrop and theme, then follows every later appearance change.
 pub fn setup<R: Runtime>(app: &AppHandle<R>) {
@@ -44,6 +53,7 @@ pub fn setup<R: Runtime>(app: &AppHandle<R>) {
         apply_mica(app);
     }
     apply_theme(app, view.theme);
+    attach_pill(app);
 
     let handle = app.clone();
     AppearanceChanged::listen_any(app, move |event| {
@@ -72,6 +82,29 @@ pub fn on_window_event<R: Runtime>(window: &Window<R>, event: &WindowEvent) {
 /// Windows that hide instead of closing; the pill is never closed by the user.
 fn hides_on_close(label: &str) -> bool {
     label == MAIN_WINDOW
+}
+
+/// Hands the pill window to the overlay adapter; without it the pill never shows, and dictation still works.
+fn attach_pill<R: Runtime>(app: &AppHandle<R>) {
+    let Some(overlay) = app.try_state::<Arc<Win32OverlayWindow>>() else {
+        tracing::error!("the pill overlay was not managed before the windows were set up");
+        return;
+    };
+    let Some(pill) = app.get_webview_window(PILL_WINDOW) else {
+        tracing::warn!("no pill window to attach");
+        return;
+    };
+    let attached = pill
+        .hwnd()
+        .map_err(|error| error.to_string())
+        .and_then(|hwnd| {
+            overlay
+                .attach(window_handle(hwnd))
+                .map_err(|error| error.detail().unwrap_or("no detail").to_owned())
+        });
+    if let Err(detail) = attached {
+        tracing::warn!(%detail, "the pill window could not be attached; takes run without it");
+    }
 }
 
 fn apply_mica<R: Runtime>(app: &AppHandle<R>) {
@@ -110,7 +143,7 @@ mod tests {
     #[test]
     fn only_the_main_window_hides_on_close() {
         assert!(hides_on_close(MAIN_WINDOW));
-        assert!(!hides_on_close("pill"));
+        assert!(!hides_on_close(PILL_WINDOW));
     }
 
     #[test]
