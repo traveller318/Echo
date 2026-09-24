@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: AppPaths, app data layout, echo.db path, database backup path, recordings dir, recording name, models dir, runtimes dir, logs dir, resources dir
+ * SOURCE OF TRUTH KEYWORDS: AppPaths, app data layout, echo.db path, recordings dir, models dir, logs dir, resources dir, onnxruntime dir, bundled models dir, OnnxRuntimeLibrary
  * WHAT:  AppPaths: every location Echo reads or writes (02 §7.1), derived from two roots the composition root
  *        resolves: the per-user app data folder and the bundled resources folder.
  * WHY:   Paths are never hardcoded (05 W23) and never resolved below app/: bootstrap asks the Tauri path API for
@@ -7,7 +7,10 @@
  *        only, so the database, journal, model manager and log sink cannot drift apart. Model folders are
  *        `models/<id>/` with downloads staged in `models/<id>.partial/` (02 §8.2); journals are
  *        `recordings/<transcript id>.wav` (02 §7.3), and the row stores only that file name; the pre-migration
- *        copy is `echo.db.bak-<from_version>` (02 §7.2).
+ *        copy is `echo.db.bak-<from_version>` (02 §7.2). Resources mirror `src-tauri/resources/` (the bundle
+ *        maps each file to the same relative path): `onnxruntime/` holds ONNX Runtime, DirectML and the C++ runtime
+ *        it links, loaded by absolute path in ONNX_RUNTIME_LOAD_ORDER (05 A5, W32); `models/` holds bundled
+ *        models (Silero VAD) by their manifest file names.
  * WHERE: Built by app/bootstrap; carried by registry::engines::BuildCtx; read by services/db (database file, backup),
  *        the model store, the capture journal, retention and the log sink.
  */
@@ -15,6 +18,60 @@
 use std::path::{Path, PathBuf};
 
 use super::{ModelId, TranscriptId};
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: ONNX_RUNTIME_LOAD_ORDER, OnnxRuntimeLibrary, bundled DLL load order, DirectML preload, app-local C++ runtime
+ * WHAT:  Every file in the bundled `onnxruntime/` folder, in the order they must be loaded; the last is ONNX
+ *        Runtime itself.
+ * WHY:   onnxruntime.dll imports the Visual C++ runtime and delay-loads DirectML.dll, and Windows resolves both by
+ *        name: a stale System32 copy would win (05 W25, W32). Loading each by absolute path first, dependencies
+ *        before dependents, makes every later lookup by name find Echo's copy. `required: false` files may be
+ *        missing (a CPU-only bundle drops DirectML) without stopping ONNX Runtime.
+ * WHERE: Read by adapters/onnx (the runtime loader) through `AppPaths::onnx_runtime_file`, and by its test that
+ *        checks the bundled files.
+ */
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OnnxRuntimeLibrary {
+    pub file_name: &'static str,
+    /// ONNX Runtime cannot start without it.
+    pub required: bool,
+    /// A C++ runtime DLL other code in the process may already have loaded; a copy already loaded is kept.
+    pub process_shared: bool,
+}
+
+/// The bundled ONNX Runtime files in load order; ONNX Runtime itself is last.
+pub const ONNX_RUNTIME_LOAD_ORDER: &[OnnxRuntimeLibrary] = &[
+    OnnxRuntimeLibrary {
+        file_name: "vcruntime140.dll",
+        required: true,
+        process_shared: true,
+    },
+    OnnxRuntimeLibrary {
+        file_name: "vcruntime140_1.dll",
+        required: true,
+        process_shared: true,
+    },
+    OnnxRuntimeLibrary {
+        file_name: "msvcp140.dll",
+        required: true,
+        process_shared: true,
+    },
+    OnnxRuntimeLibrary {
+        file_name: "msvcp140_1.dll",
+        required: true,
+        process_shared: true,
+    },
+    OnnxRuntimeLibrary {
+        file_name: "DirectML.dll",
+        required: false,
+        process_shared: false,
+    },
+    OnnxRuntimeLibrary {
+        file_name: "onnxruntime.dll",
+        required: true,
+        process_shared: false,
+    },
+];
 
 /// Where Echo keeps its files.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +96,21 @@ impl AppPaths {
     /// Read-only files shipped with the installer (Silero VAD, sounds, ONNX Runtime DLLs).
     pub fn resources_dir(&self) -> &Path {
         &self.resources_dir
+    }
+
+    /// Where the bundled ONNX Runtime and the libraries it loads live.
+    pub fn onnx_runtime_dir(&self) -> PathBuf {
+        self.resources_dir.join("onnxruntime")
+    }
+
+    /// One bundled ONNX Runtime file (a name from ONNX_RUNTIME_LOAD_ORDER).
+    pub fn onnx_runtime_file(&self, library: &OnnxRuntimeLibrary) -> PathBuf {
+        self.onnx_runtime_dir().join(library.file_name)
+    }
+
+    /// Models shipped with the installer (ModelManifest `bundled: true`), stored under their manifest file names.
+    pub fn bundled_models_dir(&self) -> PathBuf {
+        self.resources_dir.join("models")
     }
 
     /// The SQLite database.
@@ -131,6 +203,23 @@ mod tests {
         assert_eq!(paths.runtimes_dir(), data.join("runtimes"));
         assert_eq!(paths.logs_dir(), data.join("logs"));
         assert_eq!(paths.resources_dir(), Path::new("resources"));
+        assert_eq!(
+            paths.onnx_runtime_file(&ONNX_RUNTIME_LOAD_ORDER[0]),
+            Path::new("resources")
+                .join("onnxruntime")
+                .join("vcruntime140.dll")
+        );
+        assert_eq!(
+            paths.bundled_models_dir(),
+            Path::new("resources").join("models")
+        );
         assert_eq!(paths.data_dir(), data);
+    }
+
+    #[test]
+    fn onnx_runtime_itself_loads_last_and_is_required() {
+        let last = ONNX_RUNTIME_LOAD_ORDER.last().unwrap();
+        assert_eq!(last.file_name, "onnxruntime.dll");
+        assert!(last.required);
     }
 }

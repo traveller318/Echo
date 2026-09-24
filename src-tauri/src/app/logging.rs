@@ -75,11 +75,11 @@ fn install_panic_hook() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::TranscriptId;
+    use crate::types::testing::TempDir;
 
     #[test]
     fn events_are_written_as_json_lines_at_info_and_above() {
-        let dir = std::env::temp_dir().join(format!("echo-log-test-{}", TranscriptId::generate()));
+        let dir = TempDir::new("log-test");
         let logs = dir.join("logs");
         tracing::subscriber::with_default(subscriber(appender(&logs).unwrap()), || {
             let span = tracing::info_span!("command", command = "settings_set", request = 7_u64);
@@ -109,6 +109,5 @@ mod tests {
         assert_eq!(lines[0]["fields"]["outcome"], "ok");
         assert_eq!(lines[0]["span"]["command"], "settings_set");
         assert!(!text.contains("hidden at info"));
-        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -5,10 +5,12 @@
  * WHY:   One list feeds both the running app's invoke handler and the generated bindings (app/bindings.rs), so a
  *        command cannot be declared but left unreachable or untyped. Adding a command is an `echo_command!` in
  *        its group plus one path here.
- * WHERE: `catalog()` is read by app/bindings.rs; groups are filled step by step (session, history, metrics,
- *        models and audio join with their layers; system holds appearance and the logs / privacy openers).
+ * WHERE: `catalog()` is read by app/bindings.rs; groups are filled step by step (session, history, metrics
+ *        and models join with their layers; audio lists devices and runs the microphone check; system holds
+ *        appearance and the logs / privacy openers).
  */
 
+pub mod audio;
 pub mod settings;
 pub mod system;
 
@@ -18,6 +20,8 @@ use tauri_specta::{Commands, collect_commands};
 /// Every IPC command, ready for `tauri_specta::Builder::commands`.
 pub fn catalog<R: Runtime>() -> Commands<R> {
     collect_commands![
+        audio::audio_list_devices,
+        audio::audio_test_level,
         settings::registry_get,
         settings::settings_get_all,
         settings::settings_set,

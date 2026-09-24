@@ -120,6 +120,24 @@ static_str_id! {
     AudioDeviceId
 }
 
+impl AudioDeviceId {
+    /// Longest device id accepted over IPC, in bytes (a WASAPI endpoint id is about 60).
+    pub const MAX_LEN: usize = 512;
+
+    /**
+     * SOURCE OF TRUTH KEYWORDS: device id format, AudioDeviceId is_well_formed, audio input schema
+     * WHAT:  Whether the id could have come from a capture adapter: non-empty, at most `MAX_LEN` bytes, no control
+     *        characters.
+     * WHY:   The declared schema of every audio command input (garde) rejects junk before the adapter parses it;
+     *        whether the device is present is the adapter's answer (`NotFound { audio_device }`), not this check's.
+     * WHERE: types/audio.rs (`AudioTestLevelInput` garde rule).
+     */
+    pub fn is_well_formed(&self) -> bool {
+        let id = self.as_str();
+        !id.is_empty() && id.len() <= Self::MAX_LEN && !id.chars().any(char::is_control)
+    }
+}
+
 /// Primary key of one take: a ULID, so ids sort by creation time.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Type,
@@ -181,6 +199,19 @@ mod tests {
         let earlier: TranscriptId = "01ARZ3NDEKTSV4RRFFQ69G5FAV".parse().unwrap();
         let later: TranscriptId = "01BX5ZZKBKACTAV9WEVGEMMVRZ".parse().unwrap();
         assert!(earlier < later);
+    }
+
+    #[test]
+    fn audio_device_ids_must_be_short_printable_text() {
+        let valid = AudioDeviceId::from_static("wasapi:{0.0.1.00000000}.{8e5c3a2b}");
+        assert!(valid.is_well_formed());
+        for invalid in [
+            String::new(),
+            "a".repeat(AudioDeviceId::MAX_LEN + 1),
+            String::from("usb\nmic"),
+        ] {
+            assert!(!AudioDeviceId::from(invalid).is_well_formed());
+        }
     }
 
     #[test]

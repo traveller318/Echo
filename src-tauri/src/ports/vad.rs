@@ -5,7 +5,7 @@
  *        methods take `&mut self` and the capture worker owns its detector as `Box<dyn VoiceActivity>` instead of a
  *        shared `Arc`. State is reset once per take, never mid-take. The frame length comes from
  *        `VadCaps.frame_ms`; the capture worker buffers the remainder so every call gets an exact frame.
- * WHERE: Implemented by adapters/vad/silero.rs (SileroVad) and ports/fakes; owned by pipeline/capture.rs, which
+ * WHERE: Implemented by adapters/vad/silero.rs (SileroVad) and ports/fakes; owned by pipeline/capture/segmenter.rs, which
  *        turns the verdicts into segment boundaries.
  */
 

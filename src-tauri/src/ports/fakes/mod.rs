@@ -25,6 +25,7 @@ mod model_store;
 mod notifier;
 mod polish;
 mod power;
+mod scheduler;
 mod updater;
 mod vad;
 
@@ -48,6 +49,7 @@ pub use model_store::FakeModelStore;
 pub use notifier::FakeNotifier;
 pub use polish::{FakePolish, FakeTextPolisher};
 pub use power::FakePowerEvents;
+pub use scheduler::FakeWorkerScheduler;
 pub use updater::FakeUpdater;
 pub use vad::FakeVoiceActivity;
 

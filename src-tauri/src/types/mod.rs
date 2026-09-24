@@ -32,17 +32,23 @@ mod polish;
 mod port_error;
 mod power;
 mod registry;
+mod scheduling;
 mod session;
 mod settings;
 mod static_data;
 mod target;
+#[cfg(test)]
+pub mod testing;
 mod transcript;
 mod units;
 mod update;
 
 pub use appearance::{AppearanceView, Backdrop, ThemePreference, Transparency};
 pub use asr::AsrOutput;
-pub use audio::{AudioDevice, CaptureEvent, CaptureFormat, PIPELINE_SAMPLE_RATE_HZ, VadEvent};
+pub use audio::{
+    AudioDevice, AudioTestLevelInput, CaptureEvent, CaptureFormat, CaptureSummary, MicCheck,
+    MicVerdict, PIPELINE_SAMPLE_RATE_HZ, SegmentPolicy, SpeechSegment, VadEvent, samples_to_ms,
+};
 pub use clipboard::ClipboardHistory;
 pub use command::{CommandSpec, Reentrancy};
 pub use engine::{
@@ -68,12 +74,13 @@ pub use metrics::{
 pub use model::{ModelFile, ModelManifest, ModelPhase, ModelStatus, Sha256Hex};
 pub use nav::{NavIcon, NavId, NavItem};
 pub use notification::{Toast, ToastKind};
-pub use paths::AppPaths;
+pub use paths::{AppPaths, ONNX_RUNTIME_LOAD_ORDER, OnnxRuntimeLibrary};
 pub use permission::{Permission, PermissionState};
 pub use polish::PolishContext;
 pub use port_error::{PortError, PortResult};
 pub use power::PowerEvent;
 pub use registry::RegistryView;
+pub use scheduling::WorkerPriority;
 pub use session::{DeliveryOutcome, SessionStatus, SessionUiInput, SessionView};
 pub use settings::{
     CapsRequirement, EnumOption, EnumOptions, OptionSource, SettingEntry, SettingKind,

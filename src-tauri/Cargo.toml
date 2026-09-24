@@ -24,8 +24,15 @@ crate-type = ["rlib"]
 tauri-build = { version = "=2.6.3", features = [] }
 
 [dependencies]
+cpal = "=0.18.2"
 garde = { version = "=0.23.0", default-features = false, features = ["derive"] }
+hound = "=3.5.1"
+# The exact `ort` transcribe-rs pins, so the two unify (05 A17). ONNX Runtime API 24 = ONNX Runtime 1.24.x;
+# `load-dynamic` links nothing and downloads nothing: the bundled DLL is loaded by absolute path (05 A5).
+ort = { version = "=2.0.0-rc.12", default-features = false, features = ["api-24", "load-dynamic", "std"] }
 parking_lot = "=0.12.5"
+rtrb = "=0.4.0"
+rubato = "=5.0.0"
 # `bundled` compiles SQLite (with FTS5) through MSVC, no system SQLite; `backup` is the online backup API used for the
 # pre-migration copy; `cache` gives prepared-statement caching. Default features pull a wasm backend, so they are off.
 rusqlite = { version = "=0.40.2", default-features = false, features = ["backup", "bundled", "cache"] }
@@ -37,6 +44,8 @@ specta-typescript = "=0.0.12"
 tauri = { version = "=2.11.6", features = [] }
 tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
 thiserror = "=2.0.20"
+# Tauri's runtime (same version it links); `time` gives async waits, `rt` lets tests build a runtime.
+tokio = { version = "=1.53.1", default-features = false, features = ["rt", "time"] }
 tracing = { version = "=0.1.44", default-features = false, features = ["std"] }
 tracing-appender = "=0.2.5"
 tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["fmt", "json", "std"] }
@@ -45,6 +54,7 @@ ulid = { version = "=3.0.0", features = ["serde"] }
 windows = { version = "=0.61.3", features = [
     "Win32_Foundation",
     "Win32_Security",
+    "Win32_System_LibraryLoader",
     "Win32_System_Com",
     "Win32_System_Registry",
     "Win32_System_Threading",
@@ -53,6 +63,8 @@ windows = { version = "=0.61.3", features = [
 ] }
 
 [dev-dependencies]
+# Hashes the bundled resources against their pinned SHA-256 (the model store adds it as a normal dependency later).
+sha2 = "=0.10.9"
 # `test` adds the mock runtime used to call commands end to end (dev builds only; resolver 3 keeps it out of the app).
 tauri = { version = "=2.11.6", features = ["test"] }
 

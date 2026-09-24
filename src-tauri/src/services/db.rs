@@ -226,31 +226,11 @@ pub(in crate::services) fn storage(error: impl Display) -> PortError {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
     use super::*;
-    use crate::types::TranscriptId;
+    use crate::types::testing::TempDir;
 
-    /// A fresh folder under the OS temp dir, removed when dropped.
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new() -> Self {
-            let path =
-                std::env::temp_dir().join(format!("echo-db-test-{}", TranscriptId::generate()));
-            fs::create_dir_all(&path).unwrap();
-            Self(path)
-        }
-
-        fn paths(&self) -> AppPaths {
-            AppPaths::new(&self.0, &self.0)
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
+    fn paths(dir: &TempDir) -> AppPaths {
+        AppPaths::new(dir.path(), dir.path())
     }
 
     const V1: &[M<'static>] = &[M::up("CREATE TABLE notes (body TEXT);")];
@@ -271,8 +251,8 @@ mod tests {
 
     #[test]
     fn a_new_file_is_created_in_wal_mode_at_the_latest_version_without_a_backup() {
-        let dir = TempDir::new();
-        let paths = dir.paths();
+        let dir = TempDir::new("db");
+        let paths = paths(&dir);
         let db = Db::open(&paths).unwrap();
         assert!(paths.database().exists());
         assert_eq!(version(&db), i64::try_from(STEPS.len()).unwrap());
@@ -292,8 +272,8 @@ mod tests {
 
     #[test]
     fn reopening_an_up_to_date_database_keeps_its_rows() {
-        let dir = TempDir::new();
-        let paths = dir.paths();
+        let dir = TempDir::new("db");
+        let paths = paths(&dir);
         Db::open(&paths)
             .unwrap()
             .write(|connection| {
@@ -314,9 +294,9 @@ mod tests {
 
     #[test]
     fn a_pending_migration_backs_up_the_previous_version_first() {
-        let dir = TempDir::new();
-        let file = dir.0.join("notes.db");
-        let backup_of = |from: usize| dir.0.join(format!("notes.db.bak-{from}"));
+        let dir = TempDir::new("db");
+        let file = dir.join("notes.db");
+        let backup_of = |from: usize| dir.join(format!("notes.db.bak-{from}"));
 
         let v1 = Db::open_with(&file, &Migrations::from_slice(V1), backup_of).unwrap();
         v1.write(|connection| connection.execute("INSERT INTO notes (body) VALUES ('kept')", []))
@@ -345,9 +325,9 @@ mod tests {
 
     #[test]
     fn a_database_from_a_newer_build_is_refused_and_not_backed_up() {
-        let dir = TempDir::new();
-        let file = dir.0.join("notes.db");
-        let backup_of = |from: usize| dir.0.join(format!("notes.db.bak-{from}"));
+        let dir = TempDir::new("db");
+        let file = dir.join("notes.db");
+        let backup_of = |from: usize| dir.join(format!("notes.db.bak-{from}"));
         drop(Db::open_with(&file, &Migrations::from_slice(V2), backup_of).unwrap());
 
         let error = Db::open_with(&file, &Migrations::from_slice(V1), backup_of)
@@ -360,8 +340,8 @@ mod tests {
 
     #[test]
     fn readers_see_committed_writes_and_cannot_write() {
-        let dir = TempDir::new();
-        let db = Db::open(&dir.paths()).unwrap();
+        let dir = TempDir::new("db");
+        let db = Db::open(&paths(&dir)).unwrap();
         db.write(|connection| {
             connection.execute(
                 "INSERT INTO settings (key, value_json, updated_at) VALUES ('a.b', '1', 1)",

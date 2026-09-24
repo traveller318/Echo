@@ -11,6 +11,10 @@ import * as __TAURI_EVENT from "@tauri-apps/api/event";
 
 /** Commands */
 export const commands = {
+	/**  The audio input devices Windows has right now, with the current default marked. */
+	audioListDevices: () => typedError<AudioDevice[], AppError>(__TAURI_INVOKE("audio_list_devices")),
+	/**  Listens to an input device (none = the Windows default) for `window_ms` and reports how it sounded. */
+	audioTestLevel: (input: AudioTestLevelInput) => typedError<MicCheck, AppError>(__TAURI_INVOKE("audio_test_level", { input })),
 	/**  Every registry list the UI renders from. Compiled in, so it never changes while the app runs. */
 	registryGet: () => typedError<RegistryView, AppError>(__TAURI_INVOKE("registry_get")),
 	/**  Every setting's effective value (the stored value, or the registry default), ordered by key. */
@@ -108,6 +112,23 @@ export type AudioDeviceId = string;
 export type AudioLevel = {
 	/**  Root mean square of the last frame, 0 to 1. */
 	rms: number | null,
+};
+
+/**
+ * 
+ *  * SOURCE OF TRUTH KEYWORDS: AudioTestLevelInput, audio_test_level input, microphone check window, garde schema
+ *  * WHAT:  The input of `audio_test_level`: which device to listen to (None = the Windows default) and for how long.
+ *  * WHY:   Settings tests a device before it is saved and onboarding tests the default, so the device is an input,
+ *  *        not the stored setting. The factory enforces the window bounds and the device id shape before the mic
+ *  *        opens (02 §4.1); whether the device is present is the adapter's answer. The window starts at 1 s because a
+ *  *        device's first half second can be driver warm-up silence (05 W34).
+ *  * WHERE: ipc/commands/audio.rs; built in the UI through the generated bindings.
+ *  
+ */
+export type AudioTestLevelInput = {
+	device: AudioDeviceId | null,
+	/**  How long to listen, in ms. */
+	window_ms: number,
 };
 
 /**  What is behind the main window's content. */
@@ -303,6 +324,24 @@ export type MetricsSummary = {
 	range: MetricsRange,
 	values: MetricValue[],
 };
+
+/**  The result of `audio_test_level`: levels over the test window and what they mean. */
+export type MicCheck = {
+	/**  Loudest RMS over any level window, 0 to 1. */
+	peak_rms: number | null,
+	/**  RMS over the whole window, 0 to 1. */
+	mean_rms: number | null,
+	verdict: MicVerdict,
+};
+
+/**  How a microphone check sounded. */
+export type MicVerdict = 
+/**  Digital silence: the device delivers nothing (muted, or blocked by Windows privacy, 05 W13). */
+"no_signal" | 
+/**  Some sound, but too quiet for reliable recognition. */
+"too_quiet" | "good" | 
+/**  So loud that speech clips. */
+"too_loud";
 
 /**  One file of a model. */
 export type ModelFile = {

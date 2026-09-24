@@ -68,8 +68,8 @@ mod tests {
     use std::collections::HashMap;
 
     use tauri::utils::config::{
-        BundleTarget, BundleType, Csp, CspDirectiveSources, NSISInstallerMode, WebviewInstallMode,
-        WindowConfig,
+        BundleResources, BundleTarget, BundleType, Csp, CspDirectiveSources, NSISInstallerMode,
+        WebviewInstallMode, WindowConfig,
     };
 
     fn config() -> tauri::Config {
@@ -172,5 +172,27 @@ mod tests {
             bundle.windows.webview_install_mode,
             WebviewInstallMode::EmbedBootstrapper { .. }
         ));
+    }
+
+    /// AppPaths reads bundled files at the same relative path they have under src-tauri/resources (ONNX Runtime,
+    /// bundled models), so every resource folder must map onto a folder of the same name.
+    #[test]
+    fn bundled_resources_keep_their_folder_layout() {
+        let file: tauri::Config = serde_json::from_str(include_str!("../../tauri.conf.json"))
+            .expect("tauri.conf.json parses as a Tauri config");
+        let Some(BundleResources::Map(resources)) = file.bundle.resources else {
+            panic!("bundle.resources must map resource folders to install folders");
+        };
+        let mut folders: Vec<_> = resources.into_iter().collect();
+        folders.sort();
+        assert_eq!(
+            folders,
+            [
+                ("resources/licenses/*", "licenses/"),
+                ("resources/models/*", "models/"),
+                ("resources/onnxruntime/*", "onnxruntime/"),
+            ]
+            .map(|(from, to)| (from.to_owned(), to.to_owned()))
+        );
     }
 }

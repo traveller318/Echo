@@ -37,8 +37,9 @@
 *.gguf
 *.log
 logs/
-# Bundled installer resources (Silero VAD model, sound cues, runtime DLLs) are source, not app data
-!/src-tauri/resources/**
+# Bundled installer resources (Silero VAD model, sound cues, runtime DLLs) and test fixtures are source, not app data
+/src-tauri/resources/**
+/src-tauri/tests/fixtures/**
 
 # Secrets and local environment
 .env

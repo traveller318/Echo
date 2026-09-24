@@ -7,5 +7,9 @@
  */
 
 pub mod appearance;
+pub mod audio;
 pub mod consent;
 pub mod launcher;
+pub mod onnx;
+pub mod scheduler;
+pub mod vad;

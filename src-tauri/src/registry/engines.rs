@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: engine registry, EngineEntry, EnginePort, BuildCtx, build_asr, build_polisher, build_vad, lazy adapter construction
+ * SOURCE OF TRUTH KEYWORDS: engine registry, EngineEntry, EnginePort, BuildCtx, build_asr, build_polisher, build_vad, SILERO_VAD, default_vad, lazy adapter construction
  * WHAT:  The list of every local AI engine (ASR, polisher, VAD): id, label, model, declared caps and a lazy
  *        `build` fn; lookups by id and kind; the IPC view (EngineSpec); and the typed builders the composition
  *        root and pipeline call. BuildCtx is what a build fn may use.
@@ -8,8 +8,8 @@
  *        Only the selected engine is ever constructed: `build` runs when bootstrap or an engine switch asks
  *        for that id, never at startup for the whole list (02 §3.5). VAD builds a fresh `Box` because detectors
  *        are stateful per stream (05 A11). BuildCtx lives here, not in types/, because it holds a port handle
- *        and types/ may not import ports (02 §3.2). Concrete entries arrive with their adapters (Silero step
- *        09, Parakeet step 10, rules step 11, Qwen3 step 23); an empty list is the correct state until then.
+ *        and types/ may not import ports (02 §3.2). Concrete entries arrive with their adapters: Silero VAD
+ *        (step 09) is here; Parakeet (step 10), rules (step 11) and Qwen3 (step 23) follow.
  * WHERE: Built through by app/bootstrap and pipeline/models.rs (engine switch); read by registry/settings
  *        (runtime options), `registry_get` and the Models page (via `specs`).
  */
@@ -18,6 +18,7 @@ use std::sync::Arc;
 
 use super::models;
 use crate::{
+    adapters::vad::SileroVad,
     ports::{AsrEngine, ModelStore, TextPolisher, VoiceActivity},
     types::{
         AppError, AppPaths, AsrCaps, EngineCaps, EngineId, EngineKind, EngineSpec, ModelId,
@@ -97,12 +98,51 @@ impl EngineEntry {
     }
 }
 
+/// Registry id of the Silero VAD v5 detector.
+pub const SILERO_VAD: EngineId = EngineId::from_static("silero-vad-v5");
+
 /// Every engine, in the order the Models page lists them.
-pub const ENGINES: &[EngineEntry] = &[];
+pub const ENGINES: &[EngineEntry] = &[EngineEntry {
+    id: SILERO_VAD,
+    label: StaticStr::new("Silero VAD"),
+    model_id: Some(models::SILERO_VAD_V5),
+    port: EnginePort::Vad {
+        caps: SileroVad::CAPS,
+        build: build_silero_vad,
+    },
+}];
 
 /// The engine with `id`.
 pub fn find(id: &EngineId) -> Option<&'static EngineEntry> {
     ENGINES.iter().find(|entry| entry.id == *id)
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: default_vad, voice activity engine choice, first VAD entry, build_default_vad
+ * WHAT:  The detector a take uses: the first VAD entry in ENGINES; `build_default_vad` builds a fresh one.
+ * WHY:   Voice activity is not a user setting, so the choice is registry order; the session asks here instead of
+ *        naming an engine (root CLAUDE.md §3). Adding a better detector first in ENGINES switches every take.
+ * WHERE: The session actor (a detector per take, reused across takes) and tests.
+ */
+pub fn default_vad() -> Option<&'static EngineEntry> {
+    of_kind(EngineKind::Vad).next()
+}
+
+/// Builds a fresh detector from the default VAD engine; `NotFound { engine }` when none is registered.
+pub fn build_default_vad(ctx: &BuildCtx) -> PortResult<Box<dyn VoiceActivity>> {
+    match default_vad() {
+        Some(entry) => build_vad(&entry.id, ctx),
+        None => Err(PortError::new(AppError::NotFound {
+            resource: ResourceKind::Engine,
+        })
+        .with_detail("no VAD engine is registered")),
+    }
+}
+
+/// Silero VAD v5 on the bundled model (05 A11).
+fn build_silero_vad(ctx: &BuildCtx) -> PortResult<Box<dyn VoiceActivity>> {
+    let model = models::bundled_file(&ctx.paths, &models::SILERO_VAD_V5)?;
+    Ok(Box::new(SileroVad::load(&ctx.paths, &model)?))
 }
 
 /// Every engine of `kind`, in registry order.
@@ -192,7 +232,10 @@ pub(super) mod tests {
             FakeAsrEngine, FakeModelStore, FakePolish, FakeTextPolisher, FakeVoiceActivity,
         },
         registry::tests::is_registry_id,
-        types::{Accelerator, Language, LanguageSupport, LatencyClass, StaticList},
+        types::{
+            Accelerator, Language, LanguageSupport, LatencyClass, StaticList,
+            testing::{TempDir, source_resource_paths},
+        },
     };
 
     const LANGUAGES: &[Language] = &[Language::from_static("en"), Language::from_static("de")];
@@ -353,6 +396,20 @@ pub(super) mod tests {
         assert!(error.detail().unwrap().contains("missing"));
         assert!(build_vad(&EngineId::from_static("missing"), &ctx()).is_err());
         assert!(build_polisher(&EngineId::from_static("missing"), &ctx()).is_err());
+    }
+
+    #[test]
+    fn the_default_vad_is_silero_on_the_bundled_model() {
+        let data = TempDir::new("engines-vad");
+        let ctx = BuildCtx {
+            paths: source_resource_paths(data.path()),
+            model_store: Arc::new(FakeModelStore::new(data.path())),
+        };
+        assert_eq!(default_vad().map(|entry| &entry.id), Some(&SILERO_VAD));
+        let mut vad = build_default_vad(&ctx).unwrap();
+        assert_eq!(vad.caps(), SileroVad::CAPS);
+        vad.reset().unwrap();
+        assert!(vad.push(&[0.0; 512]).is_ok());
     }
 
     #[test]

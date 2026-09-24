@@ -1,9 +1,10 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: FakeAudioCapture, RecordingAudioSink, fake microphone, feed samples, lose device, fake capture stream
- * WHAT:  FakeAudioCapture: an AudioCapture whose "microphone" is driven by the test (`feed`, `lose_device`,
- *        `fail_stream`); RecordingAudioSink: an AudioSink that keeps every sample.
+ * SOURCE OF TRUTH KEYWORDS: FakeAudioCapture, RecordingAudioSink, fake microphone, feed samples, play on start, lose device, fake capture stream
+ * WHAT:  FakeAudioCapture: an AudioCapture whose "microphone" is driven by the test (`feed`, `play_on_start`,
+ *        `lose_device`, `fail_stream`); RecordingAudioSink: an AudioSink that keeps every sample.
  * WHY:   Pipeline tests must produce exact audio at exact moments (speech, silence, an unplug mid-take). Each
- *        `start` bumps a generation, so dropping an old stream handle never closes a newer stream.
+ *        `start` bumps a generation, so dropping an old stream handle never closes a newer stream. `play_on_start`
+ *        serves code that opens the stream itself (a command handler): the samples reach the sink the moment it opens.
  * WHERE: pipeline capture and session actor tests.
  */
 
@@ -27,6 +28,7 @@ struct CaptureState {
     last_device: Option<Option<AudioDeviceId>>,
     starts: usize,
     next_error: Option<PortError>,
+    on_start: Vec<f32>,
 }
 
 impl CaptureState {
@@ -69,6 +71,11 @@ impl FakeAudioCapture {
     /// The next `start` fails with `error`.
     pub fn fail_next_start(&self, error: PortError) {
         lock(&self.state).next_error = Some(error);
+    }
+
+    /// Every stream opened from now on receives `samples` as soon as it starts.
+    pub fn play_on_start(&self, samples: Vec<f32>) {
+        lock(&self.state).on_start = samples;
     }
 
     /// Delivers samples as the microphone would; returns false when no running stream received them.
@@ -160,6 +167,10 @@ impl AudioCapture for FakeAudioCapture {
         }
         state.generation += 1;
         state.starts += 1;
+        let mut sink = sink;
+        if !state.on_start.is_empty() {
+            sink.push(&state.on_start);
+        }
         state.sink = Some(sink);
         state.events = Some(events);
         state.paused = false;
@@ -271,6 +282,17 @@ mod tests {
         stream.stop().unwrap();
         assert!(!capture.is_open());
         assert_eq!(sink.samples(), [0.1, 0.2, 0.4]);
+    }
+
+    #[test]
+    fn play_on_start_reaches_every_new_stream() {
+        let capture = FakeAudioCapture::new(FORMAT);
+        capture.play_on_start(vec![0.25, -0.25]);
+        let (stream, sink, _) = open(&capture);
+        assert_eq!(sink.samples(), [0.25, -0.25]);
+        drop(stream);
+        let (_again, second, _) = open(&capture);
+        assert_eq!(second.samples(), [0.25, -0.25]);
     }
 
     #[test]

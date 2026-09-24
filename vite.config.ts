@@ -39,6 +39,9 @@ export default defineConfig({
     },
   },
   test: {
+    // One worker per logical core oversubscribes the CPU during jsdom setup, and interaction-heavy UI tests then
+    // hit their 5 s timeout at random (05 W33); half the cores finishes sooner and never times out.
+    maxWorkers: "50%",
     projects: [
       {
         extends: true,

@@ -9,7 +9,7 @@
  *        arrive in the device's own format (CaptureFormat); downmix and resample to 16 kHz happen once in the
  *        pipeline (05 A2), so a new backend (WASAPI exclusive, a file source) only converts to f32.
  * WHERE: Implemented by adapters/audio/cpal_wasapi.rs (CpalWasapiCapture) and ports/fakes; held by the pipeline
- *        as `Arc<dyn AudioCapture>`; the capture worker (pipeline/capture.rs) implements AudioSink.
+ *        as `Arc<dyn AudioCapture>`; the capture worker (pipeline/capture, RingSink) implements AudioSink.
  */
 
 use std::sync::Arc;

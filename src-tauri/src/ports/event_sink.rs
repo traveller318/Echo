@@ -7,8 +7,9 @@
  *        thread. It replaces the `events() -> Receiver<…>` shape first sketched in 02 §3.4 (05 decision log).
  *        `emit` may be called from an OS callback thread (a hotkey hook, a power notification), so it must
  *        return quickly and never wait for the consumer.
- * WHERE: Taken by HotkeyService::listen, PowerEvents::listen, AudioCapture::start and ModelStore transfers;
- *        implemented by pipeline/ (actor inbox forwarders) and by ports/fakes RecordingSink in tests.
+ * WHERE: Taken by HotkeyService::listen, PowerEvents::listen, AudioCapture::start and ModelStore transfers, and
+ *        by the capture worker for speech segments and its own failures (pipeline/capture); implemented by
+ *        pipeline/ (actor inbox forwarders) and by ports/fakes RecordingSink in tests.
  */
 
 /// Receives events a port produces. Implementations must not block.

@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: ports layer, port traits, swappable interfaces, AsrEngine, AudioCapture, HotkeyService, SystemAppearance, SystemLauncher, EventSink, fakes
+ * SOURCE OF TRUTH KEYWORDS: ports layer, port traits, swappable interfaces, AsrEngine, AudioCapture, HotkeyService, SystemAppearance, SystemLauncher, WorkerScheduler, EventSink, fakes
  * WHAT:  Layer 1: one trait per swappable concern (AI engines, audio, OS integrations, I/O), traits only,
  *        re-exported flat so callers write `use crate::ports::{AsrEngine, Clipboard}`. In test builds, `fakes`
  *        adds one in-memory double per port.
@@ -28,6 +28,7 @@ mod model_store;
 mod notifier;
 mod polish;
 mod power;
+mod scheduler;
 mod updater;
 mod vad;
 
@@ -48,6 +49,7 @@ pub use model_store::ModelStore;
 pub use notifier::Notifier;
 pub use polish::TextPolisher;
 pub use power::PowerEvents;
+pub use scheduler::WorkerScheduler;
 pub use updater::Updater;
 pub use vad::VoiceActivity;
 
@@ -63,7 +65,9 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::types::{CaptureEvent, HotkeyEvent, ModelProgress, PowerEvent, Transparency};
+    use crate::types::{
+        CaptureEvent, HotkeyEvent, ModelProgress, PowerEvent, SpeechSegment, Transparency,
+    };
 
     fn shared<T: ?Sized + Send + Sync>() {}
     fn owned<T: ?Sized + Send>() {}
@@ -84,11 +88,13 @@ mod tests {
         shared::<dyn PrivacyConsent>();
         shared::<dyn SystemAppearance>();
         shared::<dyn SystemLauncher>();
+        shared::<dyn WorkerScheduler>();
         shared::<dyn EventSink<Transparency>>();
         shared::<dyn EventSink<HotkeyEvent>>();
         shared::<dyn EventSink<PowerEvent>>();
         shared::<dyn EventSink<CaptureEvent>>();
         shared::<dyn EventSink<ModelProgress>>();
+        shared::<dyn EventSink<SpeechSegment>>();
         owned::<dyn VoiceActivity>();
         owned::<dyn CaptureStream>();
         owned::<dyn AudioSink>();

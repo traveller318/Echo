@@ -82,6 +82,11 @@
     "longDescription": "Press a hotkey, speak, and polished text is pasted into the app you are using. Speech recognition and text cleanup run entirely on your machine.",
     "license": "MIT",
     "licenseFile": "../LICENSE",
+    "resources": {
+      "resources/onnxruntime/*": "onnxruntime/",
+      "resources/models/*": "models/",
+      "resources/licenses/*": "licenses/"
+    },
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
     "windows": {
       "webviewInstallMode": {
