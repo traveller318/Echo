@@ -10,3 +10,4 @@
 pub mod appearance;
 pub mod asr;
 pub mod capture;
+pub mod polish;

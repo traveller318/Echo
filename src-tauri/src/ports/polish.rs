@@ -7,8 +7,8 @@
  *        against its 2 s budget and keep the previous stage's text when it loses (02 §8.3); dropping the future
  *        cancels the call, so implementations must leave no half-done state behind. Output safety checks (length
  *        change, preambles, 05 A12) belong to the adapter that knows its model.
- * WHERE: Implemented by adapters/polish/rules.rs (RulePolisher), adapters/polish/llama_server.rs
- *        (LlamaServerPolisher) and ports/fakes; built by registry engines entries; chained by pipeline/polish.rs.
+ * WHERE: Implemented by adapters/polish/rules/ (RulePolisher), adapters/polish/llama_server.rs
+ *        (LlamaServerPolisher) and ports/fakes; built by registry engines entries; chained by pipeline/polish (PolishChain).
  */
 
 use crate::types::{BoxFuture, PolishContext, PolisherCaps, PortResult};

@@ -76,7 +76,9 @@ pub use nav::{NavIcon, NavId, NavItem};
 pub use notification::{Toast, ToastKind};
 pub use paths::{AppPaths, ONNX_RUNTIME_LOAD_ORDER, OnnxRuntimeLibrary};
 pub use permission::{Permission, PermissionState};
-pub use polish::PolishContext;
+pub use polish::{
+    PolishContext, PolishFallback, PolishFallbackReason, PolishOutcome, PolishPlan, PolishPolicy,
+};
 pub use port_error::{PortError, PortResult};
 pub use power::PowerEvent;
 pub use registry::RegistryView;

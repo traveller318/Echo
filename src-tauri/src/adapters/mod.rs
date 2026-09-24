@@ -12,5 +12,6 @@ pub mod audio;
 pub mod consent;
 pub mod launcher;
 pub mod onnx;
+pub mod polish;
 pub mod scheduler;
 pub mod vad;

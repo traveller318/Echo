@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: engine registry, EngineEntry, EnginePort, BuildCtx, build_asr, build_polisher, build_vad, PARAKEET_TDT_V3, SILERO_VAD, default_vad, lazy adapter construction
+ * SOURCE OF TRUTH KEYWORDS: engine registry, EngineEntry, EnginePort, BuildCtx, build_asr, build_polisher, build_vad, PARAKEET_TDT_V3, SILERO_VAD, RULE_POLISHER, default_vad, always_on_polishers, lazy adapter construction
  * WHAT:  The list of every local AI engine (ASR, polisher, VAD): id, label, model, declared caps and a lazy
  *        `build` fn; lookups by id and kind; the IPC view (EngineSpec); and the typed builders the composition
  *        root and pipeline call. BuildCtx is what a build fn may use.
@@ -10,16 +10,19 @@
  *        are stateful per stream (05 A11). A build fn only constructs: an ASR engine receives its model folder
  *        later through `AsrEngine::load`, so BuildCtx carries paths, not the model store (the pipeline locates
  *        models). BuildCtx lives here with the entries that take it. Concrete entries arrive with their adapters:
- *        Parakeet TDT v3 (the default ASR) and Silero VAD are here; rules (step 11) and Qwen3 (step 23) follow.
+ *        Parakeet TDT v3 (the default ASR), Silero VAD and the rule polisher are here; Qwen3 (step 23) follows.
+ *        Polishers split by caps, never by name: one that needs no model is always on, one that needs a model is
+ *        the opt-in stage `polish.llm_engine` picks.
  * WHERE: Built through by the ASR worker's loader (pipeline/asr, startup load and engine switch) and the session
- *        actor (VAD); read by registry/settings (runtime options), `registry_get` and the Models page (via `specs`).
+ *        actor (VAD); read by registry/settings (runtime options), `registry_get` and the Models page (via `specs`); the polish
+ *        chain (pipeline/polish) plans from `always_on_polishers` and builds through `build_polisher`.
  */
 
 use std::sync::Arc;
 
 use super::models;
 use crate::{
-    adapters::{asr::ParakeetOnnx, vad::SileroVad},
+    adapters::{asr::ParakeetOnnx, polish::RulePolisher, vad::SileroVad},
     ports::{AsrEngine, TextPolisher, VoiceActivity},
     types::{
         AppError, AppPaths, AsrCaps, EngineCaps, EngineId, EngineKind, EngineSpec, ModelId,
@@ -104,6 +107,24 @@ impl EngineEntry {
             _ => None,
         }
     }
+
+    /// The declared caps when this entry builds a polisher.
+    pub const fn polisher_caps(&self) -> Option<&PolisherCaps> {
+        match &self.port {
+            EnginePort::Polisher { caps, .. } => Some(caps),
+            _ => None,
+        }
+    }
+
+    /// A polisher that needs no model: it runs on every take (02 §8.3 stages 1–5).
+    pub fn is_always_on_polisher(&self) -> bool {
+        self.polisher_caps().is_some_and(|caps| !caps.needs_model)
+    }
+
+    /// A polisher that needs a model: the opt-in stage `polish.llm_engine` selects (02 §8.3 stage 6).
+    pub fn is_model_polisher(&self) -> bool {
+        self.polisher_caps().is_some_and(|caps| caps.needs_model)
+    }
 }
 
 /// Registry id of the Parakeet TDT 0.6B v3 speech engine (the `transcription.engine` default).
@@ -111,6 +132,9 @@ pub const PARAKEET_TDT_V3: EngineId = EngineId::from_static("parakeet-tdt-0.6b-v
 
 /// Registry id of the Silero VAD v5 detector.
 pub const SILERO_VAD: EngineId = EngineId::from_static("silero-vad-v5");
+
+/// Registry id of the always-on rule polisher.
+pub const RULE_POLISHER: EngineId = EngineId::from_static("rules");
 
 /// Every engine, in the order the Models page lists them.
 pub const ENGINES: &[EngineEntry] = &[
@@ -130,6 +154,15 @@ pub const ENGINES: &[EngineEntry] = &[
         port: EnginePort::Vad {
             caps: SileroVad::CAPS,
             build: build_silero_vad,
+        },
+    },
+    EngineEntry {
+        id: RULE_POLISHER,
+        label: StaticStr::new("Rule cleanup"),
+        model_id: None,
+        port: EnginePort::Polisher {
+            caps: RulePolisher::CAPS,
+            build: build_rule_polisher,
         },
     },
 ];
@@ -169,10 +202,26 @@ fn build_parakeet(ctx: &BuildCtx) -> PortResult<Arc<dyn AsrEngine>> {
     )))
 }
 
+/// The rule polisher: no model, nothing to load.
+fn build_rule_polisher(_: &BuildCtx) -> PortResult<Arc<dyn TextPolisher>> {
+    Ok(Arc::new(RulePolisher::new()))
+}
+
 /// Silero VAD v5 on the bundled model (05 A11).
 fn build_silero_vad(ctx: &BuildCtx) -> PortResult<Box<dyn VoiceActivity>> {
     let model = models::bundled_file(&ctx.paths, &models::SILERO_VAD_V5)?;
     Ok(Box::new(SileroVad::load(&ctx.paths, &model)?))
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: always_on_polishers, model polisher, polish chain stages from registry
+ * WHAT:  The polishers that run on every take (no model needed), in registry order.
+ * WHY:   The chain's fixed order is these first, then the opt-in model stage (02 §8.3); which polisher is which is
+ *        read from caps, so a new always-on stage is one entry here.
+ * WHERE: pipeline/polish (the chain plan).
+ */
+pub fn always_on_polishers() -> impl Iterator<Item = &'static EngineEntry> {
+    ENGINES.iter().filter(|entry| entry.is_always_on_polisher())
 }
 
 /// Every engine of `kind`, in registry order.
@@ -473,6 +522,26 @@ pub(super) mod tests {
         listed.sort_unstable();
         needed.sort_unstable();
         assert_eq!(listed, needed);
+    }
+
+    #[test]
+    fn the_rule_polisher_is_always_on_and_builds_without_a_model() {
+        let entry = find(&RULE_POLISHER).unwrap();
+        assert_eq!(entry.kind(), EngineKind::Polisher);
+        assert!(entry.is_always_on_polisher());
+        assert!(!entry.is_model_polisher());
+        assert!(entry.manifest().is_none());
+        assert_eq!(
+            always_on_polishers()
+                .map(|entry| &entry.id)
+                .collect::<Vec<_>>(),
+            [&RULE_POLISHER]
+        );
+        let polisher = build_polisher(&RULE_POLISHER, &ctx()).unwrap();
+        assert_eq!(polisher.caps(), RulePolisher::CAPS);
+        assert!(SAMPLE_ENGINES[1].is_model_polisher());
+        assert!(SAMPLE_ENGINES[2].is_always_on_polisher());
+        assert!(SAMPLE_ENGINES[0].polisher_caps().is_none());
     }
 
     #[test]
