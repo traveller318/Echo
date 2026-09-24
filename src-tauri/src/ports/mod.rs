@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: ports layer, port traits, swappable interfaces, AsrEngine, AudioCapture, HotkeyService, EventSink, fakes
+ * SOURCE OF TRUTH KEYWORDS: ports layer, port traits, swappable interfaces, AsrEngine, AudioCapture, HotkeyService, SystemAppearance, EventSink, fakes
  * WHAT:  Layer 1: one trait per swappable concern (AI engines, audio, OS integrations, I/O), traits only,
  *        re-exported flat so callers write `use crate::ports::{AsrEngine, Clipboard}`. In test builds, `fakes`
  *        adds one in-memory double per port.
@@ -14,6 +14,7 @@
  *        May import types/ only.
  */
 
+mod appearance;
 mod asr;
 mod audio;
 mod clipboard;
@@ -32,6 +33,7 @@ mod vad;
 #[cfg(test)]
 pub mod fakes;
 
+pub use appearance::SystemAppearance;
 pub use asr::AsrEngine;
 pub use audio::{AudioCapture, AudioSink, CaptureStream};
 pub use clipboard::Clipboard;
@@ -59,7 +61,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::types::{CaptureEvent, HotkeyEvent, ModelProgress, PowerEvent};
+    use crate::types::{CaptureEvent, HotkeyEvent, ModelProgress, PowerEvent, Transparency};
 
     fn shared<T: ?Sized + Send + Sync>() {}
     fn owned<T: ?Sized + Send>() {}
@@ -78,6 +80,8 @@ mod tests {
         shared::<dyn PowerEvents>();
         shared::<dyn Updater>();
         shared::<dyn PrivacyConsent>();
+        shared::<dyn SystemAppearance>();
+        shared::<dyn EventSink<Transparency>>();
         shared::<dyn EventSink<HotkeyEvent>>();
         shared::<dyn EventSink<PowerEvent>>();
         shared::<dyn EventSink<CaptureEvent>>();

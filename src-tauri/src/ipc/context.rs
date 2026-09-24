@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: CommandCtx, CommandDeps, command context, managed state, handler dependencies, SharedSettings, Db, event sink, emit, reentrancy locks
+ * SOURCE OF TRUTH KEYWORDS: CommandCtx, CommandDeps, command context, managed state, handler dependencies, SharedSettings, SystemAppearance, Db, event sink, emit, reentrancy locks
  * WHAT:  CommandCtx: everything a command handler and the factory pipeline may use, managed once by Tauri and
  *        passed to every handler as `&CommandCtx`; CommandDeps: the named parts it is built from.
  * WHY:   Handlers take their dependencies from one place instead of Tauri state lookups, so they stay plain async
@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use super::reentrancy::ReentrancyLocks;
 use crate::{
-    ports::{EventSink, PrivacyConsent},
+    ports::{EventSink, PrivacyConsent, SystemAppearance},
     services::Db,
     types::{AppEvent, SettingsSnapshot, SharedSettings},
 };
@@ -27,6 +27,8 @@ pub struct CommandDeps {
     pub settings: SharedSettings,
     /// Operating-system privacy consent, for the Microphone permission check.
     pub consent: Arc<dyn PrivacyConsent>,
+    /// Operating-system appearance (transparency switch, Mica support), for the appearance view.
+    pub appearance: Arc<dyn SystemAppearance>,
     /// The database every service call goes through.
     pub db: Db,
     /// Where commands send Rust → UI events.
@@ -37,6 +39,7 @@ pub struct CommandDeps {
 pub struct CommandCtx {
     settings: SharedSettings,
     consent: Arc<dyn PrivacyConsent>,
+    appearance: Arc<dyn SystemAppearance>,
     db: Db,
     events: Arc<dyn EventSink<AppEvent>>,
     locks: ReentrancyLocks,
@@ -47,12 +50,14 @@ impl CommandCtx {
         let CommandDeps {
             settings,
             consent,
+            appearance,
             db,
             events,
         } = deps;
         Self {
             settings,
             consent,
+            appearance,
             db,
             events,
             locks: ReentrancyLocks::default(),
@@ -74,6 +79,11 @@ impl CommandCtx {
         self.consent.as_ref()
     }
 
+    /// Operating-system appearance (the appearance view).
+    pub fn appearance(&self) -> &dyn SystemAppearance {
+        self.appearance.as_ref()
+    }
+
     /// The database handle services take.
     pub fn db(&self) -> &Db {
         &self.db
@@ -92,8 +102,9 @@ impl CommandCtx {
 
 /**
  * SOURCE OF TRUTH KEYWORDS: command test harness, test CommandCtx, in-memory database context, recorded events
- * WHAT:  `harness`: a CommandCtx over given settings and consent, a fresh in-memory database with the real
- *        migrations and a RecordingSink for events, plus handles to the sink; `ctx()` is the all-defaults one.
+ * WHAT:  `harness`: a CommandCtx over given settings and consent, a Mica-capable appearance fake, a fresh
+ *        in-memory database with the real migrations and a RecordingSink for events, plus handles to the sink
+ *        and the appearance fake; `ctx()` is the all-defaults one.
  * WHY:   Factory, command and app tests all need the same context without a Tauri app or a disk; keeping the
  *        builder here means a new CommandDeps field is added to tests in one place.
  * WHERE: Tests in ipc/factory.rs, ipc/commands and app/bindings.rs.
@@ -104,27 +115,34 @@ pub mod testing {
 
     use super::{CommandCtx, CommandDeps};
     use crate::{
-        ports::fakes::{FakePrivacyConsent, RecordingSink},
+        ports::fakes::{FakePrivacyConsent, FakeSystemAppearance, RecordingSink},
         registry,
         services::Db,
         types::{AppEvent, SettingsSnapshot, SharedSettings},
     };
 
-    /// A test context and the sink its events land in.
+    /// A test context, the sink its events land in and its appearance fake (Mica, transparency on).
     pub struct Harness {
         pub ctx: CommandCtx,
         pub events: Arc<RecordingSink<AppEvent>>,
+        pub appearance: Arc<FakeSystemAppearance>,
     }
 
     pub fn harness(settings: SettingsSnapshot, consent: FakePrivacyConsent) -> Harness {
         let events = Arc::new(RecordingSink::default());
+        let appearance = Arc::new(FakeSystemAppearance::mica());
         let ctx = CommandCtx::new(CommandDeps {
             settings: SharedSettings::new(settings),
             consent: Arc::new(consent),
+            appearance: Arc::clone(&appearance) as _,
             db: Db::open_in_memory().unwrap(),
             events: Arc::clone(&events) as _,
         });
-        Harness { ctx, events }
+        Harness {
+            ctx,
+            events,
+            appearance,
+        }
     }
 
     /// Registry defaults, granted consent, an empty database.

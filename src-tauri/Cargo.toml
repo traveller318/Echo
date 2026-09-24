@@ -42,7 +42,12 @@ tracing-appender = "=0.2.5"
 tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["fmt", "json", "std"] }
 ulid = { version = "=3.0.0", features = ["serde"] }
 # Same version tauri already links, so no second copy is compiled; features grow with each Win32 adapter.
-windows = { version = "=0.61.3", features = ["Win32_Foundation", "Win32_System_Registry"] }
+windows = { version = "=0.61.3", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 # `test` adds the mock runtime used to call commands end to end (dev builds only; resolver 3 keeps it out of the app).

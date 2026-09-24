@@ -2,7 +2,8 @@
   SOURCE OF TRUTH KEYWORDS: pill window entry, pill.html, pill webview, transparent window, root mount
   WHAT:  HTML entry for the pill window (label `pill` in tauri.conf.json); mounts src/pill.tsx into #root.
   WHY:   The pill window is transparent, so the page itself must paint nothing outside the pill:
-         `bg-transparent` on html and body keeps the webview from filling the 360×88 window.
+         `bg-transparent` on html and body keeps the webview from filling the 360×88 window. The empty
+         <style data-csp-nonce> receives the production CSP nonce (src/lib/csp-nonce.ts).
   WHERE: Loaded by the `pill` window; built by Vite as the `pill` input.
 -->
 <!doctype html>
@@ -10,6 +11,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Empty on purpose: Tauri stamps it with this page's CSP style nonce, which lib/csp-nonce.ts hands to
+         runtime-injected styles (Radix scroll lock). Never put CSS here. -->
+    <style data-csp-nonce></style>
     <title>Echo pill</title>
   </head>
   <body class="bg-transparent">

@@ -23,6 +23,7 @@
         "center": true,
         "resizable": true,
         "decorations": false,
+        "transparent": true,
         "visible": true
       },
       {

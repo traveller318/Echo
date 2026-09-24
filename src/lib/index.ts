@@ -15,4 +15,7 @@ export {
   type AppErrorCopy,
   type AppErrorOf,
 } from "./app-error";
+export { applyAppearance, syncAppearance, type SyncAppearanceOptions, type Unsubscribe } from "./appearance";
+export { cn, THEME_SCALE } from "./cn";
+export { adoptCspStyleNonce, CSP_NONCE_SELECTOR } from "./csp-nonce";
 export { MissingRootElementError, mountRoot, ROOT_ELEMENT_ID } from "./mount-root";

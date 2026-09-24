@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: settings commands, registry_get, settings_get_all, settings_set, settings_reset, SettingsChanged, RegistryView
+ * SOURCE OF TRUTH KEYWORDS: settings commands, registry_get, settings_get_all, settings_set, settings_reset, SettingsChanged, AppearanceChanged, RegistryView
  * WHAT:  The settings command group. `registry_get` returns every registry list the UI renders from
  *        (RegistryView). `settings_get_all` returns every setting's effective value; `settings_set` validates a
  *        value against the registry, stores it and returns the value now in effect; `settings_reset` removes the
@@ -10,7 +10,7 @@
  *        into the one live SettingsSnapshot inside `SharedSettings::update`, so concurrent writes cannot publish a
  *        snapshot that misses one of them and the cache always equals the table. Reads come from that snapshot
  *        (no disk). SettingsChanged carries the effective value so every window updates without polling
- *        (02 §4.4). Caps requirements (e.g. hold mode needs key-up) join `settings_set` with the adapters that
+ *        (02 §4.4); a write that changes the theme also emits AppearanceChanged. Caps requirements (e.g. hold mode needs key-up) join `settings_set` with the adapters that
  *        declare them.
  * WHERE: Registered through `ipc::commands::catalog`; called from the UI as `commands.registryGet()`,
  *        `commands.settingsGetAll()`, `commands.settingsSet({ key, value })`, `commands.settingsReset({ key })`.
@@ -18,12 +18,14 @@
 
 use crate::{
     ipc::{CommandCtx, factory::echo_command},
+    pipeline::appearance,
     registry::{engines, hotkeys, metrics, nav, settings},
     services,
     services::Db,
     types::{
-        AppError, PortError, PortResult, RegistryView, ResourceKind, SettingEntry, SettingKey,
-        SettingsChanged, SettingsResetInput, SettingsSetInput, SettingsSnapshot,
+        AppError, AppearanceChanged, PortError, PortResult, RegistryView, ResourceKind,
+        SettingEntry, SettingKey, SettingsChanged, SettingsResetInput, SettingsSetInput,
+        SettingsSnapshot,
     },
 };
 
@@ -99,12 +101,14 @@ pub async fn get_all(ctx: &CommandCtx, (): ()) -> Result<Vec<SettingEntry>, AppE
  */
 pub async fn set(ctx: &CommandCtx, input: SettingsSetInput) -> Result<SettingEntry, PortError> {
     let SettingsSetInput { key, value } = input;
+    let mut before = None;
     let snapshot = ctx.shared_settings().update(|current| {
         settings::validate(&key, &value, current)?;
         services::settings::set::set(ctx.db(), &key, &value)?;
+        before = Some(current.clone());
         resolved(ctx.db())
     })?;
-    announce(ctx, key, &snapshot)
+    announce(ctx, key, before.as_ref(), &snapshot)
 }
 
 /// Removes the stored value of a registered key, re-resolves the snapshot and announces the default.
@@ -113,11 +117,13 @@ pub async fn reset(ctx: &CommandCtx, input: SettingsResetInput) -> Result<Settin
     settings::find(&key).ok_or(AppError::NotFound {
         resource: ResourceKind::Setting,
     })?;
-    let snapshot = ctx.shared_settings().update(|_| {
+    let mut before = None;
+    let snapshot = ctx.shared_settings().update(|current| {
         services::settings::reset::reset(ctx.db(), &key)?;
+        before = Some(current.clone());
         resolved(ctx.db())
     })?;
-    announce(ctx, key, &snapshot)
+    announce(ctx, key, before.as_ref(), &snapshot)
 }
 
 /// The stored rows resolved over the registry defaults.
@@ -125,10 +131,19 @@ fn resolved(db: &Db) -> PortResult<SettingsSnapshot> {
     Ok(settings::resolve(services::settings::get::all(db)?))
 }
 
-/// Emits SettingsChanged with the effective value of `key` and returns it.
+/**
+ * SOURCE OF TRUTH KEYWORDS: announce setting change, SettingsChanged emit, AppearanceChanged after theme write
+ * WHAT:  Emits SettingsChanged with the effective value of `key` and, when the write changed the appearance
+ *        (the theme), AppearanceChanged with the full view; returns the entry.
+ * WHY:   The appearance view is derived state: which settings feed it is decided in pipeline/appearance, never
+ *        by matching a key here. `before` is the snapshot the write replaced (always present after a successful
+ *        update).
+ * WHERE: `set` and `reset`.
+ */
 fn announce(
     ctx: &CommandCtx,
     key: SettingKey,
+    before: Option<&SettingsSnapshot>,
     snapshot: &SettingsSnapshot,
 ) -> Result<SettingEntry, PortError> {
     let value = snapshot.get(&key).cloned().ok_or(AppError::NotFound {
@@ -138,6 +153,11 @@ fn announce(
         key: key.clone(),
         value: value.clone(),
     });
+    if let Some(view) = before
+        .and_then(|before| appearance::after_settings_change(before, snapshot, ctx.appearance()))
+    {
+        ctx.emit(AppearanceChanged(view));
+    }
     Ok(SettingEntry { key, value })
 }
 
@@ -150,7 +170,10 @@ mod tests {
         ipc::{factory, testing},
         ports::fakes::{FakePrivacyConsent, poll_once},
         registry::settings::keys,
-        types::{AppEvent, CommandSpec, Permission, Reentrancy, SettingValue, StaticStr},
+        types::{
+            AppEvent, AppearanceView, Backdrop, CommandSpec, Permission, Reentrancy, SettingValue,
+            StaticStr, ThemePreference, Transparency,
+        },
     };
 
     const fn spec(name: &'static str) -> CommandSpec {
@@ -241,6 +264,40 @@ mod tests {
         );
         let all = finish(factory::run(ctx, &spec("settings_get_all"), (), get_all)).unwrap();
         assert!(all.contains(&entry));
+    }
+
+    #[test]
+    fn a_theme_write_also_announces_the_appearance_and_other_writes_do_not() {
+        let harness = harness();
+        let ctx = &harness.ctx;
+        run_set(ctx, set_input(&keys::TYPING_WPM, SettingValue::Int(50))).unwrap();
+        assert_eq!(harness.events.events().len(), 1);
+        run_set(
+            ctx,
+            set_input(&keys::THEME, SettingValue::Enum(StaticStr::new("dark"))),
+        )
+        .unwrap();
+        let events = harness.events.events();
+        assert_eq!(
+            events.last(),
+            Some(&AppEvent::AppearanceChanged(AppearanceChanged(
+                AppearanceView {
+                    theme: ThemePreference::Dark,
+                    transparency: Transparency::Full,
+                    backdrop: Backdrop::Mica,
+                }
+            )))
+        );
+        run_reset(ctx, &keys::THEME).unwrap();
+        assert!(matches!(
+            harness.events.events().last(),
+            Some(AppEvent::AppearanceChanged(AppearanceChanged(view))) if view.theme == ThemePreference::System
+        ));
+        run_reset(ctx, &keys::THEME).unwrap();
+        assert!(matches!(
+            harness.events.events().last(),
+            Some(AppEvent::SettingsChanged(_))
+        ));
     }
 
     #[test]

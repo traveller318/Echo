@@ -1,7 +1,8 @@
 <!--
   SOURCE OF TRUTH KEYWORDS: main window entry, index.html, main webview, root mount, dashboard window
   WHAT:  HTML entry for the main window (label `main` in tauri.conf.json); mounts src/main.tsx into #root.
-  WHY:   One HTML entry per Tauri window keeps each window's bundle independent (see vite.config.ts).
+  WHY:   One HTML entry per Tauri window keeps each window's bundle independent (see vite.config.ts). The empty
+         <style data-csp-nonce> receives the production CSP nonce (src/lib/csp-nonce.ts).
   WHERE: Loaded by the `main` window; built by Vite as the `main` input.
 -->
 <!doctype html>
@@ -9,6 +10,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Empty on purpose: Tauri stamps it with this page's CSP style nonce, which lib/csp-nonce.ts hands to
+         runtime-injected styles (Radix scroll lock). Never put CSS here. -->
+    <style data-csp-nonce></style>
     <title>Echo</title>
   </head>
   <body>

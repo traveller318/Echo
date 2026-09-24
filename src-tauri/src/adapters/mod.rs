@@ -6,4 +6,5 @@
  * WHERE: Built by registry/ entries and app/; may import types/ and ports/ only.
  */
 
+pub mod appearance;
 pub mod consent;

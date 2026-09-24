@@ -12,6 +12,7 @@
  * WHERE: `use crate::ports::fakes::…` from any `#[cfg(test)]` module in pipeline/, ipc/, registry/ or app/.
  */
 
+mod appearance;
 mod asr;
 mod audio;
 mod clipboard;
@@ -33,6 +34,7 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
+pub use appearance::FakeSystemAppearance;
 pub use asr::{AsrCall, FakeAsrEngine};
 pub use audio::{FakeAudioCapture, RecordingAudioSink};
 pub use clipboard::FakeClipboard;

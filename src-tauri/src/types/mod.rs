@@ -10,6 +10,7 @@
  * WHERE: Imported by every other layer (02 §3.2 matrix).
  */
 
+mod appearance;
 mod asr;
 mod audio;
 mod clipboard;
@@ -38,18 +39,20 @@ mod transcript;
 mod units;
 mod update;
 
+pub use appearance::{AppearanceView, Backdrop, ThemePreference, Transparency};
 pub use asr::AsrOutput;
 pub use audio::{AudioDevice, CaptureEvent, CaptureFormat, PIPELINE_SAMPLE_RATE_HZ, VadEvent};
 pub use clipboard::ClipboardHistory;
 pub use command::{CommandSpec, Reentrancy};
 pub use engine::{
-    Accelerator, AsrCaps, AudioCaps, EngineCaps, EngineKind, EngineSpec, HotkeyCaps, InserterCaps,
-    Language, LanguageSupport, LatencyClass, PolisherCaps, UpdaterCaps, VadCaps,
+    Accelerator, AppearanceCaps, AsrCaps, AudioCaps, EngineCaps, EngineKind, EngineSpec,
+    HotkeyCaps, InserterCaps, Language, LanguageSupport, LatencyClass, PolisherCaps, UpdaterCaps,
+    VadCaps,
 };
 pub use error::{AppError, AppErrorCode, HotkeyIssue, ResourceKind};
 pub use events::{
-    AppEvent, AudioLevel, HistoryChangeReason, HistoryChanged, MetricsChanged, ModelProgress,
-    SessionStateChanged, SettingsChanged, TranscriptSaved,
+    AppEvent, AppearanceChanged, AudioLevel, HistoryChangeReason, HistoryChanged, MetricsChanged,
+    ModelProgress, SessionStateChanged, SettingsChanged, TranscriptSaved,
 };
 pub use future::BoxFuture;
 pub use hotkey::{HotkeyEvent, HotkeyScope, HotkeySpec, KeyState, Shortcut};

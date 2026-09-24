@@ -1,12 +1,14 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: mountRoot, window bootstrap, React root, createRoot, StrictMode, MissingRootElementError, ROOT_ELEMENT_ID
- * WHAT:  Finds the `#root` element of the current window's HTML entry and renders a React tree into it under StrictMode.
+ * SOURCE OF TRUTH KEYWORDS: mountRoot, window bootstrap, React root, createRoot, StrictMode, MissingRootElementError, ROOT_ELEMENT_ID, CSP nonce
+ * WHAT:  Finds the `#root` element of the current window's HTML entry and renders a React tree into it under StrictMode,
+ *        after adopting the page's CSP style nonce (lib/csp-nonce.ts) so runtime-injected styles pass the CSP.
  * WHY:   Both windows (main, pill) boot the same way; one helper keeps them identical. It throws a typed error
  *        when `#root` is missing instead of using a non-null assertion, which the lint bans.
  * WHERE: Called by src/main.tsx and src/pill.tsx; tested in mount-root.test.tsx.
  */
 import { StrictMode, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { adoptCspStyleNonce } from "./csp-nonce";
 
 export const ROOT_ELEMENT_ID = "root";
 
@@ -22,6 +24,7 @@ export function mountRoot(children: ReactNode, doc: Document = document): Root {
   if (container === null) {
     throw new MissingRootElementError(ROOT_ELEMENT_ID);
   }
+  adoptCspStyleNonce(doc);
   const root = createRoot(container);
   root.render(<StrictMode>{children}</StrictMode>);
   return root;

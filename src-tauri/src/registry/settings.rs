@@ -20,7 +20,7 @@ use super::{
 use crate::types::{
     Accelerator, AppError, AsrCaps, CapsRequirement, EngineId, EngineKind, EnumOption, EnumOptions,
     OptionSource, ResourceKind, SettingKey, SettingKind, SettingSection, SettingSpec, SettingUnit,
-    SettingValue, SettingsSnapshot, StaticList, StaticStr,
+    SettingValue, SettingsSnapshot, StaticList, StaticStr, ThemePreference,
 };
 
 /**
@@ -74,17 +74,17 @@ pub mod values {
 
 const THEME_OPTIONS: &[EnumOption] = &[
     EnumOption {
-        value: StaticStr::new("system"),
+        value: StaticStr::new(ThemePreference::System.as_str()),
         label: StaticStr::new("Match Windows"),
         requires: None,
     },
     EnumOption {
-        value: StaticStr::new("light"),
+        value: StaticStr::new(ThemePreference::Light.as_str()),
         label: StaticStr::new("Light"),
         requires: None,
     },
     EnumOption {
-        value: StaticStr::new("dark"),
+        value: StaticStr::new(ThemePreference::Dark.as_str()),
         label: StaticStr::new("Dark"),
         requires: None,
     },
@@ -154,7 +154,7 @@ pub const SETTINGS: &[SettingSpec] = &[
                 list: StaticList::new(THEME_OPTIONS),
             },
         },
-        default: SettingValue::Enum(StaticStr::new("system")),
+        default: SettingValue::Enum(StaticStr::new(ThemePreference::System.as_str())),
         restart_required: false,
         visible: true,
         requires: None,
@@ -491,6 +491,15 @@ pub fn defaults() -> SettingsSnapshot {
     resolve(std::iter::empty())
 }
 
+/// The `general.theme` choice in effect; a resolved snapshot always holds a valid one, so the default is only a
+/// guard for a snapshot built outside `resolve`.
+pub fn theme(settings: &SettingsSnapshot) -> ThemePreference {
+    settings
+        .enum_value(&keys::THEME)
+        .and_then(ThemePreference::from_value)
+        .unwrap_or_default()
+}
+
 /// The options `source` offers right now, given the current settings (the selected ASR engine).
 pub fn options(source: OptionSource, settings: &SettingsSnapshot) -> Vec<EnumOption> {
     options_in(engines::ENGINES, source, settings)
@@ -653,6 +662,22 @@ mod tests {
 
     fn values_of(options: &[EnumOption]) -> Vec<&str> {
         options.iter().map(|option| option.value.as_str()).collect()
+    }
+
+    #[test]
+    fn theme_options_are_exactly_the_theme_preferences() {
+        let values: Vec<&str> = THEME_OPTIONS
+            .iter()
+            .map(|option| option.value.as_str())
+            .collect();
+        let themes: Vec<&str> = ThemePreference::ALL
+            .iter()
+            .map(|theme| theme.as_str())
+            .collect();
+        assert_eq!(values, themes);
+        assert_eq!(theme(&defaults()), ThemePreference::System);
+        let dark = resolve([(keys::THEME, SettingValue::Enum(text("dark")))]);
+        assert_eq!(theme(&dark), ThemePreference::Dark);
     }
 
     #[test]

@@ -6,10 +6,11 @@
  *        command cannot be declared but left unreachable or untyped. Adding a command is an `echo_command!` in
  *        its group plus one path here.
  * WHERE: `catalog()` is read by app/bindings.rs; groups are filled step by step (session, history, metrics,
- *        models, audio and system join with their layers).
+ *        models and audio join with their layers; system holds appearance_get so far).
  */
 
 pub mod settings;
+pub mod system;
 
 use tauri::Runtime;
 use tauri_specta::{Commands, collect_commands};
@@ -21,5 +22,6 @@ pub fn catalog<R: Runtime>() -> Commands<R> {
         settings::settings_get_all,
         settings::settings_set,
         settings::settings_reset,
+        system::appearance_get,
     ]
 }

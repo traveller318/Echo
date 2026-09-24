@@ -124,6 +124,9 @@ mod tests {
             "export type SettingEntry",
             "export type SettingsSetInput",
             "export type SettingsResetInput",
+            "appearanceGet",
+            "appearanceChanged",
+            "export type AppearanceView",
         ] {
             assert!(
                 bindings.contains(expected),

@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: caps structs, AsrCaps, AudioCaps, VadCaps, PolisherCaps, HotkeyCaps, InserterCaps, UpdaterCaps, EngineCaps, EngineSpec, Accelerator
+ * SOURCE OF TRUTH KEYWORDS: caps structs, AsrCaps, AudioCaps, VadCaps, PolisherCaps, HotkeyCaps, InserterCaps, UpdaterCaps, AppearanceCaps, EngineCaps, EngineSpec
  * WHAT:  The capability struct of every port that declares caps (02 §3.4), plus the vocabulary they use:
  *        Accelerator, Language, LanguageSupport, LatencyClass and EngineKind. EngineCaps / EngineSpec are the
  *        IPC view of a registry engine entry (id, label, model, caps tagged by kind).
@@ -147,6 +147,14 @@ pub struct InserterCaps {
 pub struct UpdaterCaps {
     /// Updates can be checked and installed; false hides every update control (02 §11).
     pub available: bool,
+}
+
+/// Caps of a `SystemAppearance` adapter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct AppearanceCaps {
+    /// The OS can put the native Mica material behind the main window (Windows 11), so app/windows.rs applies it
+    /// and the UI stops painting its own background (04 §2).
+    pub mica: bool,
 }
 
 /// The caps a registry engine entry declares, tagged by the kind of engine it builds.

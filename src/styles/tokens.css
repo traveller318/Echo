@@ -1,0 +1,230 @@
+/**
+ * SOURCE OF TRUTH KEYWORDS: design tokens, tokens.css, color tokens, glass tokens, dark theme, reduced transparency, spacing scale, typography tokens, motion tokens
+ * WHAT:  Every design token of docs/04 §3 as a CSS custom property: light values on :root, dark values for
+ *        `data-theme="dark"` and for "follow Windows" in dark mode, and the reduced-transparency solids.
+ * WHY:   This is the only file in src/ allowed to hold a raw visual value (the design-token lint enforces it).
+ *        Token names follow Tailwind v4's theme namespaces (--color-*, --radius-*, --text-*…), so globals.css
+ *        maps them into utilities without renaming. The dark block appears twice on purpose: once for the
+ *        explicit `data-theme="dark"` and once inside `prefers-color-scheme: dark` for "follow Windows" — CSS
+ *        cannot share one declaration block between a selector and a media query, and this keeps first paint
+ *        right before any script runs. tokens.test.ts proves both copies are identical. The reduced block comes
+ *        last so it wins over both themes at equal specificity; its `var()` references resolve per theme.
+ * WHERE: Imported by globals.css; read by Tailwind utilities, GlassSurface, components/ui and motion.ts.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* 3.1 Color */
+  --color-bg: #f5f5f7;
+  --color-fg: #1d1d1f;
+  --color-fg-secondary: #6e6e73;
+  --color-fg-tertiary: #aeaeb2;
+  --color-separator: rgba(0, 0, 0, 0.08);
+  --color-fill: rgba(0, 0, 0, 0.04);
+  --color-fill-hover: rgba(0, 0, 0, 0.07);
+  --color-fill-pressed: rgba(0, 0, 0, 0.1);
+  --color-accent: #007aff;
+  --color-accent-fg: #ffffff;
+  --color-accent-soft: rgba(0, 122, 255, 0.12);
+  --color-record: #ff3b30;
+  --color-success: #34c759;
+  --color-warning: #ff9500;
+  --color-chart-1: #007aff;
+  --color-chart-2: rgba(0, 122, 255, 0.35);
+  --color-scrim: rgba(0, 0, 0, 0.2);
+  /* One formula for both themes: mixing toward --color-fg darkens in light and lightens in dark. */
+  --color-accent-hover: color-mix(in srgb, var(--color-accent) 85%, var(--color-fg));
+  --color-record-hover: color-mix(in srgb, var(--color-record) 85%, var(--color-fg));
+
+  /* 3.2 Glass */
+  --glass-tint: rgba(255, 255, 255, 0.55);
+  --glass-tint-strong: rgba(250, 250, 252, 0.78);
+  --glass-tint-solid: #fbfbfd;
+  --glass-border: rgba(255, 255, 255, 0.65);
+  --glass-highlight: rgba(255, 255, 255, 0.9);
+  --glass-saturate: 180%;
+  --blur-sm: 12px;
+  --blur-md: 24px;
+  --blur-lg: 40px;
+
+  /* 3.3 Elevation */
+  --shadow-e0: none;
+  --shadow-e1: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 16px rgba(0, 0, 0, 0.06);
+  --shadow-e2: 0 8px 32px rgba(0, 0, 0, 0.12);
+  --shadow-e3: 0 10px 40px rgba(0, 0, 0, 0.18), 0 2px 6px rgba(0, 0, 0, 0.08);
+
+  /* 3.4 Radius */
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-control: 10px;
+  --radius-card: 16px;
+  --radius-window: 12px;
+  --radius-pill: 9999px;
+
+  /* 3.5 Spacing (4-pt) and layout */
+  --space-0: 0px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --sidebar-width: 220px;
+  --titlebar-height: 40px;
+  --content-max: 1040px;
+  --content-pad: var(--space-8);
+
+  /* 3.6 Typography */
+  --font-ui: "Inter Variable", "Segoe UI Variable", "Segoe UI", system-ui;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --text-caption: 11px;
+  --text-caption--line-height: 14px;
+  --text-caption--font-weight: 500;
+  --text-caption--letter-spacing: 0.01em;
+  --text-footnote: 12px;
+  --text-footnote--line-height: 16px;
+  --text-footnote--font-weight: 400;
+  --text-footnote--letter-spacing: 0em;
+  --text-body: 13px;
+  --text-body--line-height: 18px;
+  --text-body--font-weight: 400;
+  --text-body--letter-spacing: 0em;
+  --text-callout: 14px;
+  --text-callout--line-height: 20px;
+  --text-callout--font-weight: 500;
+  --text-callout--letter-spacing: -0.005em;
+  --text-title3: 17px;
+  --text-title3--line-height: 22px;
+  --text-title3--font-weight: 600;
+  --text-title3--letter-spacing: -0.01em;
+  --text-title2: 20px;
+  --text-title2--line-height: 26px;
+  --text-title2--font-weight: 600;
+  --text-title2--letter-spacing: -0.015em;
+  --text-title1: 28px;
+  --text-title1--line-height: 34px;
+  --text-title1--font-weight: 700;
+  --text-title1--letter-spacing: -0.02em;
+  --text-display: 44px;
+  --text-display--line-height: 48px;
+  --text-display--font-weight: 700;
+  --text-display--letter-spacing: -0.03em;
+
+  /* 3.7 Motion */
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --ease-linear: linear;
+  --delay-loading: 150ms;
+  --motion-scale-from: 0.96;
+  --press-scale: 0.97;
+
+  /* 3.8 Layers and focus */
+  --z-base: 0;
+  --z-sticky: 10;
+  --z-popover: 50;
+  --z-toast: 60;
+  --z-modal: 70;
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+
+  /* 3.9 Icons and 3.10 Sizes */
+  --border-hairline: 1px;
+  --size-hit: 28px;
+  --size-control: 32px;
+  --size-icon-sm: 16px;
+  --size-icon-md: 20px;
+  --icon-stroke: 1.75;
+  --size-kbd: 20px;
+  --switch-width: 36px;
+  --switch-height: 20px;
+  --switch-thumb: 16px;
+  --slider-thumb: 16px;
+  --track-height: 4px;
+  --dialog-width: 440px;
+  --text-measure: 440px;
+  --sheet-width: 400px;
+  --toast-width: 360px;
+  --tooltip-max-width: 240px;
+  --popover-max-height: 320px;
+  --opacity-disabled: 0.45;
+}
+
+/* Dark: explicit choice (general.theme = dark). Keep identical to the media-query copy below. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bg: #161618;
+  --color-fg: #f5f5f7;
+  --color-fg-secondary: #a1a1a6;
+  --color-fg-tertiary: #636366;
+  --color-separator: rgba(255, 255, 255, 0.08);
+  --color-fill: rgba(255, 255, 255, 0.06);
+  --color-fill-hover: rgba(255, 255, 255, 0.1);
+  --color-fill-pressed: rgba(255, 255, 255, 0.14);
+  --color-accent: #0a84ff;
+  --color-accent-fg: #ffffff;
+  --color-accent-soft: rgba(10, 132, 255, 0.2);
+  --color-record: #ff453a;
+  --color-success: #30d158;
+  --color-warning: #ff9f0a;
+  --color-chart-1: #0a84ff;
+  --color-chart-2: rgba(10, 132, 255, 0.4);
+  --color-scrim: rgba(0, 0, 0, 0.45);
+  --glass-tint: rgba(30, 30, 32, 0.5);
+  --glass-tint-strong: rgba(28, 28, 30, 0.78);
+  --glass-tint-solid: #232325;
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-highlight: rgba(255, 255, 255, 0.07);
+  --glass-saturate: 160%;
+  --shadow-e1: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 16px rgba(0, 0, 0, 0.3);
+  --shadow-e2: 0 8px 32px rgba(0, 0, 0, 0.45);
+  --shadow-e3: 0 10px 40px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+/* Dark: "Match Windows" while Windows is dark. Keep identical to the block above. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --color-bg: #161618;
+    --color-fg: #f5f5f7;
+    --color-fg-secondary: #a1a1a6;
+    --color-fg-tertiary: #636366;
+    --color-separator: rgba(255, 255, 255, 0.08);
+    --color-fill: rgba(255, 255, 255, 0.06);
+    --color-fill-hover: rgba(255, 255, 255, 0.1);
+    --color-fill-pressed: rgba(255, 255, 255, 0.14);
+    --color-accent: #0a84ff;
+    --color-accent-fg: #ffffff;
+    --color-accent-soft: rgba(10, 132, 255, 0.2);
+    --color-record: #ff453a;
+    --color-success: #30d158;
+    --color-warning: #ff9f0a;
+    --color-chart-1: #0a84ff;
+    --color-chart-2: rgba(10, 132, 255, 0.4);
+    --color-scrim: rgba(0, 0, 0, 0.45);
+    --glass-tint: rgba(30, 30, 32, 0.5);
+    --glass-tint-strong: rgba(28, 28, 30, 0.78);
+    --glass-tint-solid: #232325;
+    --glass-border: rgba(255, 255, 255, 0.1);
+    --glass-highlight: rgba(255, 255, 255, 0.07);
+    --glass-saturate: 160%;
+    --shadow-e1: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 16px rgba(0, 0, 0, 0.3);
+    --shadow-e2: 0 8px 32px rgba(0, 0, 0, 0.45);
+    --shadow-e3: 0 10px 40px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.35);
+  }
+}
+
+/* Windows "Transparency effects" off (05 W17): every tint becomes its theme's solid. */
+:root[data-transparency="reduced"] {
+  --glass-tint: var(--glass-tint-solid);
+  --glass-tint-strong: var(--glass-tint-solid);
+}

@@ -1,12 +1,234 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: globals.css, tailwind import, tailwind source, theme mapping, base styles
- * WHAT:  Global stylesheet for both windows: loads Tailwind CSS v4.
- * WHY:   Tailwind's automatic source detection honours .gitignore, and this repo has none (no git), so it would
- *        crawl src-tauri/target. `source("../")` limits scanning to src/, and the two HTML entries are added
- *        explicitly because they carry classes too. This file owns the `@theme` mapping of tokens.css
- *        (03 §1); raw theme values never go here, only in tokens.css after docs/04.
+ * SOURCE OF TRUTH KEYWORDS: globals.css, tailwind import, theme mapping, @theme inline reference, Inter font-face, base styles, focus ring, animations, data-backdrop
+ * WHAT:  Global stylesheet for both windows: loads Tailwind v4 and tokens.css, bundles Inter Variable, maps every
+ *        token into Tailwind's theme, defines the enter/exit animations and the base layer (font, text colour,
+ *        window background per backdrop, focus ring, icon stroke).
+ * WHY:   Tailwind's automatic source detection would crawl src-tauri/target, so `source("../")` limits scanning to
+ *        src/ and the two HTML entries are added explicitly. `--*: initial` drops every default Tailwind value, so
+ *        a class that is not a docs/04 token (`p-7`, `rounded-lg`, `text-white`) generates nothing; the lint catches
+ *        it in source too. `@theme inline reference` makes utilities point straight at the tokens.css variables
+ *        (`bg-bg` → `var(--color-bg)`) without re-emitting them: tokens.css already defines them under the same
+ *        names, and a re-emitted `--color-bg: var(--color-bg)` would be a self-reference. Values never live here —
+ *        only names and `var()` references (raw values belong in tokens.css after docs/04). Keyframes sit outside
+ *        @theme so they are always emitted. The font is served from 'self', which the CSP requires (02 §10).
  * WHERE: Imported once by each window bootstrap (src/main.tsx, src/pill.tsx).
  */
 @import "tailwindcss" source("../");
+@import "./tokens.css";
 @source "../../index.html";
 @source "../../pill.html";
+
+@font-face {
+  font-family: "Inter Variable";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: block;
+  src: url("./fonts/InterVariable.woff2") format("woff2");
+}
+
+@theme inline reference {
+  --*: initial;
+
+  --font-sans: var(--font-ui);
+  --default-font-family: var(--font-ui);
+  --default-transition-duration: var(--duration-fast);
+  --default-transition-timing-function: var(--ease-standard);
+
+  --color-bg: var(--color-bg);
+  --color-fg: var(--color-fg);
+  --color-fg-secondary: var(--color-fg-secondary);
+  --color-fg-tertiary: var(--color-fg-tertiary);
+  --color-separator: var(--color-separator);
+  --color-fill: var(--color-fill);
+  --color-fill-hover: var(--color-fill-hover);
+  --color-fill-pressed: var(--color-fill-pressed);
+  --color-accent: var(--color-accent);
+  --color-accent-fg: var(--color-accent-fg);
+  --color-accent-soft: var(--color-accent-soft);
+  --color-record: var(--color-record);
+  --color-success: var(--color-success);
+  --color-warning: var(--color-warning);
+  --color-chart-1: var(--color-chart-1);
+  --color-chart-2: var(--color-chart-2);
+  --color-scrim: var(--color-scrim);
+  --color-accent-hover: var(--color-accent-hover);
+  --color-record-hover: var(--color-record-hover);
+  --color-transparent: transparent;
+  --color-current: currentColor;
+
+  --blur-sm: var(--blur-sm);
+  --blur-md: var(--blur-md);
+  --blur-lg: var(--blur-lg);
+
+  --shadow-e0: var(--shadow-e0);
+  --shadow-e1: var(--shadow-e1);
+  --shadow-e2: var(--shadow-e2);
+  --shadow-e3: var(--shadow-e3);
+
+  --radius-xs: var(--radius-xs);
+  --radius-sm: var(--radius-sm);
+  --radius-control: var(--radius-control);
+  --radius-card: var(--radius-card);
+  --radius-window: var(--radius-window);
+  --radius-pill: var(--radius-pill);
+
+  --spacing-0: var(--space-0);
+  --spacing-1: var(--space-1);
+  --spacing-2: var(--space-2);
+  --spacing-3: var(--space-3);
+  --spacing-4: var(--space-4);
+  --spacing-5: var(--space-5);
+  --spacing-6: var(--space-6);
+  --spacing-8: var(--space-8);
+  --spacing-10: var(--space-10);
+  --spacing-12: var(--space-12);
+  --spacing-sidebar: var(--sidebar-width);
+  --spacing-titlebar: var(--titlebar-height);
+  --spacing-content-pad: var(--content-pad);
+  --spacing-hairline: var(--border-hairline);
+  --spacing-hit: var(--size-hit);
+  --spacing-control: var(--size-control);
+  --spacing-icon-sm: var(--size-icon-sm);
+  --spacing-icon-md: var(--size-icon-md);
+  --spacing-kbd: var(--size-kbd);
+  --spacing-switch-width: var(--switch-width);
+  --spacing-switch-height: var(--switch-height);
+  --spacing-switch-thumb: var(--switch-thumb);
+  --spacing-slider-thumb: var(--slider-thumb);
+  --spacing-track: var(--track-height);
+  --spacing-popover-max: var(--popover-max-height);
+  --container-content: var(--content-max);
+  --container-dialog: var(--dialog-width);
+  --container-measure: var(--text-measure);
+  --container-sheet: var(--sheet-width);
+  --container-toast: var(--toast-width);
+  --container-tooltip: var(--tooltip-max-width);
+
+  --font-weight-regular: var(--font-weight-regular);
+  --font-weight-medium: var(--font-weight-medium);
+  --font-weight-semibold: var(--font-weight-semibold);
+  --font-weight-bold: var(--font-weight-bold);
+
+  --text-caption: var(--text-caption);
+  --text-caption--line-height: var(--text-caption--line-height);
+  --text-caption--font-weight: var(--text-caption--font-weight);
+  --text-caption--letter-spacing: var(--text-caption--letter-spacing);
+  --text-footnote: var(--text-footnote);
+  --text-footnote--line-height: var(--text-footnote--line-height);
+  --text-footnote--font-weight: var(--text-footnote--font-weight);
+  --text-footnote--letter-spacing: var(--text-footnote--letter-spacing);
+  --text-body: var(--text-body);
+  --text-body--line-height: var(--text-body--line-height);
+  --text-body--font-weight: var(--text-body--font-weight);
+  --text-body--letter-spacing: var(--text-body--letter-spacing);
+  --text-callout: var(--text-callout);
+  --text-callout--line-height: var(--text-callout--line-height);
+  --text-callout--font-weight: var(--text-callout--font-weight);
+  --text-callout--letter-spacing: var(--text-callout--letter-spacing);
+  --text-title3: var(--text-title3);
+  --text-title3--line-height: var(--text-title3--line-height);
+  --text-title3--font-weight: var(--text-title3--font-weight);
+  --text-title3--letter-spacing: var(--text-title3--letter-spacing);
+  --text-title2: var(--text-title2);
+  --text-title2--line-height: var(--text-title2--line-height);
+  --text-title2--font-weight: var(--text-title2--font-weight);
+  --text-title2--letter-spacing: var(--text-title2--letter-spacing);
+  --text-title1: var(--text-title1);
+  --text-title1--line-height: var(--text-title1--line-height);
+  --text-title1--font-weight: var(--text-title1--font-weight);
+  --text-title1--letter-spacing: var(--text-title1--letter-spacing);
+  --text-display: var(--text-display);
+  --text-display--line-height: var(--text-display--line-height);
+  --text-display--font-weight: var(--text-display--font-weight);
+  --text-display--letter-spacing: var(--text-display--letter-spacing);
+
+  --ease-standard: var(--ease-standard);
+  --ease-exit: var(--ease-exit);
+
+  --animate-fade-in: echo-fade-in var(--duration-base) var(--ease-standard) both;
+  --animate-fade-out: echo-fade-out var(--duration-base) var(--ease-exit) both;
+  --animate-scale-in: echo-scale-in var(--duration-base) var(--ease-standard) both;
+  --animate-scale-out: echo-scale-out var(--duration-base) var(--ease-exit) both;
+  --animate-slide-in-right: echo-slide-in-right var(--duration-slow) var(--ease-standard) both;
+  --animate-slide-out-right: echo-slide-out-right var(--duration-slow) var(--ease-exit) both;
+  --animate-slide-in-up: echo-slide-in-up var(--duration-base) var(--ease-standard) both;
+  --animate-indeterminate: echo-indeterminate calc(var(--duration-slow) * 4) var(--ease-linear) infinite;
+}
+
+@keyframes echo-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes echo-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes echo-scale-in {
+  from {
+    opacity: 0;
+    scale: var(--motion-scale-from);
+  }
+}
+
+@keyframes echo-scale-out {
+  to {
+    opacity: 0;
+    scale: var(--motion-scale-from);
+  }
+}
+
+@keyframes echo-slide-in-right {
+  from {
+    translate: 100% 0;
+  }
+}
+
+@keyframes echo-slide-out-right {
+  to {
+    translate: 100% 0;
+  }
+}
+
+@keyframes echo-slide-in-up {
+  from {
+    opacity: 0;
+    translate: 0 100%;
+  }
+}
+
+@keyframes echo-indeterminate {
+  from {
+    translate: -100% 0;
+  }
+  to {
+    translate: 250% 0;
+  }
+}
+
+@layer base {
+  html {
+    font-family: var(--font-ui);
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+    color: var(--color-fg);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* The main window paints the token background only when no native Mica backdrop sits behind it. */
+  html:not([data-backdrop="mica"]) body {
+    background-color: var(--color-bg);
+  }
+
+  :focus-visible {
+    outline: var(--focus-ring-width) solid var(--color-accent);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  svg.lucide {
+    stroke-width: var(--icon-stroke);
+  }
+}

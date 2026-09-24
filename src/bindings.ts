@@ -22,10 +22,13 @@ export const commands = {
 	settingsSet: (input: SettingsSetInput) => typedError<SettingEntry, AppError>(__TAURI_INVOKE("settings_set", { input })),
 	/**  Returns a setting to its registry default; returns the value now in effect and emits SettingsChanged. */
 	settingsReset: (input: SettingsResetInput) => typedError<SettingEntry, AppError>(__TAURI_INVOKE("settings_reset", { input })),
+	/**  The theme, transparency and backdrop both windows paint from right now. */
+	appearanceGet: () => typedError<AppearanceView, AppError>(__TAURI_INVOKE("appearance_get")),
 };
 
 /** Events */
 export const events = {
+	appearanceChanged: makeEvent<AppearanceChanged>("AppearanceChanged"),
 	audioLevel: makeEvent<AudioLevel>("AudioLevel"),
 	historyChanged: makeEvent<HistoryChanged>("HistoryChanged"),
 	metricsChanged: makeEvent<MetricsChanged>("MetricsChanged"),
@@ -51,6 +54,17 @@ export type AppError = { code: "Validation"; field: string; message: string } | 
 
 /**  The stable code of an AppError variant, without its fields. */
 export type AppErrorCode = "Validation" | "PermissionDenied" | "Busy" | "NotFound" | "ModelMissing" | "ModelCorrupt" | "AudioDevice" | "Asr" | "Polish" | "Storage" | "Offline" | "Network" | "Hotkey" | "Internal";
+
+/**  The theme, transparency or backdrop changed; carries the full view, so windows never merge partial updates. */
+export type AppearanceChanged = AppearanceView;
+
+/**  Everything the UI needs to theme both windows. */
+export type AppearanceView = {
+	theme: ThemePreference,
+	transparency: Transparency,
+	/**  The main window's backdrop; the pill is always transparent with CSS glass (05 W16). */
+	backdrop: Backdrop,
+};
 
 /**  Caps of an `AsrEngine` adapter. */
 export type AsrCaps = {
@@ -91,6 +105,13 @@ export type AudioLevel = {
 	/**  Root mean square of the last frame, 0 to 1. */
 	rms: number | null,
 };
+
+/**  What is behind the main window's content. */
+export type Backdrop = 
+/**  Native Mica (Windows 11 with transparency on); the page paints no background of its own. */
+"mica" | 
+/**  No native material: the page paints `--color-bg`. */
+"solid";
 
 /**  A size or transfer amount in bytes. */
 export type ByteCount = number;
@@ -536,6 +557,9 @@ export type TextPair = {
 	to: string,
 };
 
+/**  The `general.theme` choice: follow Windows, or always light or dark. */
+export type ThemePreference = "system" | "light" | "dark";
+
 /**  One take in full. */
 export type Transcript = {
 	id: TranscriptId,
@@ -592,6 +616,11 @@ export type TranscriptSummary = {
 	error_code: AppErrorCode | null,
 	has_audio: boolean,
 };
+
+/**  Whether Windows "Transparency effects" are on (05 W17). */
+export type Transparency = "full" | 
+/**  Transparency effects are off: every glass tint switches to its solid value. */
+"reduced";
 
 /**  Milliseconds since the Unix epoch (UTC). */
 export type UnixMs = number;

@@ -11,11 +11,12 @@ mod bindings;
 mod bootstrap;
 mod events;
 mod logging;
+mod windows;
 
 use std::process::ExitCode;
 
 /**
- * SOURCE OF TRUTH KEYWORDS: run, app entry, exit code, startup failure, invoke handler, mount events, run_return
+ * SOURCE OF TRUTH KEYWORDS: run, app entry, exit code, startup failure, invoke handler, mount events, run_return, RunEvent Ready
  * WHAT:  Builds the Tauri app, mounts the event catalog, runs the bootstrap sequence, then runs the event loop
  *        until exit; returns the loop's exit code, or failure if Echo could not start.
  * WHY:   Returns an ExitCode instead of panicking (denied) or calling process::exit, and uses `run_return`, so
@@ -23,6 +24,8 @@ use std::process::ExitCode;
  *        builder that generates src/bindings.ts. Events are mounted and the CommandCtx managed on the built app,
  *        before the event loop creates the windows, so no command or emit can run without them. A failure before
  *        logging exists goes to stderr; after that bootstrap has also written it to the log.
+ *        Native window appearance (Mica, theme) is applied on RunEvent::Ready, the first moment the config
+ *        windows exist.
  * WHERE: Called once by main.rs.
  */
 pub fn run() -> ExitCode {
@@ -42,7 +45,11 @@ pub fn run() -> ExitCode {
         eprintln!("Echo could not start: {error}");
         return ExitCode::FAILURE;
     }
-    let code = app.run_return(|_, _| {});
+    let code = app.run_return(|handle, event| {
+        if matches!(event, tauri::RunEvent::Ready) {
+            windows::setup(handle);
+        }
+    });
     ExitCode::from(u8::try_from(code).unwrap_or(u8::MAX))
 }
 
@@ -106,6 +113,10 @@ mod tests {
             (Some(820.0), Some(560.0))
         );
         assert!(!main.decorations, "the main window draws its own titlebar");
+        assert!(
+            main.transparent,
+            "Mica shows only through a transparent window (04 §2)"
+        );
         assert!(main.visible);
     }
 

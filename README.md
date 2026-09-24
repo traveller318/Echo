@@ -57,4 +57,4 @@ Architecture and design docs start at [`docs/00-START-HERE.md`](docs/00-START-HE
 
 ## License
 
-MIT. See [`LICENSE`](LICENSE). Model licenses and attributions are listed in the app under Settings → About.
+MIT. See [`LICENSE`](LICENSE). Model licenses and attributions are listed in the app under Settings → About. The bundled Inter typeface is © The Inter Project Authors under the SIL Open Font License 1.1 ([`src/styles/fonts/Inter-OFL.txt`](src/styles/fonts/Inter-OFL.txt)).
