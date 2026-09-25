@@ -37,11 +37,13 @@ export const commands = {
 	pillExited: () => typedError<null, AppError>(__TAURI_INVOKE("pill_exited")),
 	/**  Every registry list the UI renders from. Compiled in, so it never changes while the app runs. */
 	registryGet: () => typedError<RegistryView, AppError>(__TAURI_INVOKE("registry_get")),
+	/**  What the Settings page may offer now: the caps requirements that hold and every choice setting's options. */
+	settingsAvailability: () => typedError<SettingsAvailability, AppError>(__TAURI_INVOKE("settings_availability")),
 	/**  Every setting's effective value (the stored value, or the registry default), ordered by key. */
 	settingsGetAll: () => typedError<SettingEntry[], AppError>(__TAURI_INVOKE("settings_get_all")),
 	/**
-	 *  Stores a new value for a setting after checking it against the setting's registry spec; returns the
-	 *  value now in effect and emits SettingsChanged.
+	 *  Stores a new value for a setting after checking it against the setting's registry spec and what this PC
+	 *  supports; returns the value now in effect and emits SettingsChanged.
 	 */
 	settingsSet: (input: SettingsSetInput) => typedError<SettingEntry, AppError>(__TAURI_INVOKE("settings_set", { input })),
 	/**  Returns a setting to its registry default; returns the value now in effect and emits SettingsChanged. */
@@ -73,6 +75,8 @@ export const events = {
 export const HISTORY_PAGE_MAX = 500 as const;
 
 export const HISTORY_SEARCH_MAX_CHARS = 200 as const;
+
+export const SETTING_TOKEN_MAX_CHARS = 128 as const;
 
 /* Types */
 /**  Where inference runs. `gpu` means any DX12 adapter (DirectML), not one vendor. */
@@ -566,6 +570,8 @@ export type PolisherCaps = {
 /**  Every registry list the UI renders from. */
 export type RegistryView = {
 	settings: SettingSpec[],
+	/**  Settings page sections in page order, with their headings. */
+	sections: SettingSectionSpec[],
 	hotkeys: HotkeySpec[],
 	nav: NavItem[],
 	engines: EngineSpec[],
@@ -651,8 +657,29 @@ export type SettingKind = { kind: "bool" } |
  */
 { kind: "device" } | { kind: "text"; max_len: number } | { kind: "pairs"; max_pairs: number; max_len: number };
 
+/**  The choices an `Enum` setting offers right now. */
+export type SettingOptions = {
+	key: SettingKey,
+	/**  Fixed options whose requirement holds, or the runtime source resolved now, in display order. */
+	options: EnumOption[],
+};
+
 /**  The Settings page group a setting belongs to; equals the prefix of its key (`general.theme` → `general`). */
 export type SettingSection = "general" | "hotkeys" | "session" | "audio" | "output" | "transcription" | "polish" | "storage" | "metrics" | "privacy" | "updates";
+
+/**
+ * 
+ *  * SOURCE OF TRUTH KEYWORDS: SettingSectionSpec, settings section label, section order, Settings page sections
+ *  * WHAT:  One Settings page section: which section and the heading it shows. The registry lists them in page order.
+ *  * WHY:   The page renders a card per section from the registry (04 §5) and never spells a heading itself, so a new
+ *  *        section is one registry entry with no UI change.
+ *  * WHERE: registry/settings/sections.rs (SECTIONS); sent to the UI in RegistryView.sections.
+ *  
+ */
+export type SettingSectionSpec = {
+	section: SettingSection,
+	label: string,
+};
 
 /**  A registry setting entry. */
 export type SettingSpec = {
@@ -675,6 +702,24 @@ export type SettingUnit = "milliseconds" | "minutes" | "days" | "words_per_minut
 
 /**  The value of a setting. The `kind` tag always equals the `kind` of the setting's spec. */
 export type SettingValue = { kind: "bool"; value: boolean } | { kind: "int"; value: number } | { kind: "enum"; value: string } | { kind: "hotkey"; value: string } | { kind: "device"; value: string | null } | { kind: "text"; value: string } | { kind: "pairs"; value: TextPair[] };
+
+/**
+ * 
+ *  * SOURCE OF TRUTH KEYWORDS: SettingsAvailability, settings_availability output, caps held, offered options, runtime options view
+ *  * WHAT:  What the Settings page may offer right now: the caps requirements that hold, and the options of every
+ *  *        `Enum` setting (fixed lists filtered by caps, runtime sources resolved against the current settings).
+ *  * WHY:   Visibility and choices depend on the active adapters and the selected engine, which only Rust knows. The
+ *  *        UI hides a setting whose requirement is missing and builds its Zod enum from exactly these options, and
+ *  *        `settings_set` refuses anything outside them, so the form and the write check read one answer. Options of
+ *  *        another setting can change after a write (a new engine brings its own languages), so the UI reads this
+ *  *        again on SettingsChanged instead of computing it.
+ *  * WHERE: Output of `settings_availability` (ipc/commands/settings.rs), built by `registry::settings::availability`.
+ *  
+ */
+export type SettingsAvailability = {
+	caps: CapsRequirement[],
+	options: SettingOptions[],
+};
 
 /**  A setting was written or reset; `value` is the effective value after the change. */
 export type SettingsChanged = {

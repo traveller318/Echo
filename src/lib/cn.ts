@@ -66,6 +66,8 @@ export const THEME_SCALE = {
     "slider-thumb",
     "track",
     "popover-max",
+    "setting-control",
+    "number-field",
   ],
   container: ["content", "dialog", "measure", "sheet", "toast", "tooltip"],
   "font-weight": ["regular", "medium", "semibold", "bold"],

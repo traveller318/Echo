@@ -19,6 +19,7 @@ pub mod notifier;
 pub mod onnx;
 pub mod polish;
 pub mod scheduler;
+pub mod updater;
 pub mod vad;
 pub mod win32;
 pub mod window;

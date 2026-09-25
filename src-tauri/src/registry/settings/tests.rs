@@ -8,6 +8,7 @@
 use std::collections::HashSet;
 
 use super::{
+    availability::{availability_in, check_available_in, requirement_holds_in},
     list::THEME_OPTIONS,
     options::{accelerator_option, options_in, validate_in},
     reads::accelerator_value,
@@ -16,10 +17,10 @@ use super::{
 use crate::{
     registry::{engines, engines::tests::SAMPLE_ENGINES, hotkeys},
     types::{
-        Accelerator, AppError, CapsRequirement, DeliveryPolicy, EnumOption, EnumOptions, Language,
-        OptionSource, RecordMode, ResourceKind, RetentionPolicy, SessionPolicy, SettingKey,
-        SettingKind, SettingValue, SettingsSnapshot, StaticList, StaticStr, TextPair,
-        ThemePreference,
+        Accelerator, AdapterCaps, AppError, CapsRequirement, DeliveryPolicy, EnumOption,
+        EnumOptions, HotkeyCaps, HotkeyIssue, Language, OptionSource, RecordMode, ResourceKind,
+        RetentionPolicy, SessionPolicy, SettingKey, SettingKind, SettingValue, SettingsSnapshot,
+        StaticList, StaticStr, TextPair, ThemePreference, UpdaterCaps,
     },
 };
 
@@ -454,5 +455,215 @@ fn retention_policy_reads_both_storage_settings_and_their_defaults() {
         .audio_days,
         RetentionPolicy::DEFAULT.audio_days,
         "a negative value is never read as a huge one"
+    );
+}
+
+/// Adapters with key-up and no update source, like the shipped build.
+const SHIPPED: AdapterCaps = AdapterCaps {
+    hotkeys: HotkeyCaps {
+        supports_release: true,
+        supports_modifier_only: true,
+    },
+    updater: UpdaterCaps { available: false },
+};
+
+/// Adapters without key-up but with an update source.
+const PRESS_ONLY_UPDATABLE: AdapterCaps = AdapterCaps {
+    hotkeys: HotkeyCaps {
+        supports_release: false,
+        supports_modifier_only: false,
+    },
+    updater: UpdaterCaps { available: true },
+};
+
+#[test]
+fn sections_list_every_used_section_once_in_first_use_order() {
+    let mut first_use = Vec::new();
+    for spec in SETTINGS {
+        if !first_use.contains(&spec.section) {
+            first_use.push(spec.section);
+        }
+    }
+    let listed: Vec<_> = SECTIONS.iter().map(|spec| spec.section).collect();
+    assert_eq!(listed, first_use);
+    for spec in SECTIONS {
+        assert!(
+            !spec.label.trim().is_empty(),
+            "{:?} has no heading",
+            spec.section
+        );
+    }
+}
+
+#[test]
+fn requirements_follow_the_selected_engine_and_the_adapters() {
+    let sample = selecting("sample-asr");
+    let holds = |requirement, settings: &SettingsSnapshot, adapters: &AdapterCaps| {
+        requirement_holds_in(SAMPLE_ENGINES, requirement, settings, adapters)
+    };
+    assert!(holds(CapsRequirement::GpuAccelerator, &sample, &SHIPPED));
+    assert!(holds(CapsRequirement::MultipleLanguages, &sample, &SHIPPED));
+    assert!(holds(CapsRequirement::HotkeyRelease, &sample, &SHIPPED));
+    assert!(!holds(CapsRequirement::UpdaterAvailable, &sample, &SHIPPED));
+    assert!(!holds(
+        CapsRequirement::HotkeyRelease,
+        &sample,
+        &PRESS_ONLY_UPDATABLE
+    ));
+    assert!(holds(
+        CapsRequirement::UpdaterAvailable,
+        &sample,
+        &PRESS_ONLY_UPDATABLE
+    ));
+
+    let unknown = selecting("not-registered");
+    assert!(!holds(CapsRequirement::GpuAccelerator, &unknown, &SHIPPED));
+    assert!(!holds(
+        CapsRequirement::MultipleLanguages,
+        &unknown,
+        &SHIPPED
+    ));
+
+    // The shipped engine runs on the CPU only (DirectML joins in step 22), with 25 languages.
+    assert!(!requirement_holds(
+        CapsRequirement::GpuAccelerator,
+        &defaults(),
+        &SHIPPED
+    ));
+    assert!(requirement_holds(
+        CapsRequirement::MultipleLanguages,
+        &defaults(),
+        &SHIPPED
+    ));
+}
+
+#[test]
+fn availability_filters_options_by_caps_and_resolves_runtime_sources() {
+    let offered = |view: &crate::types::SettingsAvailability, key: &SettingKey| -> Vec<String> {
+        view.options
+            .iter()
+            .find(|entry| entry.key == *key)
+            .map(|entry| {
+                entry
+                    .options
+                    .iter()
+                    .map(|option| option.value.to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let sample = selecting("sample-asr");
+    let shipped = availability_in(SAMPLE_ENGINES, &sample, &SHIPPED);
+    assert_eq!(
+        shipped.caps,
+        [
+            CapsRequirement::GpuAccelerator,
+            CapsRequirement::MultipleLanguages,
+            CapsRequirement::HotkeyRelease,
+        ]
+    );
+    assert_eq!(offered(&shipped, &keys::HOTKEY_MODE), ["toggle", "hold"]);
+    assert_eq!(
+        offered(&shipped, &keys::ACCELERATOR),
+        ["auto", "cpu", "gpu"]
+    );
+    assert_eq!(offered(&shipped, &keys::LANGUAGE), ["auto", "en", "de"]);
+    assert_eq!(offered(&shipped, &keys::LLM_ENGINE), ["sample-llm"]);
+
+    let press_only = availability_in(SAMPLE_ENGINES, &sample, &PRESS_ONLY_UPDATABLE);
+    assert_eq!(
+        offered(&press_only, &keys::HOTKEY_MODE),
+        ["toggle"],
+        "hold needs key-up"
+    );
+    assert!(press_only.caps.contains(&CapsRequirement::UpdaterAvailable));
+}
+
+#[test]
+fn a_write_the_adapters_cannot_honour_is_refused() {
+    let sample = selecting("sample-asr");
+    let check = |key: &SettingKey, value: SettingValue, adapters: &AdapterCaps| {
+        let spec = find(key).unwrap();
+        check_available_in(SAMPLE_ENGINES, spec, &value, &sample, adapters)
+    };
+    let hold = || SettingValue::Enum(text("hold"));
+    assert!(check(&keys::HOTKEY_MODE, hold(), &SHIPPED).is_ok());
+    assert_eq!(
+        check(&keys::HOTKEY_MODE, hold(), &PRESS_ONLY_UPDATABLE),
+        Err(AppError::validation(
+            keys::HOTKEY_MODE.as_str(),
+            "That option isn't available on this PC."
+        ))
+    );
+    assert!(
+        check(
+            &keys::HOTKEY_MODE,
+            SettingValue::Enum(text("toggle")),
+            &PRESS_ONLY_UPDATABLE
+        )
+        .is_ok()
+    );
+    assert_eq!(
+        check(
+            &keys::UPDATES_AUTO_CHECK,
+            SettingValue::Bool(true),
+            &SHIPPED
+        ),
+        Err(AppError::validation(
+            keys::UPDATES_AUTO_CHECK.as_str(),
+            "This setting isn't available on this PC."
+        ))
+    );
+    assert!(
+        check(
+            &keys::UPDATES_AUTO_CHECK,
+            SettingValue::Bool(true),
+            &PRESS_ONLY_UPDATABLE
+        )
+        .is_ok()
+    );
+    assert!(
+        check(
+            &keys::ACCELERATOR,
+            SettingValue::Enum(text("gpu")),
+            &SHIPPED
+        )
+        .is_ok()
+    );
+    assert!(check(&keys::AUTO_PASTE, SettingValue::Bool(false), &SHIPPED).is_ok());
+}
+
+#[test]
+fn hotkey_writes_and_resets_refuse_a_chord_another_hotkey_uses() {
+    let defaults = defaults();
+    let conflict = Err(AppError::Hotkey {
+        reason: HotkeyIssue::Conflict,
+    });
+    assert_eq!(
+        validate_in(
+            SAMPLE_ENGINES,
+            &keys::PASTE_LAST_HOTKEY,
+            &SettingValue::Hotkey(text(hotkeys::RECORD_DEFAULT)),
+            &defaults,
+        )
+        .map(|spec| spec.key.clone()),
+        conflict
+    );
+    assert!(validate_reset(&keys::PASTE_LAST_HOTKEY, &defaults).is_ok());
+    let taken = resolve([(
+        keys::RECORD_HOTKEY,
+        SettingValue::Hotkey(text(hotkeys::PASTE_LAST_DEFAULT)),
+    )]);
+    assert_eq!(
+        validate_reset(&keys::PASTE_LAST_HOTKEY, &taken).map(|spec| spec.key.clone()),
+        conflict
+    );
+    assert!(validate_reset(&keys::THEME, &taken).is_ok());
+    assert_eq!(
+        validate_reset(&SettingKey::from_static("general.volume"), &taken)
+            .map(|spec| spec.key.clone()),
+        Err(AppError::NotFound {
+            resource: ResourceKind::Setting
+        })
     );
 }

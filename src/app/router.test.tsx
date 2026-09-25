@@ -16,6 +16,7 @@ import { AppRouter } from "./router";
 
 const REGISTRY: RegistryView = {
   settings: [],
+  sections: [],
   hotkeys: [],
   nav: [
     { id: "dashboard", label: "Dashboard", icon: "layout-dashboard", route: "/", order: 0 },

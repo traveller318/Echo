@@ -8,7 +8,8 @@
  *        pill presenter over the overlay adapter, and manage the CommandCtx (settings;
  *        consent, appearance, launcher, microphone, thread-priority, hotkey, foreground-window, toast and
  *        main-window adapters; the ASR worker; the Delivery over the clipboard, paste and toast adapters; the
- *        session handle; the pill presenter; the retention handle; AppPaths, database, event sink) plus the overlay
+ *        session handle; the pill presenter; the retention handle; the disabled updater (02 §11); AppPaths,
+ *        database, event sink) plus the overlay
  *        adapter itself, which app/windows.rs attaches to the pill window once it exists; returns the recovery report.
  *        `announce_recovery`, `start_speech_engine` and `prepare_session`: once the windows exist, toast what recovery
  *        found, load and warm the selected speech engine in the background and let the session bind its hotkeys.
@@ -56,6 +57,7 @@ use crate::{
         launcher::Win32ShellLauncher,
         notifier::TauriToastNotifier,
         scheduler::Win32WorkerScheduler,
+        updater::DisabledUpdater,
         window::{TauriMainWindow, Win32OverlayWindow},
     },
     ipc::{CommandCtx, CommandDeps},
@@ -189,6 +191,7 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<RecoveryReport, Box<dyn Error>>
         pill,
         main_window: Arc::new(TauriMainWindow::new(app.handle().clone(), MAIN_WINDOW)),
         retention,
+        updater: Arc::new(DisabledUpdater::new()),
         paths,
         db,
         events,

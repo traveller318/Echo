@@ -4,14 +4,21 @@
  *        range in --color-accent, and one --slider-thumb knob per value.
  * WHY:   Bounded Int settings (cancel countdown, retention days, typing WPM) render as a slider (step 18); Radix
  *        supplies keyboard steps, aria values and pointer capture. One thumb is rendered per value so a range
- *        slider needs no second component.
+ *        slider needs no second component. `aria-label` is forwarded to the thumbs, because Radix puts the slider role
+ *        on each thumb and a label on the root span would name nothing.
  * WHERE: SettingField for bounded Int settings. Exported through components/ui/index.ts.
  */
 import { Slider as SliderPrimitive } from "radix-ui";
 import type { ComponentProps } from "react";
 import { cn } from "@/lib/cn";
 
-export function Slider({ className, value, defaultValue, ...props }: ComponentProps<typeof SliderPrimitive.Root>) {
+export function Slider({
+  className,
+  value,
+  defaultValue,
+  "aria-label": ariaLabel,
+  ...props
+}: ComponentProps<typeof SliderPrimitive.Root>) {
   // With neither prop Radix starts at one value (`min`), so one thumb.
   const thumbCount = (value ?? defaultValue)?.length ?? 1;
   return (
@@ -36,6 +43,8 @@ export function Slider({ className, value, defaultValue, ...props }: ComponentPr
         <SliderPrimitive.Thumb
           // Thumbs are positional: Radix pairs the nth thumb with the nth value.
           key={index}
+          // The thumb carries role="slider", so the accessible name belongs on it, not on the root span.
+          aria-label={ariaLabel}
           data-slot="slider-thumb"
           className={cn(
             "block size-slider-thumb rounded-pill border-(length:--border-hairline) border-separator bg-accent-fg shadow-e1",

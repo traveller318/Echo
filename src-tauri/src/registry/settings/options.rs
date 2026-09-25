@@ -1,6 +1,7 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: setting options, validate setting write, OptionSource resolution, runtime option membership
- * WHAT:  `options` (what an OptionSource offers right now) and `validate` (is a write allowed), over the engine list.
+ * SOURCE OF TRUTH KEYWORDS: setting options, validate setting write, validate_reset, OptionSource resolution, runtime option membership
+ * WHAT:  `options` (what an OptionSource offers right now), `validate` (is a write allowed) and `validate_reset` (is
+ *        a return to the default allowed), over the engine list.
  * WHY:   Runtime options come from registry/engines caps, never a hardcoded list; a write is checked against the
  *        same options the Settings UI shows.
  * WHERE: Re-exported by registry/settings; `settings_set`, `registry_get` and the generated Settings UI.
@@ -8,11 +9,14 @@
 
 use super::{find, reads::accelerator_value, reads::asr_engine, values};
 use crate::{
-    registry::engines::{self, EngineEntry},
+    registry::{
+        engines::{self, EngineEntry},
+        hotkeys,
+    },
     types::{
         Accelerator, AppError, AsrCaps, CapsRequirement, EngineKind, EnumOption, EnumOptions,
-        OptionSource, ResourceKind, SettingKey, SettingKind, SettingSpec, SettingValue,
-        SettingsSnapshot, StaticStr,
+        HotkeyIssue, OptionSource, ResourceKind, SettingKey, SettingKind, SettingSpec,
+        SettingValue, SettingsSnapshot, StaticStr,
     },
 };
 
@@ -22,12 +26,14 @@ pub fn options(source: OptionSource, settings: &SettingsSnapshot) -> Vec<EnumOpt
 }
 
 /**
- * SOURCE OF TRUTH KEYWORDS: validate setting write, runtime option membership, settings_set validation
- * WHAT:  Validates a write of `value` to `key`: the key exists, the value passes its spec's kind check and, for
- *        runtime options, is one of the options offered right now. Returns the spec on success.
+ * SOURCE OF TRUTH KEYWORDS: validate setting write, runtime option membership, hotkey conflict on write, settings_set validation
+ * WHAT:  Validates a write of `value` to `key`: the key exists, the value passes its spec's kind check, a runtime
+ *        option is one of the options offered right now, and a hotkey combination is not another Echo hotkey's
+ *        (`Hotkey{conflict}`). Returns the spec on success.
  * WHY:   The command layer validates writes against the registry (02 §7.2); the settings service stays pure DB
- *        access. Caps requirements (e.g. hold mode needs key-up) are checked by the caller holding the adapters.
- * WHERE: `settings_set` (step 06) before services/settings writes the row.
+ *        access. Caps requirements (e.g. hold mode needs key-up) are checked by `check_available`, which needs the
+ *        adapters' caps.
+ * WHERE: `settings_set` before services/settings writes the row.
  */
 pub fn validate(
     key: &SettingKey,
@@ -62,7 +68,46 @@ pub(super) fn validate_in(
             "Choose one of the listed options.",
         ));
     }
+    check_hotkey_free(key, value, settings)?;
     Ok(spec)
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: validate_reset, reset setting check, hotkey default conflict
+ * WHAT:  Validates returning `key` to its default: the key exists and, for a hotkey, its default combination is
+ *        not in use by another Echo hotkey now. Returns the spec on success.
+ * WHY:   A reset skips the value checks (the default is always valid, and a runtime default such as an engine that
+ *        is not installed yet must stay resettable), but moving a hotkey back onto a chord another hotkey took in
+ *        the meantime would bind two hotkeys to one chord.
+ * WHERE: `settings_reset` before services/settings removes the row.
+ */
+pub fn validate_reset(
+    key: &SettingKey,
+    settings: &SettingsSnapshot,
+) -> Result<&'static SettingSpec, AppError> {
+    let spec = find(key).ok_or(AppError::NotFound {
+        resource: ResourceKind::Setting,
+    })?;
+    check_hotkey_free(key, &spec.default, settings)?;
+    Ok(spec)
+}
+
+/// `Hotkey{conflict}` when `value` is a combination another Echo hotkey uses; any other value passes.
+fn check_hotkey_free(
+    key: &SettingKey,
+    value: &SettingValue,
+    settings: &SettingsSnapshot,
+) -> Result<(), AppError> {
+    match value {
+        SettingValue::Hotkey(shortcut)
+            if hotkeys::conflicting(key, shortcut, settings).is_some() =>
+        {
+            Err(AppError::Hotkey {
+                reason: HotkeyIssue::Conflict,
+            })
+        }
+        _ => Ok(()),
+    }
 }
 
 /**
@@ -119,7 +164,7 @@ pub(super) fn options_in(
     }
 }
 
-fn selected_asr_caps<'a>(
+pub(super) fn selected_asr_caps<'a>(
     entries: &'a [EngineEntry],
     settings: &SettingsSnapshot,
 ) -> Option<&'a AsrCaps> {

@@ -1,10 +1,10 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: format, formatCount, formatDuration, formatClock, formatWpm, formatBytes, formatWords, formatTakeTime, formatMetricValue, NUMERIC_CLASS
+ * SOURCE OF TRUTH KEYWORDS: format, formatCount, formatDuration, formatClock, formatWpm, formatBytes, formatTakeTime, formatMetricValue, formatSettingUnit, formatLanguage
  * WHAT:  Every number the UI shows, turned into text: counts, human durations (`2 h 5 min`), the pill clock
  *        (`m:ss`), words per minute, milliseconds, days, byte sizes, word counts, when a take happened
- *        (`formatTakeTime`), and the two unit-driven entry points
- *        `formatMetricValue(unit, value)` (dashboard) and `formatSettingInt(unit, value)` (Settings). Plus
- *        NUMERIC_CLASS, the class that makes numerals tabular.
+ *        (`formatTakeTime`), and the unit-driven entry points `formatMetricValue(unit, value)` (dashboard),
+ *        `formatSettingInt(unit, value)` and `formatSettingUnit(unit)` (Settings); plus language names
+ *        (`formatLanguage`) and NUMERIC_CLASS, the class that makes numerals tabular.
  * WHY:   One place decides how a number reads, so the dashboard, history, models and settings agree. The unit
  *        tables are keyed by the generated MetricUnit / SettingUnit unions, so a new unit in Rust fails tsc until
  *        it has a format here, and no component switches on a metric or setting key (root CLAUDE.md §3). Grouping
@@ -155,6 +155,34 @@ const SETTING_FORMAT: Readonly<Record<SettingUnit, Formatter>> = {
 /** An `Int` setting value in its registry unit; a unit-less int is a plain count. */
 export function formatSettingInt(unit: SettingUnit | null, value: number, locale?: string): string {
   return unit === null ? formatCount(value, locale) : SETTING_FORMAT[unit](value, locale);
+}
+
+const SETTING_UNIT_SYMBOL: Readonly<Record<SettingUnit, string>> = {
+  milliseconds: "ms",
+  minutes: "min",
+  days: "days",
+  words_per_minute: "wpm",
+};
+
+/** The short unit written after an `Int` setting's number field (`ms`, `min`); empty for a unit-less int. */
+export function formatSettingUnit(unit: SettingUnit | null): string {
+  return unit === null ? "" : SETTING_UNIT_SYMBOL[unit];
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: formatLanguage, language display name, Intl.DisplayNames, language option label
+ * WHAT:  A language code as its name in the UI's language (`de` → `German` in English); the code itself when Intl
+ *        has no name for it or the code is malformed.
+ * WHY:   The registry labels runtime language options with their codes (registry/settings/options.rs) because
+ *        naming languages is a UI and locale concern; Intl follows the Windows display language through WebView2.
+ * WHERE: SettingField option labels for the `asr_languages` source; later the Models page language list.
+ */
+export function formatLanguage(code: string, locale?: string): string {
+  try {
+    return new Intl.DisplayNames(locale, { type: "language" }).of(code) ?? code;
+  } catch {
+    return code;
+  }
 }
 
 /** A word count: `1 word`, `1,204 words`. */

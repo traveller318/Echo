@@ -27,7 +27,7 @@ const NAV: NavItem[] = [
   { id: "history", label: "History", icon: "history", route: "/history", order: 1 },
 ];
 
-const REGISTRY: RegistryView = { settings: [], hotkeys: [], nav: NAV, engines: [], metrics: [] };
+const REGISTRY: RegistryView = { settings: [], sections: [], hotkeys: [], nav: NAV, engines: [], metrics: [] };
 
 const ipc = vi.fn<(cmd: string, payload?: unknown) => unknown>();
 

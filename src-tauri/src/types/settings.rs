@@ -1,8 +1,9 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: SettingSpec, SettingKind, SettingValue, EnumOptions, OptionSource, SettingsSnapshot, SharedSettings, SettingEntry, SettingsSetInput, setting validation
- * WHAT:  The shape of a registry setting (SettingSpec with its SettingKind), the value a setting holds
- *        (SettingValue), where an Enum's options come from (EnumOptions / OptionSource), the conditions under which
- *        a setting or option is offered (CapsRequirement), the kind check every write passes
+ * SOURCE OF TRUTH KEYWORDS: SettingSpec, SettingKind, SettingValue, EnumOptions, OptionSource, SettingsSnapshot, SharedSettings, SettingsAvailability, SettingSectionSpec, setting validation
+ * WHAT:  The shape of a registry setting (SettingSpec with its SettingKind) and of a Settings page section
+ *        (SettingSectionSpec), the value a setting holds (SettingValue), where an Enum's options come from
+ *        (EnumOptions / OptionSource), the conditions under which a setting or option is offered (CapsRequirement,
+ *        evaluated against AdapterCaps) and what is offered right now (SettingsAvailability), the kind check every write passes
  *        (`SettingSpec::validate`), the resolved values the core reads (SettingsSnapshot), the one live copy of
  *        them the running app shares (SharedSettings), and the settings commands' inputs and output
  *        (SettingsSetInput, SettingsResetInput, SettingEntry).
@@ -28,7 +29,7 @@ use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use super::{AppError, SettingKey, StaticList, StaticStr};
+use super::{AppError, HotkeyCaps, SettingKey, StaticList, StaticStr, UpdaterCaps};
 
 /// The Settings page group a setting belongs to; equals the prefix of its key (`general.theme` → `general`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
@@ -66,6 +67,19 @@ impl SettingSection {
     }
 }
 
+/**
+ * SOURCE OF TRUTH KEYWORDS: SettingSectionSpec, settings section label, section order, Settings page sections
+ * WHAT:  One Settings page section: which section and the heading it shows. The registry lists them in page order.
+ * WHY:   The page renders a card per section from the registry (04 §5) and never spells a heading itself, so a new
+ *        section is one registry entry with no UI change.
+ * WHERE: registry/settings/sections.rs (SECTIONS); sent to the UI in RegistryView.sections.
+ */
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct SettingSectionSpec {
+    pub section: SettingSection,
+    pub label: StaticStr,
+}
+
 /// A capability the active adapters must declare for a setting or option to be shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
@@ -78,6 +92,56 @@ pub enum CapsRequirement {
     HotkeyRelease,
     /// The updater adapter reports `UpdaterCaps.available`.
     UpdaterAvailable,
+}
+
+impl CapsRequirement {
+    /// Every requirement, so the registry can report which of them hold right now.
+    pub const ALL: [Self; 4] = [
+        Self::GpuAccelerator,
+        Self::MultipleLanguages,
+        Self::HotkeyRelease,
+        Self::UpdaterAvailable,
+    ];
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: AdapterCaps, settings caps input, hotkey caps, updater caps, caps requirement evaluation
+ * WHAT:  The caps of the running adapters that decide whether a CapsRequirement holds, besides the ASR engine's,
+ *        which the registry reads from the engine the settings select.
+ * WHY:   Whether hold-to-talk or update controls are offered depends on what the constructed hotkey and updater
+ *        adapters declare (02 §3.4), which only the command layer holds (as ports); the registry evaluates the
+ *        requirements from this plain snapshot, so it never needs a port object and tests pass any combination.
+ * WHERE: Built by ipc/commands/settings.rs from `CommandCtx` ports; read by registry::settings availability checks.
+ */
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AdapterCaps {
+    pub hotkeys: HotkeyCaps,
+    pub updater: UpdaterCaps,
+}
+
+/// The choices an `Enum` setting offers right now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct SettingOptions {
+    pub key: SettingKey,
+    /// Fixed options whose requirement holds, or the runtime source resolved now, in display order.
+    pub options: Vec<EnumOption>,
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: SettingsAvailability, settings_availability output, caps held, offered options, runtime options view
+ * WHAT:  What the Settings page may offer right now: the caps requirements that hold, and the options of every
+ *        `Enum` setting (fixed lists filtered by caps, runtime sources resolved against the current settings).
+ * WHY:   Visibility and choices depend on the active adapters and the selected engine, which only Rust knows. The
+ *        UI hides a setting whose requirement is missing and builds its Zod enum from exactly these options, and
+ *        `settings_set` refuses anything outside them, so the form and the write check read one answer. Options of
+ *        another setting can change after a write (a new engine brings its own languages), so the UI reads this
+ *        again on SettingsChanged instead of computing it.
+ * WHERE: Output of `settings_availability` (ipc/commands/settings.rs), built by `registry::settings::availability`.
+ */
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct SettingsAvailability {
+    pub caps: Vec<CapsRequirement>,
+    pub options: Vec<SettingOptions>,
 }
 
 /// One choice of an `Enum` setting.
@@ -158,7 +222,8 @@ pub enum SettingKind {
 }
 
 impl SettingKind {
-    /// Longest id-like value (enum value, shortcut, device id) a setting accepts, in characters.
+    /// Longest id-like value (enum value, shortcut, device id) a setting accepts, in characters; exported to the
+    /// UI as SETTING_TOKEN_MAX_CHARS so its Zod schema reads the same limit.
     pub const MAX_TOKEN_LEN: usize = 128;
 
     /// The wire name of the kind, equal to the `kind` tag of its spec and of its values.

@@ -157,6 +157,8 @@
   --toast-width: 360px;
   --tooltip-max-width: 240px;
   --popover-max-height: 320px;
+  --setting-control-width: 240px;
+  --number-field-width: 72px;
   --opacity-disabled: 0.45;
 
   /* 3.10 Sizes: the pill (4) */

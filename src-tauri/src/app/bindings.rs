@@ -64,6 +64,11 @@ pub fn builder<R: Runtime>() -> Builder<R> {
             u32::try_from(types::HistoryListInput::MAX_SEARCH_CHARS).unwrap_or(u32::MAX),
         )
         .constant("HISTORY_PAGE_MAX", types::HistoryListInput::MAX_LIMIT)
+        // 128 fits any integer type; the Settings form's Zod schema reads this for enum values, shortcuts and devices.
+        .constant(
+            "SETTING_TOKEN_MAX_CHARS",
+            u32::try_from(types::SettingKind::MAX_TOKEN_LEN).unwrap_or(u32::MAX),
+        )
 }
 
 /**

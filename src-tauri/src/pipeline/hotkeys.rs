@@ -14,7 +14,7 @@
  *        stays (the port keeps it); a session-scoped hotkey is never registered outside a session by a rebind.
  * WHERE: SessionHotkeys is held by the session actor from Recording until the take leaves CancelPending
  *        (pipeline/session/runner.rs); bind_always_where runs when the actor starts listening, with the actions it
- *        handles (pipeline/session/actor.rs); rebind_setting from settings_set (step 18); unbind_always /
+ *        handles (pipeline/session/actor.rs); rebind_setting from settings_set / settings_reset; unbind_always /
  *        bind_always from the tray's Pause hotkeys and power resume (step 25).
  */
 
@@ -79,14 +79,26 @@ pub fn unbind_always(service: &dyn HotkeyService) -> PortResult<()> {
     hotkeys::in_scope(HotkeyScope::Always).try_for_each(|spec| service.unregister(&spec.id))
 }
 
-/// Rebinds the always-on hotkey `key` controls to its value in `settings`; None when `key` rebinds no always-on
-/// hotkey. On failure the previous binding stays.
+/**
+ * SOURCE OF TRUTH KEYWORDS: rebind_setting, live hotkey rebind, hotkey setting change, keep previous binding
+ * WHAT:  Rebinds the always-on hotkey `key` controls to its value in `settings`, if `include` accepts it (the
+ *        session: only hotkeys whose action it handles); None when nothing was rebound. On failure the previous
+ *        binding stays (the port's contract).
+ * WHY:   A new combination takes effect the moment it is saved, and the settings write is refused when the port
+ *        cannot bind it (05 W7), so the stored value and the live binding never disagree. A hotkey nobody handles
+ *        yet is not registered, so it never takes a combination from other apps while pressing it does nothing; its
+ *        stored value is bound when a handler binds it.
+ * WHERE: ipc/commands/settings.rs (`settings_set` / `settings_reset`, with pipeline::session::binds_hotkey), which
+ *        also calls it with the previous snapshot to put the old binding back when the row cannot be written.
+ */
 pub fn rebind_setting(
     service: &dyn HotkeyService,
     key: &SettingKey,
     settings: &SettingsSnapshot,
+    include: impl Fn(&HotkeySpec) -> bool,
 ) -> Option<PortResult<()>> {
-    let spec = hotkeys::for_setting(key).filter(|spec| spec.scope == HotkeyScope::Always)?;
+    let spec = hotkeys::for_setting(key)
+        .filter(|spec| spec.scope == HotkeyScope::Always && include(spec))?;
     Some(bind(service, spec, settings))
 }
 
@@ -197,7 +209,8 @@ mod tests {
         assert!(bind_always(&service, &settings::defaults()).is_empty());
         let moved = record_bound_to("Ctrl+Alt+F8");
         assert_eq!(
-            rebind_setting(&service, &keys::RECORD_HOTKEY, &moved).map(|result| result.is_ok()),
+            rebind_setting(&service, &keys::RECORD_HOTKEY, &moved, |_| true)
+                .map(|result| result.is_ok()),
             Some(true)
         );
         assert_eq!(
@@ -207,14 +220,28 @@ mod tests {
 
         service.occupy(Shortcut::from_static("Ctrl+Alt+F7"));
         let taken = record_bound_to("Ctrl+Alt+F7");
-        let refused = rebind_setting(&service, &keys::RECORD_HOTKEY, &taken)
+        let refused = rebind_setting(&service, &keys::RECORD_HOTKEY, &taken, |_| true)
             .map(|result| result.map_err(|error| error.into_app_error()));
         assert_eq!(refused, Some(Err(conflict())));
         assert_eq!(
             service.binding(&RECORD),
             Some(Shortcut::from_static("Ctrl+Alt+F8"))
         );
-        assert!(rebind_setting(&service, &keys::THEME, &taken).is_none());
+        assert!(rebind_setting(&service, &keys::THEME, &taken, |_| true).is_none());
+    }
+
+    #[test]
+    fn a_hotkey_the_filter_excludes_is_not_rebound() {
+        let service = FakeHotkeyService::default();
+        let moved = settings::resolve([(
+            keys::PASTE_LAST_HOTKEY,
+            SettingValue::Hotkey(StaticStr::new("Ctrl+Shift+F8")),
+        )]);
+        let rebound = rebind_setting(&service, &keys::PASTE_LAST_HOTKEY, &moved, |spec| {
+            spec.action == HotkeyAction::Record
+        });
+        assert!(rebound.is_none());
+        assert_eq!(service.binding(&PASTE_LAST), None);
     }
 
     #[test]

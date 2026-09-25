@@ -31,6 +31,7 @@ pub use actor::{
     PanicReporter, SessionActor, SessionConfig, SessionEngines, SessionHandle, SessionInbox,
 };
 pub use arm::VadBuilder;
+pub use hotkey_input::binds_hotkey;
 pub use notices::{
     DEVICE_LOST_TOAST, HOTKEY_UNAVAILABLE_TOAST, MAX_DURATION_TOAST, START_FAILED_TOAST,
     TAKE_FAILED_TOAST, stop_toast,

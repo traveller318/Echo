@@ -7,12 +7,14 @@
  *        a metric is an entry here plus one aggregate (02 §3.3). Values are always computed from `transcripts`,
  *        never counted (05 decision log). Order within an emphasis is the order on the page (04 §5).
  * WHERE: Sent to the UI by `registry_get`; `summary_aggregates` tells `metrics_summary` what to compute;
+ *        `inputs_changed` tells a settings write whether the dashboard must read again;
  *        `ACTIVITY_DAYS` bounds `metrics_activity`; `COMMAND_DURATION` is recorded by ipc/factory.rs.
  */
 
+use super::settings::keys;
 use crate::types::{
     LogMetricSpec, MetricAggregate, MetricEmphasis, MetricId, MetricQuery, MetricSpec, MetricUnit,
-    StaticStr,
+    SettingKey, SettingsSnapshot, StaticStr,
 };
 
 /// Days the activity chart covers.
@@ -124,12 +126,46 @@ pub fn summary_aggregates() -> Vec<MetricAggregate> {
         .collect()
 }
 
+/**
+ * SOURCE OF TRUTH KEYWORDS: metric setting inputs, SETTING_INPUTS, inputs_changed, typing speed setting, metrics refresh after settings write
+ * WHAT:  SETTING_INPUTS: the settings the metric formulas read (time saved uses `metrics.typing_wpm`, 02 §7.4);
+ *        `inputs_changed`: whether a settings write changed any of them.
+ * WHY:   Metrics are computed from the rows at query time, never stored (05 decision log), so a new typing speed
+ *        changes "Time saved" at once; the dashboard only needs to be told to read again (MetricsChanged). Which
+ *        settings feed which formula is metric knowledge, so it is listed here and nothing matches on a key elsewhere.
+ * WHERE: pipeline/settings_effects.rs (after `settings_set` / `settings_reset`); the metrics commands read the same
+ *        settings when they compute.
+ */
+pub const SETTING_INPUTS: &[SettingKey] = &[keys::TYPING_WPM];
+
+/// Whether any setting a metric formula reads differs between `before` and `after`.
+pub fn inputs_changed(before: &SettingsSnapshot, after: &SettingsSnapshot) -> bool {
+    SETTING_INPUTS
+        .iter()
+        .any(|key| before.get(key) != after.get(key))
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
 
     use super::*;
-    use crate::registry::tests::is_registry_id;
+    use crate::{
+        registry::{settings, tests::is_registry_id},
+        types::SettingValue,
+    };
+
+    #[test]
+    fn only_a_formula_input_changes_the_metrics() {
+        let before = settings::defaults();
+        let faster = settings::resolve([(keys::TYPING_WPM, SettingValue::Int(80))]);
+        let unrelated = settings::resolve([(keys::AUTO_PASTE, SettingValue::Bool(false))]);
+        assert!(inputs_changed(&before, &faster));
+        assert!(!inputs_changed(&before, &unrelated));
+        for key in SETTING_INPUTS {
+            assert!(settings::find(key).is_some(), "{key} is registered");
+        }
+    }
 
     #[test]
     fn ids_are_unique_and_every_aggregate_is_shown_once() {

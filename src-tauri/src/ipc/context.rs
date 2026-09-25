@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: CommandCtx, CommandDeps, command context, managed state, handler dependencies, SharedSettings, AsrWorker, SessionEngines, RetryDeps, Delivery, SessionHandle, PillPresenter, RetentionHandle, AppPaths, Db, event sink
+ * SOURCE OF TRUTH KEYWORDS: CommandCtx, CommandDeps, command context, managed state, handler dependencies, SharedSettings, AsrWorker, SessionEngines, RetryDeps, Delivery, SessionHandle, PillPresenter, RetentionHandle, Updater, AppPaths, Db, event sink
  * WHAT:  CommandCtx: everything a command handler and the factory pipeline may use, managed once by Tauri and
  *        passed to every handler as `&CommandCtx`; CommandDeps: the named parts it is built from.
  * WHY:   Handlers take their dependencies from one place instead of Tauri state lookups, so they stay plain async
@@ -31,7 +31,7 @@ use crate::{
     },
     ports::{
         AudioCapture, EventSink, ForegroundApp, HotkeyService, MainWindow, Notifier,
-        PrivacyConsent, SystemAppearance, SystemLauncher, WorkerScheduler,
+        PrivacyConsent, SystemAppearance, SystemLauncher, Updater, WorkerScheduler,
     },
     services::Db,
     types::{AppEvent, AppPaths, SettingsSnapshot, SharedSettings},
@@ -71,6 +71,8 @@ pub struct CommandDeps {
     pub main_window: Arc<dyn MainWindow>,
     /// Wakes the retention sweeper (a storage setting changed, or a later "clean up now" action).
     pub retention: RetentionHandle,
+    /// App updates: its caps decide whether update settings are offered (this build: no update source).
+    pub updater: Arc<dyn Updater>,
     /// Every data and resource location, resolved once by app/bootstrap.
     pub paths: AppPaths,
     /// The database every service call goes through.
@@ -97,6 +99,7 @@ pub struct CommandCtx {
     pill: PillPresenter,
     main_window: Arc<dyn MainWindow>,
     retention: RetentionHandle,
+    updater: Arc<dyn Updater>,
     paths: AppPaths,
     db: Db,
     events: Arc<dyn EventSink<AppEvent>>,
@@ -122,6 +125,7 @@ impl CommandCtx {
             pill,
             main_window,
             retention,
+            updater,
             paths,
             db,
             events,
@@ -143,6 +147,7 @@ impl CommandCtx {
             pill,
             main_window,
             retention,
+            updater,
             paths,
             db,
             events,
@@ -246,6 +251,11 @@ impl CommandCtx {
         &self.retention
     }
 
+    /// App updates.
+    pub fn updater(&self) -> &dyn Updater {
+        self.updater.as_ref()
+    }
+
     /// Every data and resource location.
     pub fn paths(&self) -> &AppPaths {
         &self.paths
@@ -274,7 +284,7 @@ impl CommandCtx {
  *        English FakeAsrEngines (nothing loaded until a test asks), a hotkey fake, a focused Notepad target, a
  *        recording notifier, a delivery over a clipboard fake and a pasting inserter fake, a session handle whose
  *        actor (fake detector, registry polishers) is built but not running, a pill presenter over an overlay fake,
- *        a main-window fake, a retention handle whose sweeper is built but not running, AppPaths under the system temp folder
+ *        a main-window fake, a retention handle whose sweeper is built but not running, a disabled updater fake, AppPaths under the system temp folder
  *        (never touched: services take the in-memory database), a fresh in-memory database with the real migrations
  *        and a RecordingSink for events, plus handles to the sink and the fakes; `ctx()` is the all-defaults one.
  * WHY:   Factory, command and app tests all need the same context without a Tauri app or a disk; keeping the
@@ -300,7 +310,7 @@ pub mod testing {
                 FakeAsrEngine, FakeAudioCapture, FakeClipboard, FakeForegroundApp,
                 FakeHotkeyService, FakeMainWindow, FakeNotifier, FakeOverlayWindow,
                 FakePrivacyConsent, FakeSystemAppearance, FakeSystemLauncher, FakeTextInserter,
-                FakeVoiceActivity, FakeWorkerScheduler, RecordingSink,
+                FakeUpdater, FakeVoiceActivity, FakeWorkerScheduler, RecordingSink,
             },
         },
         registry::{self, engines::BuildCtx},
@@ -425,6 +435,7 @@ pub mod testing {
             pill,
             main_window: Arc::clone(&main_window) as _,
             retention,
+            updater: Arc::new(FakeUpdater::disabled()),
             paths,
             db,
             events: Arc::clone(&events) as _,

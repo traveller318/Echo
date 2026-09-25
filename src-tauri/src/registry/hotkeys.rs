@@ -1,8 +1,9 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: hotkey registry, HOTKEYS, record hotkey, paste last hotkey, cancel Esc, default accelerator, hotkey scope, hotkey action, effective shortcut, for_setting
+ * SOURCE OF TRUTH KEYWORDS: hotkey registry, HOTKEYS, record hotkey, paste last hotkey, cancel Esc, default accelerator, hotkey scope, effective shortcut, for_setting, conflicting
  * WHAT:  Every global hotkey Echo binds (record, paste-last, cancel) with its default combination, the setting
  *        that rebinds it, its scope and its action; typed id constants; the combination in effect for given settings;
- *        and which hotkey a setting rebinds (`for_setting`).
+ *        which hotkey a setting rebinds (`for_setting`); and which other hotkey a new combination would collide with
+ *        (`conflicting`).
  * WHY:   A hotkey is a registry entry (02 §3.3): the session reacts to the HotkeyAction of the HotkeyId that fired,
  *        never to key text or to an id. The default combinations are declared once here and reused as the settings
  *        defaults (registry/settings), so the two cannot drift. Cancel is fixed to Esc and scoped to a session so Esc
@@ -12,6 +13,8 @@
  *        entries while a take records, rebind after a hotkey setting changes), the session actor (the action of the
  *        id that fired) and registry/settings (defaults).
  */
+
+use std::collections::BTreeSet;
 
 use super::settings::keys;
 use crate::types::{
@@ -77,6 +80,37 @@ pub fn for_setting(key: &SettingKey) -> Option<&'static HotkeySpec> {
 /// Every hotkey registered with `scope`.
 pub fn in_scope(scope: HotkeyScope) -> impl Iterator<Item = &'static HotkeySpec> {
     HOTKEYS.iter().filter(move |spec| spec.scope == scope)
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: hotkey conflict check, conflicting hotkey, same chord, duplicate Echo hotkey, Hotkey conflict
+ * WHAT:  The other Echo hotkey that already uses the combination `shortcut`, if any, when `shortcut` is written to
+ *        the hotkey setting `key` (settings in effect: `settings`).
+ * WHY:   Two Echo hotkeys on one chord are refused before either is stored (02 §9, `Hotkey{conflict}`). The adapter
+ *        reports it as well, but only among hotkeys it has bound, so a hotkey that is not bound yet (Esc outside a
+ *        take, one the session does not handle yet) would collide later. The comparison ignores key order, case and
+ *        spacing around `+`; a finer equivalence stays the adapter's, which still answers when it registers.
+ * WHERE: registry::settings::validate, for writes to a Hotkey setting.
+ */
+pub fn conflicting(
+    key: &SettingKey,
+    shortcut: &str,
+    settings: &SettingsSnapshot,
+) -> Option<&'static HotkeySpec> {
+    let wanted = chord_keys(shortcut);
+    HOTKEYS.iter().find(|spec| {
+        spec.setting_key.as_ref() != Some(key)
+            && chord_keys(effective_shortcut(spec, settings).as_str()) == wanted
+    })
+}
+
+/// The keys of an accelerator, order- and case-insensitive.
+fn chord_keys(shortcut: &str) -> BTreeSet<String> {
+    shortcut
+        .split('+')
+        .map(|part| part.trim().to_lowercase())
+        .filter(|part| !part.is_empty())
+        .collect()
 }
 
 /// The combination `spec` is bound to: its setting's value, or the default when it has no setting.
@@ -161,6 +195,36 @@ mod tests {
         assert_eq!(action_of(&HotkeyId::from_static("unknown")), None);
         let actions: HashSet<_> = HOTKEYS.iter().map(|spec| spec.action).collect();
         assert_eq!(actions.len(), HOTKEYS.len());
+    }
+
+    #[test]
+    fn a_combination_another_hotkey_uses_is_a_conflict() {
+        let defaults = settings::defaults();
+        let paste_last = |shortcut: &str| {
+            conflicting(&keys::PASTE_LAST_HOTKEY, shortcut, &defaults).map(|spec| &spec.id)
+        };
+        assert_eq!(paste_last("Ctrl+Alt"), Some(&RECORD));
+        assert_eq!(paste_last(" alt + CTRL "), Some(&RECORD), "order and case");
+        assert_eq!(
+            paste_last("Escape"),
+            Some(&CANCEL),
+            "the session-scoped Esc"
+        );
+        assert_eq!(paste_last("Ctrl+Alt+V"), None, "its own combination");
+        assert_eq!(paste_last("Ctrl+Shift+V"), None);
+        let rebound = settings::resolve([(
+            settings::keys::RECORD_HOTKEY,
+            SettingValue::Hotkey(StaticStr::new("Ctrl+Shift+D")),
+        )]);
+        assert_eq!(
+            conflicting(&keys::PASTE_LAST_HOTKEY, "Ctrl+Alt", &rebound),
+            None,
+            "the record hotkey moved away"
+        );
+        assert_eq!(
+            conflicting(&keys::PASTE_LAST_HOTKEY, "Shift+Ctrl+D", &rebound).map(|spec| &spec.id),
+            Some(&RECORD)
+        );
     }
 
     #[test]

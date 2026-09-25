@@ -3,7 +3,8 @@
  * WHAT:  Layer 5: business orchestration of a take (session state machine, capture, ASR, polish, delivery,
  *        model management), of History (delete, copy, paste-last, retry from the saved audio), of durability
  *        (startup recovery of takes a crash cut off, retention sweeps of old audio and rows), of the global
- *        hotkey bindings, of app-wide derived state (appearance), and of
+ *        hotkey bindings, of app-wide derived state (appearance) and what a settings change sets in motion
+ *        (settings_effects), and of
  *        the pill window that follows the session (pill, fed through the event fan-out).
  * WHY:   The session actor is the sole owner of recording state (02 §5); nothing else may keep a copy.
  *        Works only through ports, never concrete adapters.
@@ -24,4 +25,5 @@ pub mod recovery;
 pub mod retention;
 pub mod retry;
 pub mod session;
+pub mod settings_effects;
 pub mod unwind;

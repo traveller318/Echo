@@ -186,6 +186,22 @@ export function describeAppError(error: AppError): AppErrorCopy {
 }
 
 /**
+ * SOURCE OF TRUTH KEYWORDS: inlineAppError, inline error, field error message, error beside control
+ * WHAT:  One sentence for an error shown next to the control that caused it: a Validation's own message (it already
+ *        names what to fix), otherwise the copy's title and body.
+ * WHY:   A form row has room for one line and no action button; the title alone would drop the way out ("Pick a
+ *        different one"), the body alone the what. Built from the same copy table, so it never drifts from toasts.
+ * WHERE: SettingField rows (a refused write, a hotkey conflict); any inline form error from a command.
+ */
+export function inlineAppError(error: AppError): string {
+  if (error.code === "Validation") {
+    return error.message;
+  }
+  const copy = describeAppError(error);
+  return `${copy.title}. ${copy.body}`;
+}
+
+/**
  * SOURCE OF TRUTH KEYWORDS: TAKE_FAILURE_COPY, describeTakeFailure, stored error code, transcripts.error_code, why a take failed
  * WHAT:  One calm sentence per AppError code saying why a stored take failed.
  * WHY:   A take's row keeps only the error code (`transcripts.error_code`, 02 §4.2), not the variant's fields, so

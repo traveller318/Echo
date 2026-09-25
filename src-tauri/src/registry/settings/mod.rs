@@ -1,9 +1,11 @@
 /*!
  * SOURCE OF TRUTH KEYWORDS: settings registry, SETTINGS, setting keys, setting defaults, resolve settings, runtime options, validate setting, SettingsSnapshot
  * WHAT:  Every setting Echo has (02 §3.3) with its section, label, help, kind and bounds, default,
- *        restart_required and visibility (list.rs); typed key constants (keys.rs) and compared enum values
- *        (values.rs); and the operations on them: resolve stored values into a SettingsSnapshot (resolve.rs), typed
- *        reads of a snapshot (reads.rs), resolve an OptionSource into options and validate a write (options.rs).
+ *        restart_required and visibility (list.rs); the Settings page sections (sections.rs); typed key constants
+ *        (keys.rs) and compared enum values (values.rs); and the operations on them: resolve stored values into a
+ *        SettingsSnapshot (resolve.rs), typed reads of a snapshot (reads.rs), resolve an OptionSource into options
+ *        and validate a write or reset (options.rs), and decide what the running adapters let the page offer
+ *        (availability.rs).
  * WHY:   One list drives the settings service, the generated Settings UI and its Zod schema, so adding a setting
  *        is one entry here (root CLAUDE.md §7). Options that depend on what is installed (engines, their
  *        languages and accelerators) are OptionSources resolved from registry/engines at runtime, never a
@@ -15,21 +17,25 @@
  *        `resolve` and the typed reads), registry/permissions (offline mode), registry/hotkeys and `registry_get`.
  */
 
+mod availability;
 pub mod keys;
 mod list;
 mod options;
 mod reads;
 mod resolve;
+mod sections;
 pub mod values;
 
 #[cfg(test)]
 mod tests;
 
+pub use availability::{availability, check_available, requirement_holds};
 pub use list::SETTINGS;
-pub use options::{options, validate};
+pub use options::{options, validate, validate_reset};
 pub use reads::{
     accelerator_preference, asr_engine, delivery_policy, dictionary, input_device,
     language_preference, llm_polisher, record_mode, remove_fillers, retention_policy,
     session_policy, theme, trailing_space,
 };
 pub use resolve::{defaults, find, resolve};
+pub use sections::SECTIONS;

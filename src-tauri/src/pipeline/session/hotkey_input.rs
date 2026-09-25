@@ -14,7 +14,10 @@
 
 use crate::{
     registry,
-    types::{HotkeyAction, HotkeyEvent, KeyState, SessionInput, SettingsSnapshot, TranscriptId},
+    types::{
+        HotkeyAction, HotkeyEvent, HotkeySpec, KeyState, SessionInput, SettingsSnapshot,
+        TranscriptId,
+    },
 };
 
 /// The session reacts to this action's hotkey (and binds it).
@@ -23,6 +26,12 @@ pub const fn handles(action: HotkeyAction) -> bool {
         HotkeyAction::Record | HotkeyAction::CancelTake => true,
         HotkeyAction::PasteLast => false,
     }
+}
+
+/// The session binds this registry hotkey: its action is one the session handles. Startup binding and a live
+/// rebind from Settings use the same rule, so they never disagree.
+pub fn binds_hotkey(spec: &HotkeySpec) -> bool {
+    handles(spec.action)
 }
 
 /// The session input `event` means under `settings`; None when it means nothing to the session.

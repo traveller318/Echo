@@ -38,6 +38,7 @@ pub fn catalog<R: Runtime>() -> Commands<R> {
         pill::pill_set_hit_areas,
         pill::pill_exited,
         settings::registry_get,
+        settings::settings_availability,
         settings::settings_get_all,
         settings::settings_set,
         settings::settings_reset,

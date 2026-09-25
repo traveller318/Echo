@@ -100,9 +100,10 @@ pub use session_machine::{
     SessionPolicy, SessionState, SessionTimer, SettledTake, StopCause, TakeData, TimerToken,
 };
 pub use settings::{
-    CapsRequirement, EnumOption, EnumOptions, OptionSource, SettingEntry, SettingKind,
-    SettingSection, SettingSpec, SettingUnit, SettingValue, SettingsResetInput, SettingsSetInput,
-    SettingsSnapshot, SharedSettings, TextPair,
+    AdapterCaps, CapsRequirement, EnumOption, EnumOptions, OptionSource, SettingEntry, SettingKind,
+    SettingOptions, SettingSection, SettingSectionSpec, SettingSpec, SettingUnit, SettingValue,
+    SettingsAvailability, SettingsResetInput, SettingsSetInput, SettingsSnapshot, SharedSettings,
+    TextPair,
 };
 pub use static_data::{StaticList, StaticStr};
 pub use target::{AppTarget, ScreenRect, WindowHandle};

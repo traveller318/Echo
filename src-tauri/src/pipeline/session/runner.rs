@@ -145,10 +145,11 @@ impl Runner {
             .listen(Arc::new(HotkeyForwarder(self.outbox.clone())));
         match listened {
             Ok(()) => {
-                let failures =
-                    hotkeys::bind_always_where(self.config.hotkeys.as_ref(), &settings, |spec| {
-                        hotkey_input::handles(spec.action)
-                    });
+                let failures = hotkeys::bind_always_where(
+                    self.config.hotkeys.as_ref(),
+                    &settings,
+                    hotkey_input::binds_hotkey,
+                );
                 if !failures.is_empty() {
                     self.toast(&HOTKEY_UNAVAILABLE_TOAST);
                 }
