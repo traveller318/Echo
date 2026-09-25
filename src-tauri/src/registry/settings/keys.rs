@@ -17,6 +17,8 @@ pub const PASTE_LAST_HOTKEY: SettingKey = SettingKey::from_static("hotkeys.paste
 pub const CANCEL_COUNTDOWN_MS: SettingKey = SettingKey::from_static("session.cancel_countdown_ms");
 pub const MAX_DURATION_MIN: SettingKey = SettingKey::from_static("session.max_duration_min");
 pub const INPUT_DEVICE: SettingKey = SettingKey::from_static("audio.input_device");
+/// Hidden: the Bluetooth microphone hint (05 W11) was shown.
+pub const BLUETOOTH_HINT_SHOWN: SettingKey = SettingKey::from_static("audio.bluetooth_hint_shown");
 pub const AUTO_PASTE: SettingKey = SettingKey::from_static("output.auto_paste");
 pub const KEEP_ON_CLIPBOARD: SettingKey = SettingKey::from_static("output.keep_on_clipboard");
 pub const TRAILING_SPACE: SettingKey = SettingKey::from_static("output.trailing_space");

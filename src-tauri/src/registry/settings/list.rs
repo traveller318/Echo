@@ -187,6 +187,19 @@ pub const SETTINGS: &[SettingSpec] = &[
         requires: None,
     },
     SettingSpec {
+        key: keys::BLUETOOTH_HINT_SHOWN,
+        section: SettingSection::Audio,
+        label: StaticStr::new("Bluetooth microphone hint shown"),
+        help: StaticStr::new(
+            "Internal: Echo has explained once that a Bluetooth microphone can cut the first second.",
+        ),
+        kind: SettingKind::Bool,
+        default: SettingValue::Bool(false),
+        restart_required: false,
+        visible: false,
+        requires: None,
+    },
+    SettingSpec {
         key: keys::AUTO_PASTE,
         section: SettingSection::Output,
         label: StaticStr::new("Paste automatically"),

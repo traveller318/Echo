@@ -93,7 +93,7 @@ impl AppPaths {
         &self.data_dir
     }
 
-    /// Read-only files shipped with the installer (Silero VAD, sounds, ONNX Runtime DLLs).
+    /// Read-only files shipped with the installer (Silero VAD, ONNX Runtime DLLs, licenses).
     pub fn resources_dir(&self) -> &Path {
         &self.resources_dir
     }

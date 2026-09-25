@@ -3,7 +3,7 @@
  * WHAT:  The session actor of 02 §5: one tokio task with an mpsc inbox that owns SessionState, feeds every input
  *        through the pure `transition` and hands the effects to the Runner. SessionHandle is the cloneable way in
  *        (the pill's Stop, the current view, paste-last, prepare, shutdown); SessionConfig is what the actor works through
- *        (settings, ports, the ASR worker, delivery, paths, database, event sink, engine builders).
+ *        (settings, ports, the ASR worker, delivery, paths, database, event sink, engine builders, sound cues).
  * WHY:   There is exactly one owner of recording state and no copy anywhere else: the view `session_get_state`
  *        returns is computed from the state at the moment of the query, and every change is published as the full
  *        view. Inputs are handled one at a time, in order, and the inputs a transition's effects produce at once
@@ -34,6 +34,7 @@ use tokio::sync::{mpsc, oneshot};
 use super::{
     arm::VadBuilder,
     hotkey_input,
+    hotkey_input::HotkeyRoute,
     inbox::{Message, Outbox, Receiver, Sender},
     runner::Runner,
     transition,
@@ -43,6 +44,7 @@ use crate::{
         asr::AsrWorker,
         delivery::Delivery,
         polish::{PolishChains, PolisherBuilder},
+        sound_cues::SoundCues,
         unwind::catch_unwind,
     },
     ports::{AudioCapture, EventSink, ForegroundApp, HotkeyService, Notifier, WorkerScheduler},
@@ -105,9 +107,12 @@ pub struct SessionConfig {
     pub delivery: Delivery,
     pub paths: AppPaths,
     pub db: Db,
-    /// SessionStateChanged, AudioLevel, TranscriptSaved, HistoryChanged, MetricsChanged.
+    /// SessionStateChanged, AudioLevel, TranscriptSaved, HistoryChanged, MetricsChanged, and SettingsChanged for a
+    /// one-time notice's hidden flag.
     pub events: Arc<dyn EventSink<AppEvent>>,
     pub engines: SessionEngines,
+    /// The start, stop, cancel and error chimes (played while `general.sound_cues` is on).
+    pub sounds: SoundCues,
 }
 
 /// The way into the session actor; clones share it.
@@ -255,11 +260,11 @@ impl SessionActor {
     /// Handles one message; Break after Shutdown.
     async fn handle(&mut self, message: Message) -> ControlFlow<()> {
         match message {
-            Message::Hotkey(event) => {
-                if let Some(input) = hotkey_input::input_for(&event, &self.runner.settings()) {
-                    self.feed(VecDeque::from([input])).await;
-                }
-            }
+            Message::Hotkey(event) => match hotkey_input::route(&event, &self.runner.settings()) {
+                Some(HotkeyRoute::Input(input)) => self.feed(VecDeque::from([input])).await,
+                Some(HotkeyRoute::PasteLast) => self.runner.paste_last(None),
+                None => {}
+            },
             Message::Ui(SessionUiInput::Stop) => {
                 self.feed(VecDeque::from([SessionInput::Stop])).await;
             }

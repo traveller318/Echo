@@ -499,7 +499,6 @@ fn a_normal_take_runs_every_effect_in_order() {
                 transcript_id: Some(take),
                 ..SessionView::IDLE
             }),
-            SessionEffect::Cue(SessionCue::Start),
             SessionEffect::Arm { take },
         ]
     );
@@ -520,6 +519,7 @@ fn a_normal_take_runs_every_effect_in_order() {
                 transcript_id: Some(take),
                 ..SessionView::IDLE
             }),
+            SessionEffect::Cue(SessionCue::Start),
         ]
     );
 
@@ -997,7 +997,13 @@ fn assert_dropped_silently(rig: &Rig, take: TranscriptId) {
 fn an_interrupted_press_drops_a_take_that_is_still_arming() {
     for mode in [RecordMode::Hold, RecordMode::Toggle] {
         let mut rig = Rig::new(mode);
-        rig.press();
+        assert!(
+            !has(rig.press(), |effect| matches!(
+                effect,
+                SessionEffect::Cue(_)
+            )),
+            "no chime before the microphone is open, so another shortcut stays silent"
+        );
         let take = rig.take();
         assert!(
             rig.after(30)

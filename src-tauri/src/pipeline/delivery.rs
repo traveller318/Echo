@@ -19,7 +19,7 @@
  *        overwrites something copied in the meantime. Previous content that was not text is cleared instead: the
  *        transcript is still not kept. Nothing here logs transcript text (02 §10).
  * WHERE: Built by app/bootstrap and held in CommandCtx; called by the session actor after polish (step 14),
- *        history_copy / history_paste_last (step 16) and the paste-last hotkey (step 19).
+ *        history_copy / history_paste_last (step 16) and the paste-last hotkey (through the session runner).
  */
 
 use std::{sync::Arc, time::Duration};

@@ -39,6 +39,7 @@ mod scheduling;
 mod session;
 mod session_machine;
 mod settings;
+mod sound;
 mod static_data;
 mod target;
 #[cfg(test)]
@@ -50,8 +51,9 @@ mod update;
 pub use appearance::{AppearanceView, Backdrop, ThemePreference, Transparency};
 pub use asr::{AsrEvent, AsrLoadRequest, AsrLoaded, AsrOutput, AsrReadiness};
 pub use audio::{
-    AudioDevice, AudioTestLevelInput, CaptureEvent, CaptureFormat, CaptureSummary, MicCheck,
-    MicVerdict, PIPELINE_SAMPLE_RATE_HZ, SegmentPolicy, SpeechSegment, VadEvent, samples_to_ms,
+    AudioDevice, AudioTestLevelInput, AudioTransport, CaptureEvent, CaptureFormat, CaptureSummary,
+    EndpointChange, MicCheck, MicVerdict, PIPELINE_SAMPLE_RATE_HZ, SegmentPolicy, SpeechSegment,
+    VadEvent, samples_to_ms,
 };
 pub use clipboard::ClipboardHistory;
 pub use command::{CommandSpec, Reentrancy};
@@ -64,8 +66,9 @@ pub use engine::{
 };
 pub use error::{AppError, AppErrorCode, HotkeyIssue, ResourceKind};
 pub use events::{
-    AppEvent, AppearanceChanged, AudioLevel, HistoryChangeReason, HistoryChanged, MetricsChanged,
-    ModelProgress, NavigationRequested, SessionStateChanged, SettingsChanged, TranscriptSaved,
+    AppEvent, AppearanceChanged, AudioDevicesChanged, AudioLevel, HistoryChangeReason,
+    HistoryChanged, MetricsChanged, ModelProgress, NavigationRequested, SessionStateChanged,
+    SettingsChanged, TranscriptSaved,
 };
 pub use future::BoxFuture;
 pub use hotkey::{
@@ -82,7 +85,7 @@ pub use metrics::{
 };
 pub use model::{ModelFile, ModelManifest, ModelPhase, ModelStatus, Sha256Hex};
 pub use nav::{NavIcon, NavId, NavItem, OpenPageInput};
-pub use notification::{Toast, ToastKind};
+pub use notification::{OneTimeNotice, Toast, ToastKind};
 pub use overlay::{OverlayRect, PillHitAreas};
 pub use paths::{AppPaths, ONNX_RUNTIME_LOAD_ORDER, OnnxRuntimeLibrary};
 pub use permission::{Permission, PermissionState};
@@ -105,6 +108,7 @@ pub use settings::{
     SettingsAvailability, SettingsResetInput, SettingsSetInput, SettingsSnapshot, SharedSettings,
     TextPair,
 };
+pub use sound::{CueSound, SoundClip, Tone};
 pub use static_data::{StaticList, StaticStr};
 pub use target::{AppTarget, ScreenRect, WindowHandle};
 pub use transcript::{

@@ -18,6 +18,10 @@
  *          take silently, row and audio included, while it is arming or has recorded under `interrupt_grace_ms`;
  *          later, in hold mode, it is a slip while dictating and stops the take like a release; in toggle mode the
  *          take keeps recording.
+ *        - The start cue plays when the microphone is open (entering Recording), not on the press: it means
+ *          "speak now", and a press that turns out to be another shortcut (Ctrl+Alt, then T or V) while the
+ *          microphone is still opening is dropped without a sound. Stop, cancel (a discarded countdown) and error
+ *          have their own cues; a silently dropped take has none.
  *        - Esc is registered only on entering Recording and released on every exit from Recording or
  *          CancelPending: stop, discard, error, and an undo that must finalize (05 W10).
  *        - Recorded time excludes the countdown; the undo restarts the max-duration timer with what is left.
@@ -261,7 +265,6 @@ impl Step {
             interrupted: false,
         });
         self.publish(&phase);
-        self.push(SessionEffect::Cue(SessionCue::Start));
         self.push(SessionEffect::Arm { take: id });
         phase
     }
@@ -366,7 +369,7 @@ impl Step {
         }
     }
 
-    /// The microphone is open: take Esc and start counting toward the longest take.
+    /// The microphone is open: take Esc, start counting toward the longest take, and chime "speak now".
     fn begin_recording(&mut self, take: TakeData) -> SessionPhase {
         self.push(SessionEffect::RegisterEsc);
         let timer = self.start_timer(SessionTimer::MaxDuration, take.policy.max_duration_ms);
@@ -376,6 +379,7 @@ impl Step {
             timer,
         });
         self.publish(&phase);
+        self.push(SessionEffect::Cue(SessionCue::Start));
         phase
     }
 

@@ -1,8 +1,9 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: CpalWasapiCapture, cpal, WASAPI shared mode, input devices, default input device, device id, capture callback, DeviceLost, sample format conversion
+ * SOURCE OF TRUTH KEYWORDS: CpalWasapiCapture, cpal, WASAPI shared mode, input devices, default input device, device id, capture callback, DeviceLost, sample format conversion, device transport, watch_devices
  * WHAT:  CpalWasapiCapture: AudioCapture on cpal's WASAPI host (shared mode). Lists input devices with a stable id
- *        (cpal's `DeviceId`, persisted as text by `audio.input_device`) and opens one at its default shared-mode
- *        format; the stream handle pauses, resumes and closes it.
+ *        (cpal's `DeviceId`, persisted as text by `audio.input_device`) and how each is connected, watches for
+ *        hot-plug (DeviceWatch), and opens one at its default shared-mode format; the stream handle pauses, resumes
+ *        and closes it and says how the opened device is connected.
  * WHY:   Shared mode opens at the device's mix format, so no other app loses the microphone and no exclusive-mode
  *        negotiation delays the first take (05 W14); downmix and resampling to 16 kHz happen once in the pipeline
  *        (05 A2). The data callback runs on cpal's real-time thread and only converts into a scratch buffer
@@ -13,7 +14,10 @@
  *        keeps what was captured and the next take uses the new default (05 W12). An xrun (a glitch the OS already
  *        recovered from) is only logged. Only the first terminal event is reported. One stream at a time: the port
  *        contract makes a second `start` fail with `Busy`. The Windows privacy consent is read before opening
- *        (05 W13), because a blocked microphone still opens and delivers silence.
+ *        (05 W13), because a blocked microphone still opens and delivers silence. The transport comes from cpal's
+ *        connection type, except that any Windows Bluetooth bus (read from the endpoint, endpoints.rs) is Bluetooth,
+ *        because cpal misses the hands-free bus a headset microphone uses (05 W11). COM is entered in cpal's
+ *        apartment for that read (ComScope::shared), so cpal's own COM use on the thread is never disturbed.
  * WHERE: Built by app/bootstrap into CommandCtx (and the session actor later); used through `dyn AudioCapture` by
  *        pipeline/capture and `audio_list_devices`.
  */
@@ -27,16 +31,21 @@ use std::{
 };
 
 use cpal::{
-    Device, DeviceId, ErrorKind, FromSample, Host, HostId, SampleFormat, SizedSample, Stream,
-    StreamConfig,
+    Device, DeviceId, ErrorKind, FromSample, Host, HostId, InterfaceType, SampleFormat,
+    SizedSample, Stream, StreamConfig,
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
+use parking_lot::Mutex;
+use windows::Win32::Media::Audio::IMMDeviceEnumerator;
 
+use super::{device_watch::DeviceWatch, endpoints};
 use crate::{
+    adapters::win32::ComScope,
     ports::{AudioCapture, AudioSink, CaptureStream, EventSink, PrivacyConsent},
     types::{
-        AppError, AudioCaps, AudioDevice, AudioDeviceId, CaptureEvent, CaptureFormat, Permission,
-        PermissionState, PortError, PortResult, ResourceKind, StaticList,
+        AppError, AudioCaps, AudioDevice, AudioDeviceId, AudioTransport, CaptureEvent,
+        CaptureFormat, EndpointChange, Permission, PermissionState, PortError, PortResult,
+        ResourceKind, StaticList,
     },
 };
 
@@ -56,6 +65,8 @@ pub struct CpalWasapiCapture {
     consent: Arc<dyn PrivacyConsent>,
     /// A stream is open; cleared when its handle is dropped.
     open: Arc<AtomicBool>,
+    /// The hot-plug watch, once started.
+    watch: Mutex<Option<DeviceWatch>>,
 }
 
 impl CpalWasapiCapture {
@@ -64,6 +75,7 @@ impl CpalWasapiCapture {
         Self {
             consent,
             open: Arc::new(AtomicBool::new(false)),
+            watch: Mutex::new(None),
         }
     }
 }
@@ -77,6 +89,7 @@ impl AudioCapture for CpalWasapiCapture {
     }
 
     fn devices(&self) -> PortResult<Vec<AudioDevice>> {
+        let buses = Buses::open();
         let host = host()?;
         let default_id = host
             .default_input_device()
@@ -88,13 +101,23 @@ impl AudioCapture for CpalWasapiCapture {
             .filter_map(|device| {
                 // A device that vanishes while it is listed simply drops out of the list.
                 let id = device.id().ok()?;
+                let (name, transport) = describe(&device, &buses);
                 Some(AudioDevice {
                     is_default: default_id.as_ref() == Some(&id),
-                    name: display_name(&device),
+                    name,
                     id: AudioDeviceId::from(id.to_string()),
+                    transport,
                 })
             })
             .collect())
+    }
+
+    fn watch_devices(&self, sink: Arc<dyn EventSink<EndpointChange>>) -> PortResult<()> {
+        let mut watch = self.watch.lock();
+        // The previous watch unregisters (and joins) before the new one registers.
+        *watch = None;
+        *watch = Some(DeviceWatch::start(sink)?);
+        Ok(())
     }
 
     fn start(
@@ -115,21 +138,23 @@ impl AudioCapture for CpalWasapiCapture {
         if opened.is_err() {
             self.open.store(false, Ordering::Release);
         }
-        let (stream, format) = opened?;
+        let (stream, format, transport) = opened?;
         Ok(Box::new(CpalCaptureStream {
             stream,
             format,
+            transport,
             open: Arc::clone(&self.open),
         }))
     }
 }
 
-/// Opens `device` (None = the Windows default input) at its default shared-mode format and starts it.
+/// Opens `device` (None = the Windows default input) at its default shared-mode format and starts it; returns the
+/// stream, its format and how the opened device is connected.
 fn open_stream(
     device: Option<&AudioDeviceId>,
     sink: Box<dyn AudioSink>,
     events: Arc<dyn EventSink<CaptureEvent>>,
-) -> PortResult<(Stream, CaptureFormat)> {
+) -> PortResult<(Stream, CaptureFormat, AudioTransport)> {
     let host = host()?;
     let device = match device {
         Some(id) => find_device(&host, id)?,
@@ -159,7 +184,8 @@ fn open_stream(
     }
     .map_err(|error| open_failure(&error))?;
     stream.play().map_err(|error| open_failure(&error))?;
-    Ok((stream, format))
+    let (_, transport) = describe(&device, &Buses::open());
+    Ok((stream, format, transport))
 }
 
 /**
@@ -218,12 +244,17 @@ where
 struct CpalCaptureStream {
     stream: Stream,
     format: CaptureFormat,
+    transport: AudioTransport,
     open: Arc<AtomicBool>,
 }
 
 impl CaptureStream for CpalCaptureStream {
     fn format(&self) -> CaptureFormat {
         self.format
+    }
+
+    fn transport(&self) -> AudioTransport {
+        self.transport
     }
 
     fn pause(&mut self) -> PortResult<()> {
@@ -267,12 +298,67 @@ fn find_device(host: &Host, id: &AudioDeviceId) -> PortResult<Device> {
     host.device_by_id(&parsed).ok_or_else(missing)
 }
 
-/// The name Windows shows for a device, e.g. `Microphone (USB Audio)`.
-fn display_name(device: &Device) -> String {
-    device
-        .description()
-        .map(|description| description.name().to_owned())
-        .unwrap_or_else(|_| device.to_string())
+/**
+ * SOURCE OF TRUTH KEYWORDS: Buses, describe device, device name, device transport, interface type mapping
+ * WHAT:  Buses: COM entered in cpal's apartment plus an MMDevice enumerator, for reading endpoint buses during one
+ *        listing or open. `describe(device, buses)`: the name Windows shows (e.g. `Microphone (USB Audio)`) and how
+ *        the device is connected.
+ * WHY:   One cpal description per device gives both the name and cpal's connection type; a Windows Bluetooth bus
+ *        overrides it (see the file header). An enumerator that cannot be created only means no Bluetooth override.
+ * WHERE: `devices` and `open_stream`.
+ */
+struct Buses {
+    enumerator: Option<IMMDeviceEnumerator>,
+    // Dropped after the enumerator (field order), so COM outlives every interface.
+    _com: ComScope,
+}
+
+impl Buses {
+    fn open() -> Self {
+        let com = ComScope::shared();
+        Self {
+            enumerator: endpoints::enumerator().ok(),
+            _com: com,
+        }
+    }
+
+    fn is_bluetooth(&self, device: &Device) -> bool {
+        let Some(enumerator) = &self.enumerator else {
+            return false;
+        };
+        device
+            .id()
+            .ok()
+            .and_then(|id| endpoints::bus_of(enumerator, id.id()))
+            .is_some_and(|bus| endpoints::is_bluetooth_bus(&bus))
+    }
+}
+
+fn describe(device: &Device, buses: &Buses) -> (String, AudioTransport) {
+    let description = device.description().ok();
+    let name = description.as_ref().map_or_else(
+        || device.to_string(),
+        |description| description.name().to_owned(),
+    );
+    let transport = if buses.is_bluetooth(device) {
+        AudioTransport::Bluetooth
+    } else {
+        description.map_or(AudioTransport::Other, |description| {
+            transport_of(description.interface_type())
+        })
+    };
+    (name, transport)
+}
+
+/// cpal's connection type as an AudioTransport.
+fn transport_of(interface: InterfaceType) -> AudioTransport {
+    match interface {
+        InterfaceType::BuiltIn | InterfaceType::Pci => AudioTransport::BuiltIn,
+        InterfaceType::Usb => AudioTransport::Usb,
+        InterfaceType::Bluetooth => AudioTransport::Bluetooth,
+        InterfaceType::Virtual | InterfaceType::Aggregate => AudioTransport::Virtual,
+        _ => AudioTransport::Other,
+    }
 }
 
 /// Maps a failure to open the device to the port's error meanings.
@@ -360,6 +446,37 @@ mod tests {
                 })
             );
         }
+    }
+
+    #[test]
+    fn connection_types_map_to_transports() {
+        assert_eq!(
+            transport_of(InterfaceType::BuiltIn),
+            AudioTransport::BuiltIn
+        );
+        assert_eq!(transport_of(InterfaceType::Pci), AudioTransport::BuiltIn);
+        assert_eq!(transport_of(InterfaceType::Usb), AudioTransport::Usb);
+        assert_eq!(
+            transport_of(InterfaceType::Bluetooth),
+            AudioTransport::Bluetooth
+        );
+        assert_eq!(
+            transport_of(InterfaceType::Virtual),
+            AudioTransport::Virtual
+        );
+        assert_eq!(transport_of(InterfaceType::Hdmi), AudioTransport::Other);
+    }
+
+    #[test]
+    fn the_device_watch_starts_and_can_be_replaced() {
+        let capture = capture(FakePrivacyConsent::granted());
+        capture
+            .watch_devices(Arc::new(RecordingSink::default()))
+            .unwrap();
+        capture
+            .watch_devices(Arc::new(RecordingSink::default()))
+            .unwrap();
+        assert!(capture.watch.lock().is_some());
     }
 
     #[test]

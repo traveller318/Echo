@@ -1,7 +1,8 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: FakeAudioCapture, RecordingAudioSink, fake microphone, feed samples, play on start, lose device, fake capture stream
+ * SOURCE OF TRUTH KEYWORDS: FakeAudioCapture, RecordingAudioSink, fake microphone, feed samples, play on start, lose device, fake capture stream, fake hot-plug, fake device transport
  * WHAT:  FakeAudioCapture: an AudioCapture whose "microphone" is driven by the test (`feed`, `play_on_start`,
- *        `lose_device`, `fail_stream`); RecordingAudioSink: an AudioSink that keeps every sample.
+ *        `lose_device`, `fail_stream`) and whose device list can change under a watch (`set_devices` notifies the
+ *        watch sink, like a hot-plug); RecordingAudioSink: an AudioSink that keeps every sample.
  * WHY:   Pipeline tests must produce exact audio at exact moments (speech, silence, an unplug mid-take). Each
  *        `start` bumps a generation, so dropping an old stream handle never closes a newer stream. `play_on_start`
  *        serves code that opens the stream itself (a command handler): the samples reach the sink the moment it opens.
@@ -14,8 +15,8 @@ use super::lock;
 use crate::{
     ports::{AudioCapture, AudioSink, CaptureStream, EventSink},
     types::{
-        AppError, AudioCaps, AudioDevice, AudioDeviceId, CaptureEvent, CaptureFormat, PortError,
-        PortResult, ResourceKind, StaticList,
+        AppError, AudioCaps, AudioDevice, AudioDeviceId, AudioTransport, CaptureEvent,
+        CaptureFormat, EndpointChange, PortError, PortResult, ResourceKind, StaticList,
     },
 };
 
@@ -29,6 +30,10 @@ struct CaptureState {
     starts: usize,
     next_error: Option<PortError>,
     on_start: Vec<f32>,
+    devices: Vec<AudioDevice>,
+    /// Transport of the Windows default device (a stream opened without a pinned device).
+    default_transport: AudioTransport,
+    watch: Option<Arc<dyn EventSink<EndpointChange>>>,
 }
 
 impl CaptureState {
@@ -48,7 +53,6 @@ impl CaptureState {
 /// A scriptable microphone.
 pub struct FakeAudioCapture {
     format: CaptureFormat,
-    devices: Vec<AudioDevice>,
     state: Arc<Mutex<CaptureState>>,
 }
 
@@ -57,15 +61,36 @@ impl FakeAudioCapture {
     pub fn new(format: CaptureFormat) -> Self {
         Self {
             format,
-            devices: Vec::new(),
             state: Arc::default(),
         }
     }
 
     #[must_use]
-    pub fn with_devices(mut self, devices: Vec<AudioDevice>) -> Self {
-        self.devices = devices;
+    pub fn with_devices(self, devices: Vec<AudioDevice>) -> Self {
+        lock(&self.state).devices = devices;
         self
+    }
+
+    /// Replaces the device list, as a plug or unplug would, and tells the watch sink (if any) with `change`.
+    pub fn set_devices(&self, devices: Vec<AudioDevice>, change: EndpointChange) {
+        let watch = {
+            let mut state = lock(&self.state);
+            state.devices = devices;
+            state.watch.clone()
+        };
+        if let Some(watch) = watch {
+            watch.emit(change);
+        }
+    }
+
+    /// Streams opened on the Windows default report `transport`.
+    pub fn set_default_transport(&self, transport: AudioTransport) {
+        lock(&self.state).default_transport = transport;
+    }
+
+    /// A device watch is running.
+    pub fn is_watched(&self) -> bool {
+        lock(&self.state).watch.is_some()
     }
 
     /// The next `start` fails with `error`.
@@ -140,7 +165,12 @@ impl AudioCapture for FakeAudioCapture {
     }
 
     fn devices(&self) -> PortResult<Vec<AudioDevice>> {
-        Ok(self.devices.clone())
+        Ok(lock(&self.state).devices.clone())
+    }
+
+    fn watch_devices(&self, sink: Arc<dyn EventSink<EndpointChange>>) -> PortResult<()> {
+        lock(&self.state).watch = Some(sink);
+        Ok(())
     }
 
     fn start(
@@ -157,14 +187,18 @@ impl AudioCapture for FakeAudioCapture {
         if state.is_open() {
             return Err(AppError::Busy.into());
         }
-        if let Some(id) = device
-            && !self.devices.iter().any(|known| &known.id == id)
-        {
-            return Err(AppError::NotFound {
-                resource: ResourceKind::AudioDevice,
-            }
-            .into());
-        }
+        let transport = match device {
+            Some(id) => match state.devices.iter().find(|known| &known.id == id) {
+                Some(known) => known.transport,
+                None => {
+                    return Err(AppError::NotFound {
+                        resource: ResourceKind::AudioDevice,
+                    }
+                    .into());
+                }
+            },
+            None => state.default_transport,
+        };
         state.generation += 1;
         state.starts += 1;
         let mut sink = sink;
@@ -176,6 +210,7 @@ impl AudioCapture for FakeAudioCapture {
         state.paused = false;
         Ok(Box::new(FakeCaptureStream {
             format: self.format,
+            transport,
             generation: state.generation,
             state: Arc::clone(&self.state),
         }))
@@ -185,6 +220,7 @@ impl AudioCapture for FakeAudioCapture {
 /// The handle `FakeAudioCapture::start` returns.
 struct FakeCaptureStream {
     format: CaptureFormat,
+    transport: AudioTransport,
     generation: u64,
     state: Arc<Mutex<CaptureState>>,
 }
@@ -203,6 +239,10 @@ impl FakeCaptureStream {
 impl CaptureStream for FakeCaptureStream {
     fn format(&self) -> CaptureFormat {
         self.format
+    }
+
+    fn transport(&self) -> AudioTransport {
+        self.transport
     }
 
     fn pause(&mut self) -> PortResult<()> {
@@ -340,6 +380,7 @@ mod tests {
             id: AudioDeviceId::from_static("usb"),
             name: String::from("USB"),
             is_default: false,
+            transport: AudioTransport::Usb,
         };
         let capture = FakeAudioCapture::new(FORMAT).with_devices(vec![usb.clone()]);
         assert_eq!(capture.devices().unwrap(), std::slice::from_ref(&usb));
@@ -359,8 +400,28 @@ mod tests {
             Box::new(RecordingAudioSink::default()),
             Arc::new(RecordingSink::default()),
         );
-        assert!(pinned.is_ok());
+        assert_eq!(pinned.unwrap().transport(), AudioTransport::Usb);
         assert_eq!(capture.last_device(), Some(Some(usb.id)));
+    }
+
+    #[test]
+    fn a_changed_device_list_reaches_the_watch() {
+        let capture = FakeAudioCapture::new(FORMAT);
+        capture.set_default_transport(AudioTransport::Bluetooth);
+        let (stream, _, _) = open(&capture);
+        assert_eq!(stream.transport(), AudioTransport::Bluetooth);
+        let watch = Arc::new(RecordingSink::default());
+        capture.watch_devices(watch.clone()).unwrap();
+        assert!(capture.is_watched());
+        let headset = AudioDevice {
+            id: AudioDeviceId::from_static("headset"),
+            name: String::from("Headset"),
+            is_default: true,
+            transport: AudioTransport::Bluetooth,
+        };
+        capture.set_devices(vec![headset.clone()], EndpointChange::Added);
+        assert_eq!(watch.events(), [EndpointChange::Added]);
+        assert_eq!(capture.devices().unwrap(), [headset]);
     }
 
     #[test]

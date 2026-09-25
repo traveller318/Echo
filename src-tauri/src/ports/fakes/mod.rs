@@ -29,6 +29,7 @@ mod overlay;
 mod polish;
 mod power;
 mod scheduler;
+mod sound;
 mod updater;
 mod vad;
 
@@ -59,6 +60,7 @@ pub use overlay::{FakeOverlayWindow, OverlayCall};
 pub use polish::{FakePolish, FakeTextPolisher};
 pub use power::FakePowerEvents;
 pub use scheduler::FakeWorkerScheduler;
+pub use sound::FakeSoundPlayer;
 pub use updater::FakeUpdater;
 pub use vad::FakeVoiceActivity;
 

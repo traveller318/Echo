@@ -303,14 +303,16 @@ pub mod testing {
             pill::{PillPresenter, PillTiming},
             retention::{RetentionDeps, RetentionHandle, RetentionSweeper},
             session::{SessionActor, SessionConfig, SessionEngines, SessionHandle},
+            sound_cues::SoundCues,
         },
         ports::{
             AsrEngine,
             fakes::{
                 FakeAsrEngine, FakeAudioCapture, FakeClipboard, FakeForegroundApp,
                 FakeHotkeyService, FakeMainWindow, FakeNotifier, FakeOverlayWindow,
-                FakePrivacyConsent, FakeSystemAppearance, FakeSystemLauncher, FakeTextInserter,
-                FakeUpdater, FakeVoiceActivity, FakeWorkerScheduler, RecordingSink,
+                FakePrivacyConsent, FakeSoundPlayer, FakeSystemAppearance, FakeSystemLauncher,
+                FakeTextInserter, FakeUpdater, FakeVoiceActivity, FakeWorkerScheduler,
+                RecordingSink,
             },
         },
         registry::{self, engines::BuildCtx},
@@ -344,6 +346,8 @@ pub mod testing {
         pub inserter: Arc<FakeTextInserter>,
         pub overlay: Arc<FakeOverlayWindow>,
         pub main_window: Arc<FakeMainWindow>,
+        /// The session actor's sound cues.
+        pub sounds: Arc<FakeSoundPlayer>,
     }
 
     pub fn harness(settings: SettingsSnapshot, consent: FakePrivacyConsent) -> Harness {
@@ -362,6 +366,7 @@ pub mod testing {
         let inserter = Arc::new(FakeTextInserter::default());
         let overlay = Arc::new(FakeOverlayWindow::default());
         let main_window = Arc::new(FakeMainWindow::default());
+        let sounds = Arc::new(FakeSoundPlayer::default());
         let pill = PillPresenter::spawn(
             Arc::clone(&overlay) as _,
             Arc::clone(&foreground) as _,
@@ -409,6 +414,7 @@ pub mod testing {
                 db: db.clone(),
                 events: Arc::clone(&events) as _,
                 engines: engines.clone(),
+                sounds: SoundCues::new(Arc::clone(&sounds) as _),
             },
             inbox,
         );
@@ -456,6 +462,7 @@ pub mod testing {
             inserter,
             overlay,
             main_window,
+            sounds,
         }
     }
 

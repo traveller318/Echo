@@ -1,6 +1,7 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: AudioDevice, CaptureFormat, CaptureEvent, VadEvent, PIPELINE_SAMPLE_RATE_HZ, SegmentPolicy, SpeechSegment, CaptureSummary, MicCheck, AudioTestLevelInput
- * WHAT:  The audio data shapes: an input device the user can pick (AudioDevice), the sample format an open
+ * SOURCE OF TRUTH KEYWORDS: AudioDevice, AudioTransport, EndpointChange, CaptureFormat, CaptureEvent, VadEvent, PIPELINE_SAMPLE_RATE_HZ, SegmentPolicy, SpeechSegment, CaptureSummary, MicCheck, AudioTestLevelInput
+ * WHAT:  The audio data shapes: an input device the user can pick (AudioDevice) and how it is connected
+ *        (AudioTransport), a raw device hot-plug notice (EndpointChange), the sample format an open
  *        capture stream delivers (CaptureFormat), what can happen to a stream besides samples (CaptureEvent), the
  *        per-frame voice activity verdict (VadEvent), the one sample rate the pipeline runs at, how a take is cut
  *        into segments (SegmentPolicy) and what the capture worker produces (SpeechSegment, CaptureSummary), plus
@@ -38,6 +39,49 @@ pub struct AudioDevice {
     pub name: String,
     /// Windows currently uses this device as the default input.
     pub is_default: bool,
+    /// How the device is connected.
+    pub transport: AudioTransport,
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: AudioTransport, microphone connection, Bluetooth microphone, USB microphone, built-in microphone, virtual audio device
+ * WHAT:  How an input device reaches the PC.
+ * WHY:   A Bluetooth headset switches profile when its microphone opens and cuts the first 0.5–2 s (05 W11), so the
+ *        pipeline must know the transport of the device a take opened to warn once; the Settings picker and
+ *        onboarding can show it too. Unknown connections are `Other`, never guessed.
+ * WHERE: AudioDevice.transport (audio_list_devices), CaptureStream::transport (the device a take opened);
+ *        decided by the capture adapter.
+ */
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum AudioTransport {
+    /// The PC's own audio hardware (integrated chipset or an internal card).
+    BuiltIn,
+    Usb,
+    Bluetooth,
+    /// Software routing (a virtual cable, a meeting app's device).
+    Virtual,
+    #[default]
+    Other,
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: EndpointChange, device hot-plug, microphone plugged, microphone unplugged, default input changed, device watch notice
+ * WHAT:  One raw notice from Windows that the audio endpoints changed: a device appeared, went away, changed state
+ *        (enabled, disabled, unplugged) or became the default input.
+ * WHY:   Windows sends these in bursts (one plug is several notices, some about speakers), so the port only reports
+ *        them and the pipeline debounces, re-lists the microphones and tells the UI only when the list really
+ *        changed (pipeline/audio_devices.rs). The kind is kept for the log and for later rules (return to a pinned
+ *        device); no device id travels here because the pipeline always re-lists.
+ * WHERE: Emitted by the capture adapter's device watch (AudioCapture::watch_devices); consumed by
+ *        pipeline/audio_devices.rs.
+ */
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EndpointChange {
+    Added,
+    Removed,
+    StateChanged,
+    DefaultInputChanged,
 }
 
 /// The samples an open capture stream hands its sink: interleaved f32 in [-1, 1] at the device's own rate.
@@ -214,10 +258,16 @@ mod tests {
             id: AudioDeviceId::from_static("usb-mic"),
             name: String::from("Microphone (USB Audio)"),
             is_default: true,
+            transport: AudioTransport::BuiltIn,
         };
         assert_eq!(
             serde_json::to_value(&device).unwrap(),
-            json!({ "id": "usb-mic", "name": "Microphone (USB Audio)", "is_default": true })
+            json!({
+                "id": "usb-mic",
+                "name": "Microphone (USB Audio)",
+                "is_default": true,
+                "transport": "built_in"
+            })
         );
     }
 

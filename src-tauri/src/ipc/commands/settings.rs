@@ -24,10 +24,10 @@
 
 use crate::{
     ipc::{CommandCtx, factory::echo_command},
-    pipeline::{hotkeys as hotkey_bindings, session, settings_effects::SettingsEffects},
+    pipeline::{
+        hotkeys as hotkey_bindings, session, settings_effects::SettingsEffects, settings_store,
+    },
     registry::{engines, hotkeys, metrics, nav, settings},
-    services,
-    services::Db,
     types::{
         AdapterCaps, AppError, PortError, PortResult, RegistryView, ResourceKind, SettingEntry,
         SettingKey, SettingValue, SettingsAvailability, SettingsChanged, SettingsResetInput,
@@ -155,11 +155,11 @@ fn write(ctx: &CommandCtx, key: SettingKey, change: Change) -> Result<SettingEnt
             }
         };
         let rebound = rebind(ctx, &key, &candidate)?;
-        let stored = match &change {
-            Change::Set(value) => services::settings::set::set(ctx.db(), &key, value),
-            Change::Reset => services::settings::reset::reset(ctx.db(), &key),
+        let value = match &change {
+            Change::Set(value) => Some(value),
+            Change::Reset => None,
         };
-        let published = stored.and_then(|()| resolved(ctx.db()));
+        let published = settings_store::store(ctx.db(), &key, value);
         if published.is_err() && rebound {
             restore_binding(ctx, &key, current);
         }
@@ -220,11 +220,6 @@ fn adapter_caps(ctx: &CommandCtx) -> AdapterCaps {
     }
 }
 
-/// The stored rows resolved over the registry defaults.
-fn resolved(db: &Db) -> PortResult<SettingsSnapshot> {
-    Ok(settings::resolve(services::settings::get::all(db)?))
-}
-
 /**
  * SOURCE OF TRUTH KEYWORDS: announce setting change, SettingsChanged emit, apply settings effects
  * WHAT:  Emits SettingsChanged with the effective value of `key`, lets SettingsEffects apply whatever the change
@@ -268,6 +263,7 @@ mod tests {
         ipc::{factory, testing},
         ports::fakes::{FakePrivacyConsent, poll_once},
         registry::settings::keys,
+        services,
         types::{
             AppEvent, AppearanceChanged, AppearanceView, Backdrop, CapsRequirement, CommandSpec,
             HotkeyIssue, MetricsChanged, Permission, Reentrancy, SettingKind, Shortcut, StaticStr,
@@ -570,7 +566,7 @@ mod tests {
     }
 
     #[test]
-    fn a_hotkey_write_rebinds_live_and_only_hotkeys_the_session_handles() {
+    fn a_hotkey_write_rebinds_every_hotkey_the_session_handles_live() {
         let harness = harness();
         let ctx = &harness.ctx;
         run_set(
@@ -595,8 +591,8 @@ mod tests {
         .unwrap();
         assert_eq!(
             harness.hotkeys.binding(&hotkeys::PASTE_LAST),
-            None,
-            "stored, but not taken from other apps while nothing handles it"
+            Some(Shortcut::from_static("Ctrl+Shift+F10")),
+            "the paste-last hotkey moves at once"
         );
         assert_eq!(
             ctx.settings().hotkey(&keys::PASTE_LAST_HOTKEY),

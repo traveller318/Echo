@@ -1,5 +1,5 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: useSettingValues, useSettingsAvailability, useAudioDevices, useSettingOptions, useSettingWrite, SETTINGS_QUERY, SETTINGS_AVAILABILITY_QUERY, AUDIO_DEVICES_QUERY, settings_set, settings_reset
+ * SOURCE OF TRUTH KEYWORDS: useSettingValues, useSettingsAvailability, useAudioDevices, useSettingOptions, useSettingWrite, SETTINGS_QUERY, SETTINGS_AVAILABILITY_QUERY, AUDIO_DEVICES_QUERY, AUDIO_DEVICE_EVENTS, settings_set, settings_reset
  * WHAT:  The Settings data layer: every effective value (`settings_get_all`, as a map by key), what the page may
  *        offer now (`settings_availability`: caps that hold, each choice setting's options), the microphones
  *        (`audio_list_devices`), the choices of one row (`useSettingOptions`) and `useSettingWrite(key)`, which
@@ -8,8 +8,9 @@
  *        SettingsChanged, never polled and never copied into a store; a write changes nothing in the cache by hand,
  *        its SettingsChanged refetches (a new engine can bring new language options, so availability follows the
  *        same event). A write's failure is kept per setting and shown inline on its row (a hotkey conflict, a value
- *        Rust refused), so it does not toast. The microphone list has no change event yet (hot-plug arrives with
- *        step 19), so it is read when the list is opened.
+ *        Rust refused), so it does not toast. The microphone list refetches on AudioDevicesChanged, which Rust sends
+ *        once per real hot-plug change (pipeline/audio_devices.rs); it is also read again when the list is opened,
+ *        which covers a PC where Windows' device notifications could not be watched.
  * WHERE: routes/settings (the page and its rows); onboarding (step 24) reuses the same reads and writes.
  */
 import type { UseQueryResult } from "@tanstack/react-query";
@@ -45,9 +46,13 @@ export const SETTINGS_AVAILABILITY_QUERY: EchoQuery<SettingsAvailability> = {
   invalidatedBy: SETTINGS_EVENTS,
 };
 
+/** Rust events after which the microphone list is stale. */
+export const AUDIO_DEVICE_EVENTS: readonly EchoEventName[] = ["audioDevicesChanged"];
+
 export const AUDIO_DEVICES_QUERY: EchoQuery<AudioDevice[]> = {
   queryKey: ["audio", "devices"],
   command: commands.audioListDevices,
+  invalidatedBy: AUDIO_DEVICE_EVENTS,
 };
 
 /** The effective values by key. */
@@ -74,7 +79,7 @@ export function useAudioDevices(enabled = true): UseQueryResult<AudioDevice[]> {
  * SOURCE OF TRUTH KEYWORDS: useSettingOptions, setting choices, device options, enum options offered, refresh microphones
  * WHAT:  The choices a setting row offers: an Enum's options from `settings_availability`, a Device's microphones
  *        from `audio_list_devices` (as options: id → name), nothing for the other kinds; plus `refresh` for a list
- *        that must be read again when it opens (microphones).
+ *        that is read again when it opens (microphones, as a fallback to their change event).
  * WHY:   Where a kind's choices come from is decided once here, so SettingField stays data-agnostic and the page
  *        never matches on a setting key. The microphone read runs only for a Device row.
  * WHERE: routes/settings rows; onboarding's microphone step (step 24).

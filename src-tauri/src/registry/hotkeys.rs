@@ -88,7 +88,7 @@ pub fn in_scope(scope: HotkeyScope) -> impl Iterator<Item = &'static HotkeySpec>
  *        the hotkey setting `key` (settings in effect: `settings`).
  * WHY:   Two Echo hotkeys on one chord are refused before either is stored (02 §9, `Hotkey{conflict}`). The adapter
  *        reports it as well, but only among hotkeys it has bound, so a hotkey that is not bound yet (Esc outside a
- *        take, one the session does not handle yet) would collide later. The comparison ignores key order, case and
+ *        take) would collide later. The comparison ignores key order, case and
  *        spacing around `+`; a finer equivalence stays the adapter's, which still answers when it registers.
  * WHERE: registry::settings::validate, for writes to a Hotkey setting.
  */

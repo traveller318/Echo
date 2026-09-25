@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: event payloads, AppEvent, SessionStateChanged, AudioLevel, TranscriptSaved, HistoryChanged, MetricsChanged, SettingsChanged, ModelProgress, AppearanceChanged, NavigationRequested
+ * SOURCE OF TRUTH KEYWORDS: event payloads, AppEvent, SessionStateChanged, AudioLevel, TranscriptSaved, HistoryChanged, MetricsChanged, SettingsChanged, ModelProgress, AppearanceChanged, NavigationRequested, AudioDevicesChanged
  * WHAT:  The payload struct of every Rust → UI event in 02 §4.4 (each struct name is the event name), and AppEvent,
  *        the envelope emitters hand to the event sink.
  * WHY:   Rust owns domain state and pushes it as typed events; the UI reads once through a command and then stays
@@ -51,6 +51,11 @@ pub enum HistoryChangeReason {
 pub struct HistoryChanged {
     pub reason: HistoryChangeReason,
 }
+
+/// The microphones Windows offers changed (plugged, unplugged, enabled, disabled, a new default); device lists
+/// should refetch. Sent only when the list really differs, never once per raw Windows notice.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct AudioDevicesChanged {}
 
 /// Dashboard aggregates changed; metric queries should refetch.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -105,6 +110,7 @@ pub enum AppEvent {
     ModelProgress(ModelProgress),
     AppearanceChanged(AppearanceChanged),
     NavigationRequested(NavigationRequested),
+    AudioDevicesChanged(AudioDevicesChanged),
 }
 
 /// `From<Payload> for AppEvent` for every payload, so the variant is never named twice at an emit site.
@@ -128,6 +134,7 @@ app_event_from![
     ModelProgress,
     AppearanceChanged,
     NavigationRequested,
+    AudioDevicesChanged,
 ];
 
 #[cfg(test)]

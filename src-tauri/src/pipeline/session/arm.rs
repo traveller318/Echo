@@ -59,6 +59,7 @@ pub(super) struct ArmRequest {
 
 /// What a take holds from the moment its microphone is open.
 pub(super) struct OpenTake {
+    /// The open microphone; `capture.transport()` says how it is connected.
     pub capture: Capture,
     pub asr: Arc<AsrTake>,
     /// The engine the take was started for (its row's `engine_id`).

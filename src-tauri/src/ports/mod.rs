@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: ports layer, port traits, swappable interfaces, AsrEngine, AudioCapture, HotkeyService, OverlayWindow, MainWindow, SystemLauncher, EventSink, fakes
+ * SOURCE OF TRUTH KEYWORDS: ports layer, port traits, swappable interfaces, AsrEngine, AudioCapture, HotkeyService, OverlayWindow, MainWindow, SystemLauncher, SoundPlayer, EventSink, fakes
  * WHAT:  Layer 1: one trait per swappable concern (AI engines, audio, OS integrations, I/O), traits only,
  *        re-exported flat so callers write `use crate::ports::{AsrEngine, Clipboard}`. In test builds, `fakes`
  *        adds one in-memory double per port.
@@ -31,6 +31,7 @@ mod overlay;
 mod polish;
 mod power;
 mod scheduler;
+mod sound;
 mod updater;
 mod vad;
 
@@ -54,6 +55,7 @@ pub use overlay::OverlayWindow;
 pub use polish::TextPolisher;
 pub use power::PowerEvents;
 pub use scheduler::WorkerScheduler;
+pub use sound::SoundPlayer;
 pub use updater::Updater;
 pub use vad::VoiceActivity;
 
@@ -70,7 +72,8 @@ mod tests {
 
     use super::*;
     use crate::types::{
-        CaptureEvent, HotkeyEvent, ModelProgress, PowerEvent, SpeechSegment, Transparency,
+        CaptureEvent, EndpointChange, HotkeyEvent, ModelProgress, PowerEvent, SpeechSegment,
+        Transparency,
     };
 
     fn shared<T: ?Sized + Send + Sync>() {}
@@ -95,6 +98,8 @@ mod tests {
         shared::<dyn OverlayWindow>();
         shared::<dyn MainWindow>();
         shared::<dyn WorkerScheduler>();
+        shared::<dyn SoundPlayer>();
+        shared::<dyn EventSink<EndpointChange>>();
         shared::<dyn EventSink<Transparency>>();
         shared::<dyn EventSink<HotkeyEvent>>();
         shared::<dyn EventSink<PowerEvent>>();

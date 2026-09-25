@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: typed setting reads, theme read, transcription reads, polish reads, remove_fillers, dictionary, llm_polisher, trailing_space, delivery_policy, input_device, session_policy, record_mode, retention_policy
+ * SOURCE OF TRUTH KEYWORDS: typed setting reads, sound_cues, notice_shown, theme read, transcription reads, polish reads, remove_fillers, dictionary, llm_polisher, trailing_space, delivery_policy, input_device, session_policy, record_mode, retention_policy
  * WHAT:  Typed reads of a SettingsSnapshot for the settings the core acts on.
  * WHY:   Values are stored as tagged SettingValues and enum text; spelling them is the registry's job, so the
  *        pipeline asks here instead of matching kinds or comparing strings. A resolved snapshot always holds a
@@ -11,8 +11,9 @@
 
 use super::{find, keys, values};
 use crate::types::{
-    Accelerator, AudioDeviceId, DeliveryPolicy, EngineId, Language, RecordMode, RetentionPolicy,
-    SessionPolicy, SettingKey, SettingValue, SettingsSnapshot, TextPair, ThemePreference,
+    Accelerator, AudioDeviceId, DeliveryPolicy, EngineId, Language, OneTimeNotice, RecordMode,
+    RetentionPolicy, SessionPolicy, SettingKey, SettingValue, SettingsSnapshot, TextPair,
+    ThemePreference,
 };
 
 /// The `general.theme` choice in effect; a resolved snapshot always holds a valid one, so the default is only a
@@ -109,6 +110,16 @@ pub fn delivery_policy(settings: &SettingsSnapshot) -> DeliveryPolicy {
         auto_paste: bool_or_default(settings, &keys::AUTO_PASTE),
         keep_on_clipboard: bool_or_default(settings, &keys::KEEP_ON_CLIPBOARD),
     }
+}
+
+/// `general.sound_cues`: play the start, stop, cancel and error chimes.
+pub fn sound_cues(settings: &SettingsSnapshot) -> bool {
+    bool_or_default(settings, &keys::SOUND_CUES)
+}
+
+/// The one-time `notice` was already shown (its hidden flag is set).
+pub fn notice_shown(settings: &SettingsSnapshot, notice: &OneTimeNotice) -> bool {
+    bool_or_default(settings, &notice.shown)
 }
 
 /// `audio.input_device`: the microphone the user pinned; None follows the Windows default input.

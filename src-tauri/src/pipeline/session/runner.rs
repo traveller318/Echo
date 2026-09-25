@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: effect runner, Runner, run effect, absorb worker reply, TakeSlot, take resources, Esc guard, session timer, clipboard restore, polish chain per take
+ * SOURCE OF TRUTH KEYWORDS: effect runner, Runner, run effect, absorb worker reply, TakeSlot, take resources, Esc guard, session timer, clipboard restore, polish chain per take, play sound cue, Bluetooth hint, paste-last hotkey toast
  * WHAT:  Runner: executes every SessionEffect through the ports, in the order the machine lists them, and turns the
  *        replies of the work it started (WorkerReply) back into SessionInputs. It holds the resources of the
  *        current take and nothing else: the open microphone and ASR take (TakeSlot), the Esc guard, the one timer,
@@ -23,7 +23,10 @@
  *        already decided, and startup recovery repairs whatever status is left. A take that settles as a success
  *        loses its audio at once when `storage.audio_retention_days` is 0 (pipeline/retention.rs). After a panic
  *        the actor calls `abandon`, which releases everything held and fails the unfinished takes (02 §12).
- *        Transcript text is never logged (02 §10).
+ *        Cue effects play through SoundCues, which reads `general.sound_cues` at that moment. A take that opens a
+ *        Bluetooth microphone shows the one-time Bluetooth hint (05 W11, NoticeBoard) without waiting on it. A
+ *        paste-last from the hotkey has no caller to answer, so its failure toasts (NOTHING_TO_PASTE_TOAST when no
+ *        take is finished yet). Transcript text is never logged (02 §10).
  * WHERE: Owned by the session actor (actor.rs): `run` for each effect of a transition, `absorb` for each
  *        WorkerReply, `paste_last` on Message::PasteLast, `prepare` on Message::Prepare, `shutdown` on
  *        Message::Shutdown, `abandon` after a caught panic.
@@ -42,7 +45,7 @@ use super::{
     arm::{self, ArmOutcome, ArmRequest},
     hotkey_input,
     inbox::{HotkeyForwarder, Outbox, PasteLastReply, WorkerReply},
-    notices::{HOTKEY_UNAVAILABLE_TOAST, TAKE_FAILED_TOAST},
+    notices::{HOTKEY_UNAVAILABLE_TOAST, TAKE_FAILED_TOAST, paste_last_toast},
 };
 use crate::{
     pipeline::{
@@ -51,16 +54,17 @@ use crate::{
         delivery::{CLIPBOARD_RESTORE_DELAY, Delivery},
         history,
         hotkeys::{self, SessionHotkeys},
+        notices::NoticeBoard,
         polish::polish_context,
         retention,
     },
     ports::VoiceActivity,
     registry, services,
     types::{
-        AppError, AppTarget, AsrEvent, CaptureEvent, CaptureSummary, ClipboardRestore,
-        DeliveryReport, EngineId, HistoryChangeReason, HistoryChanged, Language, PolishOutcome,
-        PortError, PortResult, SessionEffect, SessionInput, SessionStateChanged, SettingsSnapshot,
-        TimerToken, TranscriptChange, TranscriptId, TranscriptStatus,
+        AppError, AppTarget, AsrEvent, AudioTransport, CaptureEvent, CaptureSummary,
+        ClipboardRestore, DeliveryReport, EngineId, HistoryChangeReason, HistoryChanged, Language,
+        PolishOutcome, PortError, PortResult, SessionEffect, SessionInput, SessionStateChanged,
+        SettingsSnapshot, TimerToken, TranscriptChange, TranscriptId, TranscriptStatus,
     },
 };
 
@@ -108,11 +112,20 @@ pub(super) struct Runner {
     /// A detector ready for the next take.
     detector: Option<Box<dyn VoiceActivity>>,
     restore: Option<PendingRestore>,
+    /// One-time hints (the Bluetooth microphone one).
+    notices: NoticeBoard,
 }
 
 impl Runner {
     pub fn new(config: SessionConfig, outbox: Outbox) -> Self {
+        let notices = NoticeBoard {
+            settings: config.settings.clone(),
+            db: config.db.clone(),
+            notifier: Arc::clone(&config.notifier),
+            events: Arc::clone(&config.events),
+        };
         Self {
+            notices,
             config,
             outbox,
             takes: HashMap::new(),
@@ -220,9 +233,8 @@ impl Runner {
             SessionEffect::TakeSettled { take } => self.take_settled(take).await,
             SessionEffect::Toast(toast) => self.toast(&toast),
             SessionEffect::Cue(cue) => {
-                // Sound cues are played by the sound port with `general.sound_cues` (step 19); until it exists the
-                // cue is only traced, so the machine's timing is visible in the log.
                 tracing::trace!(?cue, "session sound cue");
+                self.config.sounds.play(cue, &self.settings());
             }
             SessionEffect::Ignored(ignored) => tracing::debug!(
                 input = ignored.input,
@@ -346,6 +358,10 @@ impl Runner {
         let take = outcome.take();
         match outcome {
             ArmOutcome::Armed { target, open, .. } => {
+                if open.capture.transport() == AudioTransport::Bluetooth {
+                    self.notices
+                        .show_once(&registry::notices::BLUETOOTH_MIC_NOTICE);
+                }
                 let slot = self.takes.entry(take).or_default();
                 slot.row = true;
                 slot.engine = Some(open.engine);
@@ -862,9 +878,17 @@ impl Runner {
                 "the last take could not be pasted"
             );
         }
-        if let Some(reply) = reply {
-            // The caller may have given up; the delivery happened either way.
-            let _ = reply.send(answer);
+        match reply {
+            Some(reply) => {
+                // The caller may have given up; the delivery happened either way.
+                let _ = reply.send(answer);
+            }
+            // The hotkey has no window to answer in, so a failure is a toast.
+            None => {
+                if let Err(error) = &answer {
+                    self.toast(&paste_last_toast(error.error()));
+                }
+            }
         }
     }
 

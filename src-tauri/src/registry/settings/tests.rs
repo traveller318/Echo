@@ -119,6 +119,7 @@ fn every_documented_setting_is_registered() {
             "session.cancel_countdown_ms",
             "session.max_duration_min",
             "audio.input_device",
+            "audio.bluetooth_hint_shown",
             "output.auto_paste",
             "output.keep_on_clipboard",
             "output.trailing_space",

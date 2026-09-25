@@ -13,7 +13,7 @@
  *        through the session actor, which owns the clipboard restore (05 W6).
  * WHERE: Registered through `ipc::commands::catalog`; called from the UI as `commands.historyList(…)`,
  *        `historyGet`, `historyCopy`, `historyDelete`, `historyPasteLast` (src/hooks/use-history.ts and the History
- *        route); the paste-last hotkey (step 19) reaches the same actor path.
+ *        route); the paste-last hotkey reaches the same actor path (pipeline/session/hotkey_input.rs).
  */
 
 use std::num::NonZeroU32;

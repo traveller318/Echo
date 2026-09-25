@@ -5,8 +5,8 @@
  *        visible and can be changed. Opening the list asks the caller for a fresh device list.
  * WHY:   A Device value is a device id or none (follow the Windows default, 02 §3.3). Radix Select cannot hold an
  *        empty or null value, so the default is the one text Rust can never store as a device id (blank ids fail
- *        `check_token`); it never leaves this file. Devices come and go, so the list is read again whenever it opens
- *        instead of being cached.
+ *        `check_token`); it never leaves this file. Devices come and go: the caller's list follows Rust's
+ *        AudioDevicesChanged, and opening the list asks for a fresh read as well.
  * WHERE: SettingField, for SettingKind `device`; the options are the microphones from `audio_list_devices`.
  */
 import { Controller } from "react-hook-form";

@@ -61,6 +61,7 @@ export const commands = {
 /** Events */
 export const events = {
 	appearanceChanged: makeEvent<AppearanceChanged>("AppearanceChanged"),
+	audioDevicesChanged: makeEvent<AudioDevicesChanged>("AudioDevicesChanged"),
 	audioLevel: makeEvent<AudioLevel>("AudioLevel"),
 	historyChanged: makeEvent<HistoryChanged>("HistoryChanged"),
 	metricsChanged: makeEvent<MetricsChanged>("MetricsChanged"),
@@ -135,10 +136,18 @@ export type AudioDevice = {
 	name: string,
 	/**  Windows currently uses this device as the default input. */
 	is_default: boolean,
+	/**  How the device is connected. */
+	transport: AudioTransport,
 };
 
 /**  Stable id of an audio input device as its capture adapter reports it; stored by `audio.input_device`. */
 export type AudioDeviceId = string;
+
+/**
+ *  The microphones Windows offers changed (plugged, unplugged, enabled, disabled, a new default); device lists
+ *  should refetch. Sent only when the list really differs, never once per raw Windows notice.
+ */
+export type AudioDevicesChanged = Record<string, never>;
 
 /**  Input level while recording, at most 30 Hz. */
 export type AudioLevel = {
@@ -162,6 +171,23 @@ export type AudioTestLevelInput = {
 	/**  How long to listen, in ms. */
 	window_ms: number,
 };
+
+/**
+ * 
+ *  * SOURCE OF TRUTH KEYWORDS: AudioTransport, microphone connection, Bluetooth microphone, USB microphone, built-in microphone, virtual audio device
+ *  * WHAT:  How an input device reaches the PC.
+ *  * WHY:   A Bluetooth headset switches profile when its microphone opens and cuts the first 0.5–2 s (05 W11), so the
+ *  *        pipeline must know the transport of the device a take opened to warn once; the Settings picker and
+ *  *        onboarding can show it too. Unknown connections are `Other`, never guessed.
+ *  * WHERE: AudioDevice.transport (audio_list_devices), CaptureStream::transport (the device a take opened);
+ *  *        decided by the capture adapter.
+ *  
+ */
+export type AudioTransport = 
+/**  The PC's own audio hardware (integrated chipset or an internal card). */
+"built_in" | "usb" | "bluetooth" | 
+/**  Software routing (a virtual cable, a meeting app's device). */
+"virtual" | "other";
 
 /**  What is behind the main window's content. */
 export type Backdrop = 

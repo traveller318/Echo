@@ -134,10 +134,10 @@ pub enum StopCause {
     DeviceLost,
 }
 
-/// A sound cue the actor plays when sound cues are on (`general.sound_cues`).
+/// A sound cue the actor plays when sound cues are on (`general.sound_cues`); how each sounds is registry/sounds.rs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SessionCue {
-    /// A take is starting.
+    /// The microphone is open: speak now.
     Start,
     /// Recording stopped; the text is on its way.
     Stop,
@@ -145,6 +145,11 @@ pub enum SessionCue {
     Cancel,
     /// The take could not start or failed.
     Error,
+}
+
+impl SessionCue {
+    /// Every cue, so the registry can prove each one has a sound.
+    pub const ALL: [Self; 4] = [Self::Start, Self::Stop, Self::Cancel, Self::Error];
 }
 
 /// Why the machine ignored an input.

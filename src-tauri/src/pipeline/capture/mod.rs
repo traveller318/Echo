@@ -51,9 +51,9 @@ use self::{
 use crate::{
     ports::{AudioCapture, AudioSink, CaptureStream, EventSink, VoiceActivity, WorkerScheduler},
     types::{
-        AppError, AppEvent, AudioCaps, AudioDeviceId, AudioLevel, CaptureEvent, CaptureFormat,
-        CaptureSummary, PortError, PortResult, SegmentPolicy, SpeechSegment, WorkerPriority,
-        samples_to_ms,
+        AppError, AppEvent, AudioCaps, AudioDeviceId, AudioLevel, AudioTransport, CaptureEvent,
+        CaptureFormat, CaptureSummary, PortError, PortResult, SegmentPolicy, SpeechSegment,
+        WorkerPriority, samples_to_ms,
     },
 };
 
@@ -119,6 +119,7 @@ struct Finish;
 pub struct Capture {
     stream: Option<Box<dyn CaptureStream>>,
     format: CaptureFormat,
+    transport: AudioTransport,
     finish: mpsc::Sender<Finish>,
     worker: Option<JoinHandle<CaptureOutcome>>,
 }
@@ -161,6 +162,7 @@ impl Capture {
         };
         let stream = capture.start(device, Box::new(sink), Arc::clone(&events))?;
         let format = stream.format();
+        let transport = stream.transport();
         let converter = Converter::new(format)?;
 
         let worker = Worker {
@@ -198,6 +200,7 @@ impl Capture {
         Ok(Self {
             stream: Some(stream),
             format,
+            transport,
             finish,
             worker: Some(handle),
         })
@@ -206,6 +209,11 @@ impl Capture {
     /// The device format of the open stream.
     pub fn format(&self) -> CaptureFormat {
         self.format
+    }
+
+    /// How the opened microphone is connected (a Bluetooth one warrants a hint, 05 W11).
+    pub fn transport(&self) -> AudioTransport {
+        self.transport
     }
 
     /// Stops delivering audio but keeps the device open (the Esc countdown).

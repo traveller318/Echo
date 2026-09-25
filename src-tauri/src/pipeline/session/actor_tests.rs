@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: session actor tests, pipeline tests, full take test, Esc undo test, Esc discard test, device loss test, ASR error test, exit mid-take test, panic recovery test, audio retention after success test
+ * SOURCE OF TRUTH KEYWORDS: session actor tests, pipeline tests, full take test, Esc undo test, Esc discard test, device loss test, ASR error test, exit mid-take test, panic recovery test, audio retention after success test, sound cue test, paste-last hotkey test, hold mode test, Bluetooth hint test
  * WHAT:  End-to-end tests of the session actor over port fakes: a real capture worker, ASR worker, polish chain,
  *        delivery and in-memory database, driven by fake hotkeys and a fake microphone, observed through the
  *        events, the database, the journal on disk and the fakes.
@@ -23,34 +23,38 @@ use std::{
 use hound::WavReader;
 
 use super::{
-    DEVICE_LOST_TOAST, START_FAILED_TOAST, SessionActor, SessionConfig, SessionEngines,
-    SessionHandle, TAKE_FAILED_TOAST,
+    DEVICE_LOST_TOAST, NOTHING_TO_PASTE_TOAST, START_FAILED_TOAST, SessionActor, SessionConfig,
+    SessionEngines, SessionHandle, TAKE_FAILED_TOAST,
 };
 use crate::{
     pipeline::{
         asr::{AsrWorker, AsrWorkerConfig},
         delivery::{Delivery, DeliveryPorts},
+        sound_cues::{SoundCues, render},
     },
     ports::{
         AsrEngine, EventSink,
         fakes::{
             ChannelSink, FakeAsrEngine, FakeAudioCapture, FakeClipboard, FakeForegroundApp,
-            FakeHotkeyService, FakeNotifier, FakeTextInserter, FakeVoiceActivity,
+            FakeHotkeyService, FakeNotifier, FakeSoundPlayer, FakeTextInserter, FakeVoiceActivity,
             FakeWorkerScheduler,
         },
     },
     registry::{
         self,
         engines::{BuildCtx, PARAKEET_TDT_V3},
-        hotkeys::{CANCEL, RECORD},
+        hotkeys::{CANCEL, PASTE_LAST, RECORD},
+        notices::BLUETOOTH_MIC_NOTICE,
         settings::{keys, values},
+        sounds::sound_for,
     },
-    services::{Db, transcripts},
+    services::{self, Db, transcripts},
     types::{
-        Accelerator, AppError, AppEvent, AppPaths, AppTarget, AsrLoadRequest, CaptureFormat,
-        DeliveryOutcome, EngineId, HistoryChangeReason, HistoryChanged, Permission, PortError,
-        ResourceKind, SessionStatus, SessionView, SettingKey, SettingValue, SettingsSnapshot,
-        SharedSettings, StaticStr, TranscriptId, TranscriptStatus, testing::TempDir,
+        Accelerator, AppError, AppEvent, AppPaths, AppTarget, AsrLoadRequest, AudioTransport,
+        CaptureFormat, DeliveryOutcome, EngineId, HistoryChangeReason, HistoryChanged, HotkeyCaps,
+        Permission, PortError, ResourceKind, SessionCue, SessionStatus, SessionView, SettingKey,
+        SettingValue, SettingsSnapshot, SharedSettings, StaticStr, TranscriptId, TranscriptStatus,
+        testing::TempDir,
     },
 };
 
@@ -87,6 +91,7 @@ struct Rig {
     clipboard: Arc<FakeClipboard>,
     inserter: Arc<FakeTextInserter>,
     engine: Arc<FakeAsrEngine>,
+    sounds: Arc<FakeSoundPlayer>,
     db: Db,
     paths: AppPaths,
     runner: Option<JoinHandle<()>>,
@@ -131,12 +136,22 @@ impl Rig {
         let paths = AppPaths::new(dir.join("data"), dir.join("resources"));
         let events = Arc::new(ChannelSink::default());
         let audio = Arc::new(FakeAudioCapture::new(STEREO_48K));
-        let hotkeys = Arc::new(FakeHotkeyService::default());
+        // The keyboard hook's caps: key-up and modifier-only chords (Ctrl+Alt, interrupted by another key).
+        let hotkeys = Arc::new(FakeHotkeyService::new(HotkeyCaps {
+            supports_release: true,
+            supports_modifier_only: true,
+        }));
         let notifier = Arc::new(FakeNotifier::default());
         let clipboard = Arc::new(FakeClipboard::with_text("before"));
         let inserter = Arc::new(FakeTextInserter::default());
         let engine = Arc::new(FakeAsrEngine::english());
+        let sounds = Arc::new(FakeSoundPlayer::default());
         let db = Db::open_in_memory().unwrap();
+        // The table holds what the snapshot says, as in the app (bootstrap resolves the snapshot from it), so a
+        // settings write during a test (a one-time notice's flag) re-resolves to the same settings.
+        for (key, value) in settings.iter() {
+            services::settings::set::set(&db, key, value).unwrap();
+        }
 
         let shared = Arc::clone(&engine);
         let asr = AsrWorker::spawn(AsrWorkerConfig {
@@ -188,6 +203,7 @@ impl Rig {
                         registry::engines::build_polisher(id, &polish_ctx)
                     }),
                 ),
+                sounds: SoundCues::new(Arc::clone(&sounds) as _),
             },
             inbox,
         );
@@ -207,6 +223,7 @@ impl Rig {
             clipboard,
             inserter,
             engine,
+            sounds,
             db,
             paths,
             runner: Some(runner),
@@ -268,6 +285,43 @@ impl Rig {
         thread::sleep(PAST_DEBOUNCE);
         self.press();
     }
+
+    /// The cues played so far, in order.
+    fn cues(&self) -> Vec<SessionCue> {
+        self.sounds
+            .played()
+            .iter()
+            .filter_map(|clip| {
+                SessionCue::ALL
+                    .into_iter()
+                    .find(|cue| sound_for(*cue).is_some_and(|sound| **clip == render(sound)))
+            })
+            .collect()
+    }
+
+    /// Records one toggle-mode take of `text` to the end (Done, then Idle).
+    fn dictate(&self, text: &str) -> TranscriptId {
+        self.engine.push_text(text);
+        let take = self.record();
+        self.feed(&speech(400));
+        self.feed(&silence(700));
+        self.stop();
+        self.wait_for(SessionStatus::Done);
+        self.wait_for(SessionStatus::Idle);
+        take
+    }
+}
+
+/// Waits up to WAIT for `condition`, for effects that publish no event (a paste-last, a toast).
+fn eventually(condition: impl Fn() -> bool) -> bool {
+    let deadline = std::time::Instant::now() + WAIT;
+    while std::time::Instant::now() < deadline {
+        if condition() {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    condition()
 }
 
 impl Drop for Rig {
@@ -441,6 +495,7 @@ fn esc_and_waiting_discards_the_row_and_the_audio() {
     assert_eq!(rig.hotkeys.binding(&CANCEL), None);
     assert!(!rig.audio.is_open());
     assert!(rig.engine.calls().is_empty());
+    assert_eq!(rig.cues(), [SessionCue::Start, SessionCue::Cancel]);
 }
 
 /// The microphone is unplugged mid-take: what was said is still delivered, with a toast.
@@ -703,4 +758,152 @@ fn zero_day_audio_retention_deletes_the_journal_right_after_success() {
     assert_eq!(row.status, TranscriptStatus::Done);
     assert!(!row.has_audio);
     assert!(!rig.paths.recording(take).exists());
+}
+
+/// The start chime waits for the open microphone and the stop chime follows the stop; with sound cues off, nothing
+/// plays.
+#[test]
+fn sound_cues_mark_the_start_and_the_stop_of_a_take() {
+    let rig = Rig::start();
+    rig.dictate("Chimed.");
+    assert_eq!(rig.cues(), [SessionCue::Start, SessionCue::Stop]);
+
+    let quiet = Rig::with(
+        settings_with(vec![
+            (
+                keys::HOTKEY_MODE,
+                SettingValue::Enum(StaticStr::new(values::TOGGLE)),
+            ),
+            (keys::SOUND_CUES, SettingValue::Bool(false)),
+        ]),
+        None,
+    );
+    quiet.dictate("Silent.");
+    assert!(quiet.sounds.played().is_empty());
+}
+
+/// The paste-last hotkey pastes the newest finished take into the focused window again, the same way
+/// `history_paste_last` does.
+#[test]
+fn the_paste_last_hotkey_pastes_the_newest_take_again() {
+    let rig = Rig::start();
+    assert!(
+        rig.hotkeys.binding(&PASTE_LAST).is_some(),
+        "paste-last is bound once the session is prepared"
+    );
+    rig.dictate("First.");
+    rig.dictate("Second.");
+    assert!(rig.hotkeys.press(&PASTE_LAST));
+    assert!(eventually(|| rig.inserter.insertions().len() == 3));
+    assert_eq!(
+        rig.inserter.insertions().last(),
+        Some(&(notepad(), String::from("Second. ")))
+    );
+    assert_eq!(
+        rig.cues(),
+        [
+            SessionCue::Start,
+            SessionCue::Stop,
+            SessionCue::Start,
+            SessionCue::Stop
+        ],
+        "a paste-last plays no cue"
+    );
+    assert_eq!(rig.view(), SessionView::IDLE, "a paste-last starts no take");
+}
+
+/// With nothing dictated yet, the paste-last hotkey says so in a toast instead of failing silently.
+#[test]
+fn the_paste_last_hotkey_with_an_empty_history_toasts() {
+    let rig = Rig::start();
+    assert!(rig.hotkeys.press(&PASTE_LAST));
+    assert!(eventually(|| rig
+        .notifier
+        .toasts()
+        .contains(&NOTHING_TO_PASTE_TOAST)));
+    assert!(rig.inserter.insertions().is_empty());
+}
+
+/// Hold mode: holding the record chord and adding the paste-last key (Ctrl+Alt, then V) drops the take the chord
+/// began, silently, and pastes the last take.
+#[test]
+fn in_hold_mode_the_paste_last_chord_drops_the_new_take_and_pastes() {
+    let rig = Rig::with(
+        settings_with(vec![(
+            keys::HOTKEY_MODE,
+            SettingValue::Enum(StaticStr::new(values::HOLD)),
+        )]),
+        None,
+    );
+    rig.engine.push_text("Held words.");
+    rig.record();
+    rig.feed(&speech(400));
+    assert!(rig.hotkeys.release(&RECORD));
+    rig.wait_for(SessionStatus::Done);
+    rig.wait_for(SessionStatus::Idle);
+    let cues_before = rig.cues();
+
+    thread::sleep(PAST_DEBOUNCE);
+    rig.press();
+    let (arming, _) = rig.wait_for(SessionStatus::Arming);
+    let dropped = arming.transcript_id.unwrap();
+    assert!(rig.hotkeys.interrupt(&RECORD));
+    assert!(rig.hotkeys.press(&PASTE_LAST));
+    rig.wait_for(SessionStatus::Discarded);
+
+    assert!(eventually(|| rig.inserter.insertions().len() == 2));
+    assert_eq!(
+        rig.inserter.insertions().last(),
+        Some(&(notepad(), String::from("Held words. ")))
+    );
+    assert_eq!(
+        transcripts::get::get(&rig.db, dropped).unwrap_err().error(),
+        &AppError::NotFound {
+            resource: ResourceKind::Transcript
+        },
+        "the take the chord began leaves no row"
+    );
+    assert!(!rig.paths.recording(dropped).exists());
+    assert!(!rig.audio.is_open());
+    let cues_after = rig.cues();
+    assert!(
+        !cues_after[cues_before.len()..].contains(&SessionCue::Stop),
+        "a dropped take never chimes a stop"
+    );
+}
+
+/// A take on a Bluetooth microphone shows the hint once, remembers it in its hidden setting, and never again.
+#[test]
+fn a_bluetooth_microphone_gets_its_hint_once() {
+    let rig = Rig::start();
+    rig.audio.set_default_transport(AudioTransport::Bluetooth);
+    rig.dictate("One.");
+    rig.dictate("Two.");
+
+    let hints = rig
+        .notifier
+        .toasts()
+        .into_iter()
+        .filter(|toast| *toast == BLUETOOTH_MIC_NOTICE.toast)
+        .count();
+    assert_eq!(hints, 1);
+    assert!(
+        services::settings::get::all(&rig.db)
+            .unwrap()
+            .contains(&(BLUETOOTH_MIC_NOTICE.shown.clone(), SettingValue::Bool(true)))
+    );
+}
+
+/// A wired microphone never shows the Bluetooth hint.
+#[test]
+fn a_wired_microphone_gets_no_bluetooth_hint() {
+    let rig = Rig::start();
+    rig.audio.set_default_transport(AudioTransport::Usb);
+    rig.dictate("Wired.");
+    assert!(!rig.notifier.toasts().contains(&BLUETOOTH_MIC_NOTICE.toast));
+    assert!(
+        !services::settings::get::all(&rig.db)
+            .unwrap()
+            .contains(&(BLUETOOTH_MIC_NOTICE.shown.clone(), SettingValue::Bool(true)))
+    );
 }

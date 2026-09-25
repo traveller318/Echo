@@ -1,9 +1,10 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: bootstrap, composition root, startup sequence, ASR worker, session actor, pill presenter, event fan-out, start_speech_engine, prepare_session, stop_session, command context, startup recovery, retention sweeper, panic hook
+ * SOURCE OF TRUTH KEYWORDS: bootstrap, composition root, startup sequence, ASR worker, session actor, pill presenter, event fan-out, start_speech_engine, prepare_session, stop_session, command context, startup recovery, retention sweeper, panic hook, sound player, audio device watch
  * WHAT:  `start`: the startup sequence that runs before any window exists: resolve AppPaths from the Tauri path
  *        API, start local logging, open and migrate the database, settle the takes a crash left unfinished
  *        (pipeline/recovery.rs), resolve the stored settings over the registry defaults, start the appearance
- *        watcher, start the (empty) ASR worker, spawn the (idle) session actor over the same ports and point the
+ *        watcher and the microphone hot-plug watch (DeviceListRelay), start the (empty) ASR worker, start the sound
+ *        player, spawn the (idle) session actor over the same ports (with the sound cues) and point the
  *        panic hook at it (app/panics.rs), spawn the retention sweeper (first sweep now, then daily), start the
  *        pill presenter over the overlay adapter, and manage the CommandCtx (settings;
  *        consent, appearance, launcher, microphone, thread-priority, hotkey, foreground-window, toast and
@@ -57,6 +58,7 @@ use crate::{
         launcher::Win32ShellLauncher,
         notifier::TauriToastNotifier,
         scheduler::Win32WorkerScheduler,
+        sound::Win32SoundPlayer,
         updater::DisabledUpdater,
         window::{TauriMainWindow, Win32OverlayWindow},
     },
@@ -64,12 +66,14 @@ use crate::{
     pipeline::{
         appearance::AppearanceRelay,
         asr::{self, AsrWorker, AsrWorkerConfig},
+        audio_devices::{DEVICE_SETTLE, DeviceListRelay},
         delivery::{Delivery, DeliveryPorts},
         fan_out::FanOut,
         pill::{PillPresenter, PillTiming},
         recovery,
         retention::{RetentionDeps, RetentionHandle},
         session::{SessionActor, SessionConfig, SessionEngines, SessionHandle},
+        sound_cues::SoundCues,
     },
     ports::{
         AudioCapture, EventSink, ForegroundApp, HotkeyService, Notifier, PrivacyConsent,
@@ -139,6 +143,8 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<RecoveryReport, Box<dyn Error>>
         notifier: Arc::clone(&notifier),
     });
     let audio: Arc<dyn AudioCapture> = Arc::new(CpalWasapiCapture::new(Arc::clone(&consent)));
+    watch_audio_devices(&audio, &events);
+    let sounds = SoundCues::new(Arc::new(Win32SoundPlayer::new().map_err(startup_failure)?));
     let hotkeys: Arc<dyn HotkeyService> = Arc::new(LowLevelKeyboardHotkeys::new());
     let (session, inbox) = SessionHandle::new();
     panics::report_to_session(session.panic_reporter());
@@ -159,6 +165,7 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<RecoveryReport, Box<dyn Error>>
             db: db.clone(),
             events: Arc::clone(&events),
             engines: engines.clone(),
+            sounds,
         },
         inbox,
     );
@@ -288,6 +295,26 @@ fn watch_appearance(
         tracing::warn!(
             detail = error.detail(),
             "transparency changes will apply after a restart"
+        );
+    }
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: watch_audio_devices, microphone hot-plug wiring, DeviceListRelay, watch_devices
+ * WHAT:  Starts the relay that turns the capture adapter's endpoint notices into AudioDevicesChanged, and hands it
+ *        to the adapter's device watch.
+ * WHY:   Registering for notices opens no device (05 W19 still holds: the microphone opens on the first take). Without
+ *        the watch Echo still works: the Settings list is read whenever it opens and every take resolves its device
+ *        afresh, so a failure is only logged.
+ * WHERE: `start`, right after the capture adapter exists.
+ */
+fn watch_audio_devices(audio: &Arc<dyn AudioCapture>, events: &Arc<dyn EventSink<AppEvent>>) {
+    let watched = DeviceListRelay::spawn(Arc::clone(audio), Arc::clone(events), DEVICE_SETTLE)
+        .and_then(|relay| audio.watch_devices(Arc::new(relay)));
+    if let Err(error) = watched {
+        tracing::warn!(
+            detail = error.detail(),
+            "microphone changes will show when the Settings list is opened"
         );
     }
 }

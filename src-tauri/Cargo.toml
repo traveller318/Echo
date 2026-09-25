@@ -57,20 +57,28 @@ tracing-subscriber = { version = "=0.3.23", default-features = false, features =
 ulid = { version = "=3.0.0", features = ["serde"] }
 # Same version tauri already links, so no second copy is compiled; features grow with each Win32 adapter.
 windows = { version = "=0.61.3", features = [
+    "Win32_Devices_Properties",
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
+    "Win32_Media_Audio",
     "Win32_Security",
     "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
     "Win32_System_DataExchange",
     "Win32_System_LibraryLoader",
     "Win32_System_Registry",
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
+    "Win32_System_Variant",
     "Win32_UI_HiDpi",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
+    "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
 ] }
+# The crate `windows` re-exports; named directly only because the COM `#[implement]` macro (the audio device watch's
+# IMMNotificationClient) expands to `::windows_core` paths. Same version `windows` already links.
+windows-core = "=0.61.2"
 
 [dev-dependencies]
 # Hashes the bundled resources against their pinned SHA-256 (the model store adds it as a normal dependency later).
