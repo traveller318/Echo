@@ -15,7 +15,8 @@ use tauri_specta::{Event, Events, collect_events};
 
 use crate::types::{
     AppEvent, AppearanceChanged, AudioDevicesChanged, AudioLevel, HistoryChanged, MetricsChanged,
-    ModelProgress, NavigationRequested, SessionStateChanged, SettingsChanged, TranscriptSaved,
+    ModelProgress, ModelsChanged, NavigationRequested, SessionStateChanged, SettingsChanged,
+    TranscriptSaved,
 };
 
 /**
@@ -59,6 +60,7 @@ event_catalog![
     MetricsChanged,
     SettingsChanged,
     ModelProgress,
+    ModelsChanged,
     AppearanceChanged,
     NavigationRequested,
     AudioDevicesChanged,
@@ -80,6 +82,7 @@ mod tests {
                 "MetricsChanged",
                 "SettingsChanged",
                 "ModelProgress",
+                "ModelsChanged",
                 "AppearanceChanged",
                 "NavigationRequested",
                 "AudioDevicesChanged",

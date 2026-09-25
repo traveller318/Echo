@@ -28,6 +28,7 @@ mod launcher;
 mod metrics;
 mod model;
 mod nav;
+mod network;
 mod notification;
 mod overlay;
 mod paths;
@@ -69,8 +70,8 @@ pub use engine::{
 pub use error::{AppError, AppErrorCode, HotkeyIssue, ResourceKind};
 pub use events::{
     AppEvent, AppearanceChanged, AudioDevicesChanged, AudioLevel, HistoryChangeReason,
-    HistoryChanged, MetricsChanged, ModelProgress, NavigationRequested, SessionStateChanged,
-    SettingsChanged, TranscriptSaved,
+    HistoryChanged, MetricsChanged, ModelProgress, ModelsChanged, NavigationRequested,
+    SessionStateChanged, SettingsChanged, TranscriptSaved,
 };
 pub use future::BoxFuture;
 pub use hotkey::{
@@ -78,7 +79,8 @@ pub use hotkey::{
     Shortcut,
 };
 pub use ids::{
-    AudioDeviceId, EngineId, HotkeyId, InvalidId, MetricId, ModelId, SettingKey, TranscriptId,
+    AudioDeviceId, EngineId, HotkeyId, InvalidId, MetricId, ModelId, REGISTRY_ID_MAX_LEN,
+    SettingKey, TranscriptId, is_registry_id,
 };
 pub use launcher::SettingsPage;
 pub use metrics::{
@@ -86,12 +88,16 @@ pub use metrics::{
     MetricUnit, MetricValue, MetricsActivityInput, MetricsRange, MetricsSummary,
     MetricsSummaryInput, TranscriptTotals,
 };
-pub use model::{ModelFile, ModelManifest, ModelPhase, ModelStatus, Sha256Hex};
+pub use model::{
+    EngineInput, EngineRuntime, EngineSelection, ModelEntry, ModelFile, ModelInput, ModelManifest,
+    ModelPhase, ModelStatus, ModelTransferOutcome, ModelsView, Sha256Hex,
+};
 pub use nav::{NavIcon, NavId, NavItem, OpenPageInput};
+pub use network::{AllowedHost, HostAllowlist, HttpPolicy};
 pub use notification::{OneTimeNotice, Toast, ToastKind};
 pub use overlay::{OverlayRect, PillHitAreas};
 pub use paths::{AppPaths, ONNX_RUNTIME_LOAD_ORDER, OnnxRuntimeLibrary};
-pub use permission::{Permission, PermissionState};
+pub use permission::{Permission, PermissionCheckFn, PermissionGate, PermissionState};
 pub use polish::{
     PolishContext, PolishFallback, PolishFallbackReason, PolishOutcome, PolishPlan, PolishPolicy,
 };

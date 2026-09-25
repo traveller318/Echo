@@ -30,6 +30,7 @@ struct StoreState {
     installed: HashSet<ModelId>,
     partial: HashMap<ModelId, u64>,
     corrupt: HashSet<ModelId>,
+    broken: HashSet<ModelId>,
     next_error: Option<PortError>,
     hang: bool,
 }
@@ -61,6 +62,16 @@ impl FakeModelStore {
     /// Every hash check of this model fails.
     pub fn corrupt(&self, id: &ModelId) {
         lock(&self.state).corrupt.insert(id.clone());
+    }
+
+    /// Hash checks of this model pass again (fresh files arrived).
+    pub fn repair(&self, id: &ModelId) {
+        lock(&self.state).corrupt.remove(id);
+    }
+
+    /// The installed files no longer have their sizes: `status` says `Corrupt` until a download or import.
+    pub fn break_install(&self, id: &ModelId) {
+        lock(&self.state).broken.insert(id.clone());
     }
 
     /// The next download, import or verify fails with `error`.
@@ -128,6 +139,7 @@ impl FakeModelStore {
             }
             progress.emit(Self::progress(manifest, total, ModelPhase::Installing));
             state.installed.insert(manifest.id.clone());
+            state.broken.remove(&manifest.id);
             Ok(())
         })
     }
@@ -136,13 +148,16 @@ impl FakeModelStore {
 impl ModelStore for FakeModelStore {
     fn status(&self, manifest: &ModelManifest) -> PortResult<ModelStatus> {
         let state = lock(&self.state);
+        let installed = state.installed.contains(&manifest.id);
         Ok(
-            if manifest.bundled || state.installed.contains(&manifest.id) {
+            if manifest.bundled || (installed && !state.broken.contains(&manifest.id)) {
                 ModelStatus::Installed
             } else if let Some(&bytes) = state.partial.get(&manifest.id) {
                 ModelStatus::Partial {
                     bytes: ByteCount::new(bytes),
                 }
+            } else if installed {
+                ModelStatus::Corrupt
             } else {
                 ModelStatus::NotInstalled
             },
@@ -181,6 +196,12 @@ impl ModelStore for FakeModelStore {
             if let Some(error) = state.next_error.take() {
                 return Err(error);
             }
+            if state.broken.contains(&manifest.id) {
+                return Err(AppError::ModelCorrupt {
+                    model_id: manifest.id.clone(),
+                }
+                .into());
+            }
             if !manifest.bundled && !state.installed.contains(&manifest.id) {
                 return Err(AppError::ModelMissing {
                     model_id: manifest.id.clone(),
@@ -206,6 +227,7 @@ impl ModelStore for FakeModelStore {
         let mut state = lock(&self.state);
         state.installed.remove(&manifest.id);
         state.partial.remove(&manifest.id);
+        state.broken.remove(&manifest.id);
         Ok(())
     }
 }
@@ -319,6 +341,28 @@ mod tests {
             poll_once(store.download(&MODEL, &sink)),
             Poll::Ready(Err(_))
         ));
+    }
+
+    #[test]
+    fn a_broken_install_is_corrupt_until_downloaded_again() {
+        let store = FakeModelStore::new("models");
+        store.install(&MODEL.id);
+        store.break_install(&MODEL.id);
+        assert_eq!(store.status(&MODEL).unwrap(), ModelStatus::Corrupt);
+        assert_eq!(store.locate(&MODEL).unwrap(), None);
+        let sink = RecordingSink::default();
+        assert_eq!(
+            poll_once(store.verify(&MODEL, &sink))
+                .map(|result| result.map_err(PortError::into_app_error)),
+            Poll::Ready(Err(AppError::ModelCorrupt {
+                model_id: MODEL.id.clone()
+            }))
+        );
+        assert_eq!(
+            poll_once(store.download(&MODEL, &sink)),
+            Poll::Ready(Ok(()))
+        );
+        assert_eq!(store.status(&MODEL).unwrap(), ModelStatus::Installed);
     }
 
     #[test]

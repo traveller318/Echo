@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: event payloads, AppEvent, SessionStateChanged, AudioLevel, TranscriptSaved, HistoryChanged, MetricsChanged, SettingsChanged, ModelProgress, AppearanceChanged, NavigationRequested, AudioDevicesChanged
+ * SOURCE OF TRUTH KEYWORDS: event payloads, AppEvent, SessionStateChanged, AudioLevel, TranscriptSaved, HistoryChanged, MetricsChanged, SettingsChanged, ModelProgress, ModelsChanged, AppearanceChanged, NavigationRequested, AudioDevicesChanged
  * WHAT:  The payload struct of every Rust → UI event in 02 §4.4 (each struct name is the event name), and AppEvent,
  *        the envelope emitters hand to the event sink.
  * WHY:   Rust owns domain state and pushes it as typed events; the UI reads once through a command and then stays
@@ -68,7 +68,8 @@ pub struct SettingsChanged {
     pub value: SettingValue,
 }
 
-/// Progress of a model download or import, at most 10 Hz.
+/// Progress of a model download, import or check, at most 10 Hz; a terminal phase (ready, cancelled, failed) ends
+/// the stream.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct ModelProgress {
     pub model_id: ModelId,
@@ -76,6 +77,11 @@ pub struct ModelProgress {
     pub total: ByteCount,
     pub phase: ModelPhase,
 }
+
+/// What the Models page shows changed: a model was installed, removed or found damaged, or the speech engine
+/// started, finished or failed loading; `models_list` should refetch.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct ModelsChanged {}
 
 /// The theme, transparency or backdrop changed; carries the full view, so windows never merge partial updates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -108,6 +114,7 @@ pub enum AppEvent {
     MetricsChanged(MetricsChanged),
     SettingsChanged(SettingsChanged),
     ModelProgress(ModelProgress),
+    ModelsChanged(ModelsChanged),
     AppearanceChanged(AppearanceChanged),
     NavigationRequested(NavigationRequested),
     AudioDevicesChanged(AudioDevicesChanged),
@@ -132,6 +139,7 @@ app_event_from![
     MetricsChanged,
     SettingsChanged,
     ModelProgress,
+    ModelsChanged,
     AppearanceChanged,
     NavigationRequested,
     AudioDevicesChanged,

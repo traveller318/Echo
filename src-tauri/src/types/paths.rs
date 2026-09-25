@@ -5,7 +5,8 @@
  * WHY:   Paths are never hardcoded (05 W23) and never resolved below app/: bootstrap asks the Tauri path API for
  *        the two roots once and hands this value down. Every file and folder name under them is spelled here
  *        only, so the database, journal, model manager and log sink cannot drift apart. Model folders are
- *        `models/<id>/` with downloads staged in `models/<id>.partial/` (02 §8.2); journals are
+ *        `models/<id>/` with downloads staged in `models/<id>.partial/` and removals in `models/<id>.removing/`
+ *        (02 §8.2); journals are
  *        `recordings/<transcript id>.wav` (02 §7.3), and the row stores only that file name; the pre-migration
  *        copy is `echo.db.bak-<from_version>` (02 §7.2). Resources mirror `src-tauri/resources/` (the bundle
  *        maps each file to the same relative path): `onnxruntime/` holds ONNX Runtime, DirectML and the C++ runtime
@@ -153,6 +154,12 @@ impl AppPaths {
         self.models_dir().join(format!("{id}.partial"))
     }
 
+    /// Where an installed model is moved before it is deleted (a removal, or a re-download replacing it), so the
+    /// model folder disappears in one rename and a delete that fails half-way never leaves a broken install.
+    pub fn model_removal_dir(&self, id: &ModelId) -> PathBuf {
+        self.models_dir().join(format!("{id}.removing"))
+    }
+
     /// Downloaded sidecar runtimes (llama-server).
     pub fn runtimes_dir(&self) -> PathBuf {
         self.data_dir.join("runtimes")
@@ -199,6 +206,10 @@ mod tests {
         assert_eq!(
             paths.model_partial_dir(&model),
             data.join("models").join("parakeet-tdt-0.6b-v3.partial")
+        );
+        assert_eq!(
+            paths.model_removal_dir(&model),
+            data.join("models").join("parakeet-tdt-0.6b-v3.removing")
         );
         assert_eq!(paths.runtimes_dir(), data.join("runtimes"));
         assert_eq!(paths.logs_dir(), data.join("logs"));

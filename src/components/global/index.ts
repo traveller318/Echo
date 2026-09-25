@@ -1,5 +1,5 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: components global barrel, reusable components, GlassSurface, EmptyState, ProgressBar, NavIcon, Page, DataList, TranscriptRow, SettingField, HotkeyInput, StatCard, take actions
+ * SOURCE OF TRUTH KEYWORDS: components global barrel, reusable components, GlassSurface, EmptyState, InlineNotice, ModelCard, ProgressBar, NavIcon, Page, DataList, TranscriptRow, SettingField, HotkeyInput, StatCard, take actions
  * WHAT:  Barrel for every reusable app component (one folder each under components/global).
  * WHY:   Routes import `@/components/global` and never reach into a folder, so components can be reorganised
  *        inside their folders freely (03 §3). Components inside global/ import each other by folder, never
@@ -34,6 +34,17 @@ export {
   type HotkeyInputProps,
   type ModifierToken,
 } from "./hotkey-input";
+export { InlineNotice, type InlineNoticeProps } from "./inline-notice";
+export {
+  engineKindLabel,
+  isDeterminate,
+  languagesSummary,
+  ModelCard,
+  modelStatusLook,
+  transferSummary,
+  type ModelCardProps,
+  type ModelStatusLook,
+} from "./model-card";
 export { NavIcon, type NavIconProps } from "./nav-icon";
 export { Page, type PageProps } from "./page";
 export { ProgressBar, progressFraction, type ProgressBarProps } from "./progress-bar";

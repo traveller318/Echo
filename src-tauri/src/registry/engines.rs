@@ -20,13 +20,14 @@
 
 use std::sync::Arc;
 
-use super::models;
+use super::{models, settings};
 use crate::{
     adapters::{asr::ParakeetOnnx, polish::RulePolisher, vad::SileroVad},
     ports::{AsrEngine, TextPolisher, VoiceActivity},
     types::{
-        AppError, AppPaths, AsrCaps, EngineCaps, EngineId, EngineKind, EngineSpec, ModelId,
-        ModelManifest, PolisherCaps, PortError, PortResult, ResourceKind, StaticStr, VadCaps,
+        AppError, AppPaths, AsrCaps, EngineCaps, EngineId, EngineKind, EngineSelection, EngineSpec,
+        ModelId, ModelManifest, PolisherCaps, PortError, PortResult, ResourceKind, SettingKey,
+        SettingValue, SettingsSnapshot, StaticStr, VadCaps,
     },
 };
 
@@ -124,6 +125,44 @@ impl EngineEntry {
     /// A polisher that needs a model: the opt-in stage `polish.llm_engine` selects (02 §8.3 stage 6).
     pub fn is_model_polisher(&self) -> bool {
         self.polisher_caps().is_some_and(|caps| caps.needs_model)
+    }
+
+    /**
+     * SOURCE OF TRUTH KEYWORDS: engine activation, activation writes, use engine, models_set_active settings, selecting setting
+     * WHAT:  The setting writes that make this engine the one in use: an ASR engine is `transcription.engine`; a
+     *        model polisher is `polish.llm_engine` plus `polish.llm_enabled` on. Empty for engines nothing chooses
+     *        (the detector, always-on polishers).
+     * WHY:   "Use this engine" is a settings change, so it goes through the settings write path (validation, events,
+     *        the live engine swap of 02 §8.1) instead of a second switch; which setting selects which kind of engine
+     *        is decided here, from its port and caps, never by matching an engine name elsewhere.
+     * WHERE: ipc/commands/models.rs (`models_set_active`); `selection` below reads the same settings back.
+     */
+    pub fn activation(&'static self) -> Vec<(SettingKey, SettingValue)> {
+        let id = SettingValue::Enum(StaticStr::new(self.id.as_str()));
+        match &self.port {
+            EnginePort::Asr { .. } => vec![(settings::keys::ASR_ENGINE, id)],
+            EnginePort::Polisher { .. } if self.is_model_polisher() => vec![
+                (settings::keys::LLM_ENGINE, id),
+                (settings::keys::LLM_ENABLED, SettingValue::Bool(true)),
+            ],
+            EnginePort::Polisher { .. } | EnginePort::Vad { .. } => Vec::new(),
+        }
+    }
+
+    /// Whether settings choose this engine and whether they choose it now (the reverse of `activation`).
+    pub fn selection(&self, snapshot: &SettingsSnapshot) -> EngineSelection {
+        let selected = match &self.port {
+            EnginePort::Asr { .. } => settings::asr_engine(snapshot),
+            EnginePort::Polisher { .. } if self.is_model_polisher() => {
+                settings::llm_polisher(snapshot)
+            }
+            EnginePort::Polisher { .. } | EnginePort::Vad { .. } => {
+                return EngineSelection::BuiltIn;
+            }
+        };
+        EngineSelection::Selectable {
+            active: selected.as_ref() == Some(&self.id),
+        }
     }
 }
 
@@ -227,6 +266,13 @@ pub fn always_on_polishers() -> impl Iterator<Item = &'static EngineEntry> {
 /// Every engine of `kind`, in registry order.
 pub fn of_kind(kind: EngineKind) -> impl Iterator<Item = &'static EngineEntry> {
     ENGINES.iter().filter(move |entry| entry.kind() == kind)
+}
+
+/// Every engine that runs a registered model, in registry order, with its manifest (the Models page's cards).
+pub fn with_models() -> impl Iterator<Item = (&'static EngineEntry, &'static ModelManifest)> {
+    ENGINES
+        .iter()
+        .filter_map(|entry| entry.manifest().map(|manifest| (entry, manifest)))
 }
 
 /// The IPC view of every engine.
@@ -542,6 +588,57 @@ pub(super) mod tests {
         assert!(SAMPLE_ENGINES[1].is_model_polisher());
         assert!(SAMPLE_ENGINES[2].is_always_on_polisher());
         assert!(SAMPLE_ENGINES[0].polisher_caps().is_none());
+    }
+
+    #[test]
+    fn activation_writes_the_setting_that_selection_reads_back() {
+        let asr = &SAMPLE_ENGINES[0];
+        let llm = &SAMPLE_ENGINES[1];
+        let rules = &SAMPLE_ENGINES[2];
+        for entry in [asr, llm] {
+            let before = settings::defaults();
+            assert_eq!(
+                entry.selection(&before),
+                EngineSelection::Selectable { active: false }
+            );
+            // Built directly: the sample ids are not registered options, so `resolve` would drop them.
+            let after = SettingsSnapshot::from_resolved(
+                before
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .filter(|(key, _)| !entry.activation().iter().any(|(set, _)| set == key))
+                    .chain(entry.activation()),
+            );
+            assert_eq!(
+                entry.selection(&after),
+                EngineSelection::Selectable { active: true },
+                "{}",
+                entry.id
+            );
+        }
+        assert!(rules.activation().is_empty());
+        assert_eq!(
+            rules.selection(&settings::defaults()),
+            EngineSelection::BuiltIn
+        );
+        let parakeet = find(&PARAKEET_TDT_V3).unwrap();
+        assert_eq!(
+            parakeet.selection(&settings::defaults()),
+            EngineSelection::Selectable { active: true }
+        );
+        assert_eq!(
+            find(&SILERO_VAD).unwrap().selection(&settings::defaults()),
+            EngineSelection::BuiltIn
+        );
+    }
+
+    #[test]
+    fn models_page_lists_every_engine_with_a_registered_model() {
+        let listed: Vec<&EngineId> = with_models().map(|(entry, _)| &entry.id).collect();
+        assert_eq!(listed, [&PARAKEET_TDT_V3, &SILERO_VAD]);
+        for (entry, manifest) in with_models() {
+            assert_eq!(entry.model_id.as_ref(), Some(&manifest.id));
+        }
     }
 
     #[test]

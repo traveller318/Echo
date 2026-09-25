@@ -22,7 +22,7 @@ mod worker;
 #[cfg(test)]
 mod tests;
 
-pub use engine_check::{EngineCheck, segment_policy, usable_engine};
+pub use engine_check::{EngineCheck, request_load, segment_policy, usable_engine};
 pub use plan::{effective_accelerator, effective_language, load_request};
 pub use switch::reload_on_change;
 pub use take::AsrTake;

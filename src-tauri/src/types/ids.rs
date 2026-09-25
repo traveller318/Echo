@@ -74,6 +74,46 @@ static_str_id! {
     ModelId
 }
 
+/// Longest registry id accepted over IPC, in bytes.
+pub const REGISTRY_ID_MAX_LEN: usize = 64;
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: is_registry_id, registry id format, kebab-case id, engine id input schema, model id input schema
+ * WHAT:  Whether `id` has the registry id shape (03 §3): lowercase ASCII letters, digits, `-` and `.`, starting with a
+ *        letter, no empty part (`--`) and no trailing separator, at most REGISTRY_ID_MAX_LEN bytes.
+ * WHY:   Versions need dots (`parakeet-tdt-0.6b-v3`), and a model id becomes a folder name under `models/`, so a
+ *        path separator or `..` must never get through. One rule serves the command inputs (garde) and the
+ *        registry tests, so an id the registry accepts is always one a command accepts.
+ * WHERE: EngineId / ModelId `is_well_formed` (types/model.rs inputs); registry tests (every registered id).
+ */
+pub fn is_registry_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= REGISTRY_ID_MAX_LEN
+        && id.starts_with(|character: char| character.is_ascii_lowercase())
+        && !id.ends_with(['-', '.'])
+        && !id.contains("--")
+        && !id.contains("..")
+        && id.chars().all(|character| {
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || matches!(character, '-' | '.')
+        })
+}
+
+impl EngineId {
+    /// Whether the id could be a registry engine id (`is_registry_id`).
+    pub fn is_well_formed(&self) -> bool {
+        is_registry_id(self.as_str())
+    }
+}
+
+impl ModelId {
+    /// Whether the id could be a registry model id (`is_registry_id`).
+    pub fn is_well_formed(&self) -> bool {
+        is_registry_id(self.as_str())
+    }
+}
+
 static_str_id! {
     /// Registry key of a setting, `section.snake_key`, e.g. `output.auto_paste`.
     SettingKey

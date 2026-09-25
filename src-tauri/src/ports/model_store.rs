@@ -19,14 +19,18 @@ use crate::types::{BoxFuture, ModelManifest, ModelProgress, ModelStatus, PortRes
 
 /// Local model files.
 pub trait ModelStore: Send + Sync {
-    /// Whether the model is installed, partly downloaded or absent (a cheap size check, no hashing).
+    /// Whether the model is installed, partly downloaded, damaged or absent (a cheap size check, no hashing): an
+    /// install whose files all have the manifest's sizes is `Installed`, a download in progress `Partial`, an install
+    /// with a missing or wrongly sized file `Corrupt`. A bundled model is always `Installed`.
     fn status(&self, manifest: &ModelManifest) -> PortResult<ModelStatus>;
 
     /// The folder holding the installed model, or None when it is not installed.
     fn locate(&self, manifest: &ModelManifest) -> PortResult<Option<PathBuf>>;
 
-    /// Downloads every file, resuming a partial download, verifies each hash and installs atomically.
-    /// Fails with `Network` when a host cannot be reached and `ModelCorrupt` when a hash does not match.
+    /// Downloads every file, resuming a partial download, verifies each hash and installs atomically (replacing a
+    /// damaged install). Fails with `Network` when a host cannot be reached or the connection drops (what arrived is
+    /// kept for the next call), `PermissionDenied { network }` when offline mode is switched on, and `ModelCorrupt`
+    /// when a hash does not match (that file is discarded).
     fn download<'a>(
         &'a self,
         manifest: &'a ModelManifest,
@@ -34,7 +38,8 @@ pub trait ModelStore: Send + Sync {
     ) -> BoxFuture<'a, PortResult<()>>;
 
     /// Copies the model from `source` (a folder the user picked), verifies it and installs it; works offline.
-    /// Fails with `NotFound { model }` when a file is missing from `source`.
+    /// Fails with `NotFound { model }` when a file is missing from `source` and `ModelCorrupt` when a file there has
+    /// another size or hash (a different model or version).
     fn import<'a>(
         &'a self,
         manifest: &'a ModelManifest,

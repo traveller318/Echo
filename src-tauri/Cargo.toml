@@ -33,17 +33,27 @@ hound = "=3.5.1"
 # ONNX Runtime API 24 = ONNX Runtime 1.24.x; `load-dynamic` links nothing and downloads nothing: the bundled DLL is loaded by absolute path (05 A5).
 ort = { version = "=2.0.0-rc.12", default-features = false, features = ["api-24", "load-dynamic", "std"] }
 parking_lot = "=0.12.5"
+# The one HTTP client (adapters/net, 02 §10): rustls with no bundled provider, so the `ring` provider below is the only
+# crypto (aws-lc-rs needs cmake + NASM, 05 W24); certificates are checked by Windows (rustls-platform-verifier).
+# `system-proxy` honours the Windows proxy settings; no HTTP/2, cookies or decompression are needed for file downloads.
+reqwest = { version = "=0.13.5", default-features = false, features = ["rustls-no-provider", "system-proxy"] }
 rtrb = "=0.4.0"
 rubato = "=5.0.0"
 # `bundled` compiles SQLite (with FTS5) through MSVC, no system SQLite; `backup` is the online backup API used for the
 # pre-migration copy; `cache` gives prepared-statement caching. Default features pull a wasm backend, so they are off.
 rusqlite = { version = "=0.40.2", default-features = false, features = ["backup", "bundled", "cache"] }
 rusqlite_migration = "=2.6.0"
+# Installed as the process-wide rustls provider before the HTTP client is built (reqwest panics without one, 05 W41).
+rustls = { version = "=0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
+# SHA-256 of every model file while it downloads, copies or is verified (02 §8.2); SHA-NI is used when the CPU has it.
+sha2 = "=0.10.9"
 specta = { version = "=2.0.0-rc.25", features = ["derive"] }
 specta-typescript = "=0.0.12"
 tauri = { version = "=2.11.6", features = [] }
+# The folder picker behind "Import from folder"; wired only in app/plugins.rs, used only by its adapter.
+tauri-plugin-dialog = "=2.7.3"
 # WinRT toasts; wired only in app/plugins.rs, used only by its adapter.
 tauri-plugin-notification = "=2.4.0"
 tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
@@ -81,8 +91,6 @@ windows = { version = "=0.61.3", features = [
 windows-core = "=0.61.2"
 
 [dev-dependencies]
-# Hashes the bundled resources against their pinned SHA-256 (the model store adds it as a normal dependency later).
-sha2 = "=0.10.9"
 # `test` adds the mock runtime used to call commands end to end (dev builds only; resolver 3 keeps it out of the app).
 tauri = { version = "=2.11.6", features = ["test"] }
 

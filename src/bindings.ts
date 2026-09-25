@@ -38,6 +38,32 @@ export const commands = {
 	metricsSummary: (input: MetricsSummaryInput) => typedError<MetricsSummary, AppError>(__TAURI_INVOKE("metrics_summary", { input })),
 	/**  Words and completed takes per local day for the last `days` days, today included, oldest first. */
 	metricsActivity: (input: MetricsActivityInput) => typedError<ActivityDay[], AppError>(__TAURI_INVOKE("metrics_activity", { input })),
+	/**
+	 *  Every engine that runs a model, with its status, selection, what it is doing and any running transfer,
+	 *  plus whether downloads may run now.
+	 */
+	modelsList: () => typedError<ModelsView, AppError>(__TAURI_INVOKE("models_list")),
+	/**
+	 *  Downloads a model (resuming an earlier partial download), verifies and installs it. Progress arrives as
+	 *  ModelProgress events; `cancelled` when `models_cancel_download` stopped it.
+	 */
+	modelsDownload: (input: ModelInput) => typedError<ModelTransferOutcome, AppError>(__TAURI_INVOKE("models_download", { input })),
+	/**  Stops the model's running download, import or check; the partial download is kept. */
+	modelsCancelDownload: (input: ModelInput) => typedError<null, AppError>(__TAURI_INVOKE("models_cancel_download", { input })),
+	/**
+	 *  Asks for a folder, then copies, verifies and installs the model from it (works offline); `cancelled` when
+	 *  the picker was closed.
+	 */
+	modelsImport: (input: ModelInput) => typedError<ModelTransferOutcome, AppError>(__TAURI_INVOKE("models_import", { input })),
+	/**  Checks every file of the model against its SHA-256; `ModelCorrupt` when one does not match. */
+	modelsVerify: (input: ModelInput) => typedError<ModelTransferOutcome, AppError>(__TAURI_INVOKE("models_verify", { input })),
+	/**  Deletes a downloaded model and its partial download. */
+	modelsRemove: (input: ModelInput) => typedError<null, AppError>(__TAURI_INVOKE("models_remove", { input })),
+	/**
+	 *  Makes an engine the one in use (its model must be installed); the new engine warms up while the old one
+	 *  keeps serving, and a take in progress finishes on the old one.
+	 */
+	modelsSetActive: (input: EngineInput) => typedError<null, AppError>(__TAURI_INVOKE("models_set_active", { input })),
 	/**  Where the pill's buttons are now, in the page's CSS pixels; an empty list when it shows none. */
 	pillSetHitAreas: (input: PillHitAreas) => typedError<null, AppError>(__TAURI_INVOKE("pill_set_hit_areas", { input })),
 	/**  The pill finished its exit animation. */
@@ -73,6 +99,7 @@ export const events = {
 	historyChanged: makeEvent<HistoryChanged>("HistoryChanged"),
 	metricsChanged: makeEvent<MetricsChanged>("MetricsChanged"),
 	modelProgress: makeEvent<ModelProgress>("ModelProgress"),
+	modelsChanged: makeEvent<ModelsChanged>("ModelsChanged"),
 	navigationRequested: makeEvent<NavigationRequested>("NavigationRequested"),
 	sessionStateChanged: makeEvent<SessionStateChanged>("SessionStateChanged"),
 	settingsChanged: makeEvent<SettingsChanged>("SettingsChanged"),
@@ -239,8 +266,28 @@ export type EngineCaps = {
 /**  Registry id of an engine entry (ASR, polisher or VAD), kebab-case, e.g. `parakeet-tdt-0.6b-v3`. */
 export type EngineId = string;
 
+export type EngineInput = {
+	engine_id: EngineId,
+};
+
 /**  What an engine registry entry builds. */
 export type EngineKind = "asr" | "polisher" | "vad";
+
+/**  What a selected engine is doing now. */
+export type EngineRuntime = 
+/**  Its model is loading and warming up. */
+{ kind: "loading" } | 
+/**  Loaded and warm; `accelerator` when the engine runs on one (speech engines). */
+{ kind: "ready"; accelerator: Accelerator | null } | 
+/**  It could not be loaded; takes fail with `error` until it is fixed (e.g. `ModelCorrupt`). */
+{ kind: "failed"; error: AppError };
+
+/**  How an engine comes to be used. */
+export type EngineSelection = 
+/**  Used on every take whenever it is installed (a bundled detector); there is nothing to choose. */
+{ kind: "built_in" } | 
+/**  Chosen by a setting (`models_set_active` writes it); `active` when the settings select it now. */
+{ kind: "selectable"; active: boolean };
 
 /**  What the UI (Models page, Settings options) knows about a registry engine entry. */
 export type EngineSpec = {
@@ -485,6 +532,18 @@ export type MicVerdict =
 /**  So loud that speech clips. */
 "too_loud";
 
+/**  One card of the Models page: an engine that runs a model, and everything the card shows or offers. */
+export type ModelEntry = {
+	engine: EngineSpec,
+	model: ModelManifest,
+	status: ModelStatus,
+	selection: EngineSelection,
+	/**  What the engine is doing, when the settings select it and it has been asked to load. */
+	runtime: EngineRuntime | null,
+	/**  The download, import or check running for this model now, with its latest progress. */
+	transfer: ModelProgress | null,
+};
+
 /**  One file of a model. */
 export type ModelFile = {
 	/**  File name inside the model folder, e.g. `encoder-model.int8.onnx`; never a path with separators. */
@@ -497,6 +556,21 @@ export type ModelFile = {
 
 /**  Registry id of a model manifest, kebab-case. */
 export type ModelId = string;
+
+/**
+ * 
+ *  * SOURCE OF TRUTH KEYWORDS: ModelInput, EngineInput, models command input, model id input, engine id input
+ *  * WHAT:  The input of the models commands that act on one model (download, cancel, import, verify, remove) and of
+ *  *        `models_set_active` (one engine).
+ *  * WHY:   A struct, not a bare id, so a command can grow options without changing its call sites. The declared schema
+ *  *        (garde) refuses an id that could not be a registry id before any lookup; whether it is registered is the
+ *  *        registry's answer (`NotFound { model | engine }`).
+ *  * WHERE: ipc/commands/models.rs; built in the UI by the Models page actions.
+ *  
+ */
+export type ModelInput = {
+	model_id: ModelId,
+};
 
 /**  Everything needed to fetch, verify and credit a model. */
 export type ModelManifest = {
@@ -516,6 +590,8 @@ export type ModelManifest = {
 export type ModelPhase = 
 /**  Bytes are arriving from the network or being copied from the chosen folder. */
 "transferring" | 
+/**  The connection dropped; the download resumes from where it stopped after a short wait. */
+"waiting" | 
 /**  SHA-256 of every file is being checked. */
 "verifying" | 
 /**  Verified files are being moved into `models/<id>/`. */
@@ -523,7 +599,10 @@ export type ModelPhase =
 /**  The model is installed and usable. */
 "ready" | "cancelled" | "failed";
 
-/**  Progress of a model download or import, at most 10 Hz. */
+/**
+ *  Progress of a model download, import or check, at most 10 Hz; a terminal phase (ready, cancelled, failed) ends
+ *  the stream.
+ */
 export type ModelProgress = {
 	model_id: ModelId,
 	bytes: ByteCount,
@@ -536,7 +615,33 @@ export type ModelStatus = { kind: "not_installed" } |
 /**  An interrupted download left `bytes` in the `.partial` folder; the next download resumes from there. */
 { kind: "partial"; bytes: ByteCount } | 
 /**  Every file is in place with the manifest's size (hashes are checked on demand, 02 §8.2). */
-{ kind: "installed" };
+{ kind: "installed" } | 
+/**
+ *  The installed files do not match the manifest: a size differs or a file is gone (the startup check), or a
+ *  hash check failed since the model was installed. Downloading again replaces it.
+ */
+{ kind: "corrupt" };
+
+/**  How a download or import ended when it did not fail. */
+export type ModelTransferOutcome = 
+/**  The model is installed and verified. */
+"completed" | 
+/**  The user stopped it (or closed the folder picker); a partial download is kept for the next try. */
+"cancelled";
+
+/**
+ *  What the Models page shows changed: a model was installed, removed or found damaged, or the speech engine
+ *  started, finished or failed loading; `models_list` should refetch.
+ */
+export type ModelsChanged = Record<string, never>;
+
+/**  Everything the Models page renders. */
+export type ModelsView = {
+	/**  One entry per registry engine that runs a model, in registry order. */
+	entries: ModelEntry[],
+	/**  Whether downloads may run now (offline mode denies them); importing from a folder works either way. */
+	network: PermissionState,
+};
 
 /**  A sidebar icon, serialized as its lucide-react name (e.g. `layout-dashboard`). */
 export type NavIcon = "layout-dashboard" | "history" | "boxes" | "settings";

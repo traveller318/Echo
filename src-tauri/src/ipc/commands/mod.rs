@@ -7,7 +7,8 @@
  *        its group plus one path here.
  * WHERE: `catalog()` is read by app/bindings.rs; groups are filled step by step (session reads the take and sends
  *        the pill's stop and retries a stored take; history lists, reads, copies, deletes and pastes the last take;
- *        metrics computes the dashboard's summary and activity; models joins with its layer; audio lists devices and runs the
+ *        metrics computes the dashboard's summary and activity; models lists, downloads, cancels, imports,
+ *        verifies, removes and activates models; audio lists devices and runs the
  *        microphone check; system holds appearance, the logs / privacy openers and the page opener; pill takes the
  *        pill page's button areas and exit).
  */
@@ -15,6 +16,7 @@
 pub mod audio;
 pub mod history;
 pub mod metrics;
+pub mod models;
 pub mod pill;
 pub mod session;
 pub mod settings;
@@ -38,6 +40,13 @@ pub fn catalog<R: Runtime>() -> Commands<R> {
         history::history_paste_last,
         metrics::metrics_summary,
         metrics::metrics_activity,
+        models::models_list,
+        models::models_download,
+        models::models_cancel_download,
+        models::models_import,
+        models::models_verify,
+        models::models_remove,
+        models::models_set_active,
         pill::pill_set_hit_areas,
         pill::pill_exited,
         settings::registry_get,

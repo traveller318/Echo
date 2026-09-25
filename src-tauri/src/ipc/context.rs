@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: CommandCtx, CommandDeps, command context, managed state, handler dependencies, SharedSettings, AsrWorker, SessionEngines, RetryDeps, Delivery, SessionHandle, PillPresenter, RetentionHandle, Updater, AppPaths, Db, event sink
+ * SOURCE OF TRUTH KEYWORDS: CommandCtx, CommandDeps, command context, managed state, handler dependencies, SharedSettings, AsrWorker, SessionEngines, RetryDeps, Delivery, SessionHandle, PillPresenter, RetentionHandle, ModelManager, Updater, AppPaths, Db, event sink
  * WHAT:  CommandCtx: everything a command handler and the factory pipeline may use, managed once by Tauri and
  *        passed to every handler as `&CommandCtx`; CommandDeps: the named parts it is built from.
  * WHY:   Handlers take their dependencies from one place instead of Tauri state lookups, so they stay plain async
@@ -7,7 +7,7 @@
  *        (`Arc<dyn …>`, never an adapter, 02 §3.2), the services' `Db` handle, the resolved AppPaths (paths are
  *        resolved only in app/, 05 W23), shared handles (settings, the ASR worker that owns the speech engine, the
  *        delivery that owns the paste rules, the session actor's handle, the take engines the actor shares with
- *        retry) and the factory's own reentrancy locks; the
+ *        retry, the model manager) and the factory's own reentrancy locks; the
  *        registry needs no handle because it is compiled-in `const` data. Events leave through the
  *        `EventSink<AppEvent>` port, so no handler imports Tauri. Built from a named-field struct so a new
  *        dependency is one field here plus one line where it is wired. The session actor is reached through its
@@ -24,6 +24,7 @@ use crate::{
     pipeline::{
         asr::AsrWorker,
         delivery::Delivery,
+        models::ModelManager,
         pill::PillPresenter,
         retention::RetentionHandle,
         retry::RetryDeps,
@@ -71,6 +72,8 @@ pub struct CommandDeps {
     pub main_window: Arc<dyn MainWindow>,
     /// Wakes the retention sweeper (a storage setting changed, or a later "clean up now" action).
     pub retention: RetentionHandle,
+    /// Downloads, imports, checks, removes and activates models (the Models page, onboarding).
+    pub models: ModelManager,
     /// App updates: its caps decide whether update settings are offered (this build: no update source).
     pub updater: Arc<dyn Updater>,
     /// Every data and resource location, resolved once by app/bootstrap.
@@ -99,6 +102,7 @@ pub struct CommandCtx {
     pill: PillPresenter,
     main_window: Arc<dyn MainWindow>,
     retention: RetentionHandle,
+    models: ModelManager,
     updater: Arc<dyn Updater>,
     paths: AppPaths,
     db: Db,
@@ -125,6 +129,7 @@ impl CommandCtx {
             pill,
             main_window,
             retention,
+            models,
             updater,
             paths,
             db,
@@ -147,6 +152,7 @@ impl CommandCtx {
             pill,
             main_window,
             retention,
+            models,
             updater,
             paths,
             db,
@@ -251,6 +257,11 @@ impl CommandCtx {
         &self.retention
     }
 
+    /// The model manager.
+    pub fn models(&self) -> &ModelManager {
+        &self.models
+    }
+
     /// App updates.
     pub fn updater(&self) -> &dyn Updater {
         self.updater.as_ref()
@@ -284,7 +295,8 @@ impl CommandCtx {
  *        English FakeAsrEngines (nothing loaded until a test asks), a hotkey fake, a focused Notepad target, a
  *        recording notifier, a delivery over a clipboard fake and a pasting inserter fake, a session handle whose
  *        actor (fake detector, registry polishers) is built but not running, a pill presenter over an overlay fake,
- *        a main-window fake, a retention handle whose sweeper is built but not running, a disabled updater fake, AppPaths under the system temp folder
+ *        a main-window fake, a retention handle whose sweeper is built but not running, a model manager over a
+ *        model store fake (nothing installed) and a folder picker fake, a disabled updater fake, AppPaths under the system temp folder
  *        (never touched: services take the in-memory database), a fresh in-memory database with the real migrations
  *        and a RecordingSink for events, plus handles to the sink and the fakes; `ctx()` is the all-defaults one.
  * WHY:   Factory, command and app tests all need the same context without a Tauri app or a disk; keeping the
@@ -300,6 +312,7 @@ pub mod testing {
         pipeline::{
             asr::{AsrWorker, AsrWorkerConfig},
             delivery::{Delivery, DeliveryPorts},
+            models::{ModelDeps, ModelManager, ModelPolicy},
             pill::{PillPresenter, PillTiming},
             retention::{RetentionDeps, RetentionHandle, RetentionSweeper},
             session::{SessionActor, SessionConfig, SessionEngines, SessionHandle},
@@ -308,11 +321,11 @@ pub mod testing {
         ports::{
             AsrEngine,
             fakes::{
-                FakeAsrEngine, FakeAudioCapture, FakeClipboard, FakeForegroundApp,
-                FakeHotkeyService, FakeMainWindow, FakeNotifier, FakeOverlayWindow,
-                FakePrivacyConsent, FakeSoundPlayer, FakeSystemAppearance, FakeSystemLauncher,
-                FakeTextInserter, FakeUpdater, FakeVoiceActivity, FakeWorkerScheduler,
-                RecordingSink,
+                FakeAsrEngine, FakeAudioCapture, FakeClipboard, FakeFolderPicker,
+                FakeForegroundApp, FakeHotkeyService, FakeMainWindow, FakeModelStore, FakeNotifier,
+                FakeOverlayWindow, FakePrivacyConsent, FakeSoundPlayer, FakeSystemAppearance,
+                FakeSystemLauncher, FakeTextInserter, FakeUpdater, FakeVoiceActivity,
+                FakeWorkerScheduler, RecordingSink,
             },
         },
         registry::{self, engines::BuildCtx},
@@ -348,9 +361,13 @@ pub mod testing {
         pub main_window: Arc<FakeMainWindow>,
         /// The session actor's sound cues.
         pub sounds: Arc<FakeSoundPlayer>,
+        /// The model manager's store (nothing installed) and folder picker (closed without a choice).
+        pub model_store: Arc<FakeModelStore>,
+        pub folder_picker: Arc<FakeFolderPicker>,
     }
 
     pub fn harness(settings: SettingsSnapshot, consent: FakePrivacyConsent) -> Harness {
+        let consent = Arc::new(consent);
         let events = Arc::new(RecordingSink::default());
         let appearance = Arc::new(FakeSystemAppearance::mica());
         let launcher = Arc::new(FakeSystemLauncher::default());
@@ -424,9 +441,26 @@ pub mod testing {
             db: db.clone(),
             events: Arc::clone(&events) as _,
         });
+        let model_store = Arc::new(FakeModelStore::new(paths.models_dir()));
+        let folder_picker = Arc::new(FakeFolderPicker::default());
+        let models = ModelManager::new(
+            ModelDeps {
+                store: Arc::clone(&model_store) as _,
+                picker: Arc::clone(&folder_picker) as _,
+                asr: asr.clone(),
+                settings: settings.clone(),
+                consent: Arc::clone(&consent) as _,
+                paths: paths.clone(),
+                events: Arc::clone(&events) as _,
+            },
+            ModelPolicy {
+                retry_delays: &[],
+                ..ModelPolicy::DEFAULT
+            },
+        );
         let ctx = CommandCtx::new(CommandDeps {
             settings,
-            consent: Arc::new(consent),
+            consent,
             appearance: Arc::clone(&appearance) as _,
             launcher: Arc::clone(&launcher) as _,
             audio: Arc::clone(&audio) as _,
@@ -441,6 +475,7 @@ pub mod testing {
             pill,
             main_window: Arc::clone(&main_window) as _,
             retention,
+            models,
             updater: Arc::new(FakeUpdater::disabled()),
             paths,
             db,
@@ -463,6 +498,8 @@ pub mod testing {
             overlay,
             main_window,
             sounds,
+            model_store,
+            folder_picker,
         }
     }
 

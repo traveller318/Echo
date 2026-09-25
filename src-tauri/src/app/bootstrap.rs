@@ -1,9 +1,12 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: bootstrap, composition root, startup sequence, ASR worker, session actor, pill presenter, event fan-out, start_speech_engine, prepare_session, stop_session, command context, startup recovery, retention sweeper, panic hook, sound player, audio device watch, day watch
+ * SOURCE OF TRUTH KEYWORDS: bootstrap, composition root, startup sequence, ASR worker, session actor, pill presenter, event fan-out, start_speech_engine, prepare_session, stop_session, command context, startup recovery, retention sweeper, panic hook, sound player, audio device watch, day watch, model manager, HTTP client
  * WHAT:  `start`: the startup sequence that runs before any window exists: resolve AppPaths from the Tauri path
  *        API, start local logging, open and migrate the database, settle the takes a crash left unfinished
  *        (pipeline/recovery.rs), resolve the stored settings over the registry defaults, start the appearance
- *        watcher and the microphone hot-plug watch (DeviceListRelay), start the (empty) ASR worker, start the sound
+ *        watcher and the microphone hot-plug watch (DeviceListRelay), start the (empty) ASR worker (its readiness
+ *        relayed to the Models page and its load failures to the ModelWatch), build the allowlisted HTTP client
+ *        (network gate from the registry permission) and the model manager over HttpModelStore and the dialog
+ *        plugin's folder picker, start the sound
  *        player, spawn the (idle) session actor over the same ports (with the sound cues) and point the
  *        panic hook at it (app/panics.rs), spawn the retention sweeper (first sweep now, then daily) and the
  *        dashboard's day watch (MetricsChanged when the local day changes), start the
@@ -53,10 +56,12 @@ use crate::{
         audio::CpalWasapiCapture,
         clipboard::ArboardClipboard,
         consent::Win32PrivacyConsent,
+        dialog::TauriFolderPicker,
         foreground::Win32ForegroundApp,
         hotkey::LowLevelKeyboardHotkeys,
         inserter::Win32SendInputInserter,
         launcher::Win32ShellLauncher,
+        net::{HttpClient, HttpModelStore},
         notifier::TauriToastNotifier,
         scheduler::Win32WorkerScheduler,
         sound::Win32SoundPlayer,
@@ -71,6 +76,7 @@ use crate::{
         delivery::{Delivery, DeliveryPorts},
         fan_out::FanOut,
         metrics::DayWatch,
+        models::{ModelDeps, ModelManager, ModelPolicy, ModelWatch, ReadinessRelay},
         pill::{PillPresenter, PillTiming},
         recovery,
         retention::{RetentionDeps, RetentionHandle},
@@ -83,7 +89,7 @@ use crate::{
     },
     registry::{self, engines::BuildCtx},
     services::{self, Db},
-    types::{AppEvent, AppPaths, PortError, RecoveryReport, SharedSettings},
+    types::{AppEvent, AppPaths, Permission, PortError, RecoveryReport, SharedSettings},
 };
 
 /// Resolves paths, starts logging, opens the database, settles the takes a crash left unfinished and manages the
@@ -130,14 +136,36 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<RecoveryReport, Box<dyn Error>>
             "Windows may slow Echo down while it works in the background"
         );
     }
+    // The worker reports readiness to the Models page and its load failures to the model check (ModelWatch).
+    let (readiness, load_failures) = ReadinessRelay::new(Arc::clone(&events));
     let asr = AsrWorker::spawn(AsrWorkerConfig::registry(
         BuildCtx {
             paths: paths.clone(),
         },
         Arc::clone(&scheduler),
-        None,
+        Some(Arc::new(readiness)),
     ))
     .map_err(startup_failure)?;
+    let http = HttpClient::new(
+        registry::network::download_allowlist(),
+        registry::network::HTTP_POLICY,
+        registry::permissions::gate(Permission::Network, settings.clone(), Arc::clone(&consent)),
+    )
+    .map_err(startup_failure)?;
+    let models = ModelManager::new(
+        ModelDeps {
+            store: Arc::new(HttpModelStore::new(http, paths.clone())),
+            picker: Arc::new(TauriFolderPicker::new(app.handle().clone(), MAIN_WINDOW)),
+            asr: asr.clone(),
+            settings: settings.clone(),
+            consent: Arc::clone(&consent),
+            paths: paths.clone(),
+            events: Arc::clone(&events),
+        },
+        ModelPolicy::DEFAULT,
+    );
+    // Hashes a model whose engine failed to load (02 §8.2); runs until the ASR worker shuts down.
+    tauri::async_runtime::spawn(ModelWatch::new(models.clone(), load_failures).run());
     let notifier: Arc<dyn Notifier> = Arc::new(TauriToastNotifier::new(app.handle().clone()));
     let delivery = Delivery::new(DeliveryPorts {
         clipboard: Arc::new(ArboardClipboard::new()),
@@ -202,6 +230,7 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<RecoveryReport, Box<dyn Error>>
         pill,
         main_window: Arc::new(TauriMainWindow::new(app.handle().clone(), MAIN_WINDOW)),
         retention,
+        models,
         updater: Arc::new(DisabledUpdater::new()),
         paths,
         db,

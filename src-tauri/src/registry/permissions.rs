@@ -1,7 +1,8 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: permission registry, PERMISSIONS, PermissionCtx, permission check, offline mode denies network, microphone consent, preflight
+ * SOURCE OF TRUTH KEYWORDS: permission registry, PERMISSIONS, PermissionCtx, permission check, permission gate, offline mode denies network, microphone consent, preflight
  * WHAT:  One entry per Permission with the fn that decides whether it holds right now, the context those fns
- *        read (PermissionCtx: resolved settings and the privacy consent port), and `check` to run one.
+ *        read (PermissionCtx: resolved settings and the privacy consent port), `check` to run one and `gate` to
+ *        hand the same check to an adapter that must ask again while it works.
  * WHY:   The command factory's preflight (02 §4.1 step 3) and onboarding ask the registry instead of each
  *        command re-checking (root CLAUDE.md §3). Network is denied unless offline mode is explicitly off, so a
  *        missing value fails closed (privacy first, 02 §10). The microphone asks Windows privacy consent through
@@ -9,13 +10,19 @@
  *        clipboard (05 W4) and an elevated paste target (05 W2) are runtime outcomes handled by delivery, not
  *        permissions, so their checks grant. A failed consent read is returned, never guessed; the caller logs
  *        the detail and decides. PermissionCtx lives here because it holds a port handle (types/ cannot).
- * WHERE: `check` is called by ipc/factory.rs (preflight) and onboarding; tests below.
+ * WHERE: `check` is called by ipc/factory.rs (preflight), onboarding and pipeline/models (`models_list`'s network
+ *        state); `gate` by app/bootstrap for the HTTP client (adapters/net); tests below.
  */
+
+use std::sync::Arc;
 
 use super::settings::keys;
 use crate::{
     ports::PrivacyConsent,
-    types::{AppError, Permission, PermissionState, PortError, PortResult, SettingsSnapshot},
+    types::{
+        AppError, Permission, PermissionGate, PermissionState, PortError, PortResult,
+        SettingsSnapshot, SharedSettings,
+    },
 };
 
 /// What a permission check may read.
@@ -62,6 +69,32 @@ pub fn check(permission: Permission, ctx: &PermissionCtx<'_>) -> PortResult<Perm
                 .with_detail(format!("no registry entry for permission {permission:?}"))
         })?;
     (entry.check)(ctx)
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: permission gate, live permission check, offline mode mid-download, gate builder
+ * WHAT:  A PermissionGate that runs `permission`'s registry check over the settings in effect at each call.
+ * WHY:   The factory checks once before a command; a long transfer must stop the moment offline mode is switched
+ *        on, with the same answer the factory would give, without the adapter knowing any setting.
+ * WHERE: app/bootstrap (the HTTP client's network gate).
+ */
+pub fn gate(
+    permission: Permission,
+    settings: SharedSettings,
+    consent: Arc<dyn PrivacyConsent>,
+) -> PermissionGate {
+    PermissionGate::new(
+        permission,
+        Arc::new(move || {
+            check(
+                permission,
+                &PermissionCtx {
+                    settings: &settings.current(),
+                    consent: consent.as_ref(),
+                },
+            )
+        }),
+    )
 }
 
 fn microphone(ctx: &PermissionCtx<'_>) -> PortResult<PermissionState> {
@@ -164,6 +197,27 @@ mod tests {
         assert_eq!(
             failed.map_err(|error| error.into_app_error()),
             Err(AppError::AudioDevice)
+        );
+    }
+
+    #[test]
+    fn a_gate_follows_the_live_settings() {
+        let live = SharedSettings::new(settings::defaults());
+        let network = gate(
+            Permission::Network,
+            live.clone(),
+            Arc::new(FakePrivacyConsent::granted()),
+        );
+        assert!(network.require().is_ok());
+        live.replace(settings::resolve([(
+            settings::keys::OFFLINE_MODE,
+            SettingValue::Bool(true),
+        )]));
+        assert_eq!(
+            network.require().map_err(PortError::into_app_error),
+            Err(AppError::PermissionDenied {
+                permission: Permission::Network
+            })
         );
     }
 

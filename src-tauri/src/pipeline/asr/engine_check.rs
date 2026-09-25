@@ -50,8 +50,9 @@ pub fn usable_engine(
     }
 }
 
-/// Asks the ASR worker to load the engine the settings select; returns its id at once.
-fn request_load(
+/// Asks the ASR worker to load the engine the settings select; returns its id at once. Also used by the model
+/// manager after the selected engine's model is installed or removed.
+pub fn request_load(
     asr: &AsrWorker,
     settings: &SettingsSnapshot,
     paths: &AppPaths,
