@@ -15,8 +15,7 @@
  *        keep the audio); a load that cannot even be requested (no ASR engine selected) fails the take. The
  *        target is read before the pill shows (05 W3); an unreadable foreground only means the text is copied.
  *        A pinned microphone that is gone falls back to the Windows default (05 W12: the next take uses the new
- *        default) instead of failing the take. Segments are cut no longer than the engine accepts
- *        (SegmentPolicy::within_engine_limit), from the engine's registry caps.
+ *        default) instead of failing the take. Segments are cut by `asr::segment_policy` (the engine's limit).
  * WHERE: Spawned by the runner (runner.rs) for SessionEffect::Arm; its ArmOutcome comes back as WorkerReply::Arm.
  */
 
@@ -25,16 +24,16 @@ use std::sync::Arc;
 use super::inbox::{Outbox, TakeEvents};
 use crate::{
     pipeline::{
-        asr::{self, AsrTake, AsrWorker},
+        asr::{self, AsrTake, AsrWorker, EngineCheck},
         capture::{Capture, CaptureConfig, Segmentation},
     },
     ports::{AudioCapture, EventSink, ForegroundApp, VoiceActivity, WorkerScheduler},
     registry,
     services::{self, Db},
     types::{
-        AppError, AppEvent, AppPaths, AppTarget, AsrReadiness, AudioDeviceId, EngineId,
-        HistoryChangeReason, HistoryChanged, ModelId, NewTranscript, PortError, PortResult,
-        ResourceKind, SegmentPolicy, SettingsSnapshot, TranscriptId, TranscriptStatus, UnixMs,
+        AppError, AppEvent, AppPaths, AppTarget, AudioDeviceId, EngineId, HistoryChangeReason,
+        HistoryChanged, ModelId, NewTranscript, PortError, PortResult, ResourceKind, SegmentPolicy,
+        SettingsSnapshot, TranscriptId, TranscriptStatus, UnixMs,
     },
 };
 
@@ -108,7 +107,7 @@ pub(super) fn arm(mut request: ArmRequest) -> ArmOutcome {
         );
         None
     });
-    let engine = match speech_engine(&request.asr, &request.settings, &request.paths) {
+    let engine = match asr::usable_engine(&request.asr, &request.settings, &request.paths) {
         Ok(EngineCheck::Usable(engine)) => engine,
         Ok(EngineCheck::ModelMissing(model_id)) => {
             return ArmOutcome::ModelMissing { take, model_id };
@@ -152,7 +151,7 @@ pub(super) fn arm(mut request: ArmRequest) -> ArmOutcome {
     );
     let opener = Opener {
         request: &request,
-        policy: segment_policy(&engine),
+        policy: asr::segment_policy(&engine),
         asr_take: &asr_take,
         sink: &sink,
     };
@@ -169,65 +168,6 @@ pub(super) fn arm(mut request: ArmRequest) -> ArmOutcome {
         // The ASR take is dropped with the outcome, which releases it on the worker.
         Err(error) => failed(error, true),
     }
-}
-
-/// What the speech engine check found.
-enum EngineCheck {
-    /// Takes can start: this engine is ready or loading (segments wait for the load).
-    Usable(EngineId),
-    /// The selected engine's model is not installed.
-    ModelMissing(ModelId),
-}
-
-/**
- * SOURCE OF TRUTH KEYWORDS: speech engine check, readiness model check, reload failed engine, ModelMissing reply
- * WHAT:  Decides from the ASR worker's readiness whether a take can start, and on which engine.
- * WHY:   A failed or absent load is requested again (in the background) on the next press, so a transient failure
- *        never needs a restart; a missing model answers ModelMissing at once so the pill offers the setup, and is
- *        not retried here because installing a model is what loads it (the model manager, step 21).
- * WHERE: `arm`.
- */
-fn speech_engine(
-    asr: &AsrWorker,
-    settings: &SettingsSnapshot,
-    paths: &AppPaths,
-) -> PortResult<EngineCheck> {
-    match asr.readiness() {
-        AsrReadiness::Ready { engine_id, .. } | AsrReadiness::Loading { engine_id } => {
-            Ok(EngineCheck::Usable(engine_id))
-        }
-        // Installing the model loads it (the model manager), so a press never retries a load that cannot succeed.
-        AsrReadiness::Failed {
-            error: AppError::ModelMissing { model_id },
-            ..
-        } => Ok(EngineCheck::ModelMissing(model_id)),
-        AsrReadiness::Failed { .. } | AsrReadiness::Unloaded => {
-            request_load(asr, settings, paths).map(EngineCheck::Usable)
-        }
-    }
-}
-
-/// Asks the ASR worker to load the engine the settings select; returns its id at once.
-fn request_load(
-    asr: &AsrWorker,
-    settings: &SettingsSnapshot,
-    paths: &AppPaths,
-) -> PortResult<EngineId> {
-    let request = asr::load_request(settings, paths)?;
-    let engine = request.engine_id.clone();
-    tracing::info!(%engine, "loading the speech engine for a take");
-    // The outcome reaches the take through the worker: its segments wait for the load, or fail with its error.
-    drop(asr.load(request));
-    Ok(engine)
-}
-
-/// The segmentation rules for a take on `engine`: the defaults, cut no longer than the engine accepts.
-fn segment_policy(engine: &EngineId) -> SegmentPolicy {
-    registry::engines::find(engine)
-        .and_then(|entry| entry.asr_caps())
-        .map_or(SegmentPolicy::DEFAULT, |caps| {
-            SegmentPolicy::DEFAULT.within_engine_limit(caps.max_segment_s)
-        })
 }
 
 /// Opens the take's microphone.

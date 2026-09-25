@@ -15,16 +15,19 @@
  *        kept (00 constraint 5). Dropping a Capture without `finish` (an error path, a panic) still closes the mic
  *        and finalizes the journal. The worker wakes every 10 ms only while a take is open: no timers when idle.
  * WHERE: Started by the session actor on RecordPressed (after the transcripts row exists, 02 §7.3) and by
- *        `check_microphone` (mic_check.rs) for `audio_test_level`; segments go to the ASR worker's sink.
+ *        `check_microphone` (mic_check.rs) for `audio_test_level`; segments go to the ASR worker's sink. `replay`
+ *        (replay.rs) runs the same segmenter over a saved journal for session_retry.
  */
 
 mod convert;
 pub mod journal;
 mod level;
 mod mic_check;
+mod replay;
 mod segmenter;
 
 pub use mic_check::check_microphone;
+pub use replay::{Replay, replay};
 
 use std::{
     path::PathBuf,

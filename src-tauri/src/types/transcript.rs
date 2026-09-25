@@ -1,8 +1,9 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: Transcript, TranscriptSummary, TranscriptStatus, NewTranscript, TranscriptChange, TranscriptSelector, Page, PageCursor, history row, pagination
+ * SOURCE OF TRUTH KEYWORDS: Transcript, TranscriptSummary, TranscriptStatus, NewTranscript, TranscriptChange, TranscriptSelector, Page, PageCursor, HistoryListInput, TranscriptInput
  * WHAT:  The history domain shapes: one take in full (Transcript), its list row (TranscriptSummary), its status,
- *        the generic cursor-paginated Page<T>, and the service-facing shapes for writing and selecting rows
- *        (NewTranscript, TranscriptChange, TranscriptSelector, TranscriptRef; these never cross IPC).
+ *        the generic cursor-paginated Page<T>, the history command inputs (HistoryListInput, TranscriptInput), and
+ *        the service-facing shapes for writing and selecting rows (NewTranscript, TranscriptChange,
+ *        TranscriptSelector, TranscriptRef; these never cross IPC).
  * WHY:   Mirrors the `transcripts` table (02 §7.2) minus storage detail: the audio path is not exposed, only
  *        whether audio is kept (`has_audio`), because the WAV location is derived from the id by the pipeline.
  *        TranscriptStatus serializes exactly as the `status` column stores it. PageCursor is opaque so the
@@ -196,6 +197,75 @@ impl PageCursor {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+}
+
+impl PageCursor {
+    /// Longest cursor any service produces (a ULID is 26 characters); anything longer is not one of ours.
+    pub const MAX_LEN: usize = 64;
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: HistoryListInput, history_list input, search query, cursor, page size, garde schema
+ * WHAT:  The input of `history_list`: an optional full-text search, the cursor of the page to continue after (None
+ *        = the newest page) and how many rows to return.
+ * WHY:   The factory enforces the declared bounds before the handler runs (02 §4.1): a search longer than
+ *        MAX_SEARCH_CHARS or a page outside 1..=MAX_LIMIT is a Validation error on its field, so the service never
+ *        builds a huge FTS query or reads an unbounded page. Blank search text means "no search" (the service turns
+ *        text with no letters or digits into an empty page, so the command normalizes blanks first). Whether the
+ *        cursor is one the service produced is the service's answer (`Validation { cursor }`).
+ * WHERE: ipc/commands/history.rs; built in the UI by the history list query (src/hooks/use-history.ts).
+ */
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type, garde::Validate)]
+pub struct HistoryListInput {
+    #[garde(length(chars, max = Self::MAX_SEARCH_CHARS))]
+    pub search: Option<String>,
+    #[garde(custom(cursor_length))]
+    pub cursor: Option<PageCursor>,
+    #[garde(range(min = 1, max = Self::MAX_LIMIT))]
+    pub limit: u32,
+}
+
+impl HistoryListInput {
+    /// Longest search the History field accepts.
+    pub const MAX_SEARCH_CHARS: usize = 200;
+    /// Most rows one page may ask for.
+    pub const MAX_LIMIT: u32 = 500;
+
+    /// The search text to run, or None when it is absent or blank.
+    pub fn search_text(&self) -> Option<&str> {
+        self.search
+            .as_deref()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+    }
+}
+
+/// garde rule: a cursor no longer than any the services produce.
+fn cursor_length(cursor: &Option<PageCursor>, (): &()) -> garde::Result {
+    match cursor {
+        Some(cursor)
+            if cursor.as_str().is_empty() || cursor.as_str().len() > PageCursor::MAX_LEN =>
+        {
+            Err(garde::Error::new("This page position is not valid."))
+        }
+        _ => Ok(()),
+    }
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: TranscriptInput, transcript id input, history_get, history_copy, history_delete, session_retry input
+ * WHAT:  The input of every command that acts on one stored take: its id.
+ * WHY:   One shape for get, copy, delete and retry, so a new per-take command (export, share) takes the same input.
+ *        A struct, not a bare id, so a command can grow options without changing its call sites. The id is a ULID
+ *        that serde already refuses when malformed (W27: the factory maps that to `Validation`), so garde has
+ *        nothing left to check.
+ * WHERE: ipc/commands/history.rs, ipc/commands/session.rs (`session_retry`); built in the UI by the History
+ *        actions.
+ */
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type, garde::Validate)]
+pub struct TranscriptInput {
+    #[garde(skip)]
+    pub id: TranscriptId,
 }
 
 /// A slice of a longer list, newest first unless the command says otherwise.

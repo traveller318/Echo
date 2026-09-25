@@ -7,10 +7,10 @@
  *        frameless window could not even be closed.
  * WHERE: Runs in the `web` Vitest project (jsdom) with @tauri-apps/api/mocks.
  */
-import { clearMocks, mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RegistryView } from "@/bindings";
+import { clearTauriMocks, mockTauri } from "@/test/tauri-mocks";
 import { Providers } from "./providers";
 import { AppRouter } from "./router";
 
@@ -29,12 +29,11 @@ const registryGet = vi.fn<() => Promise<RegistryView>>();
 
 beforeEach(() => {
   window.location.hash = "";
-  mockWindows("main");
-  mockIPC((cmd) => (cmd === "registry_get" ? registryGet() : null));
+  mockTauri((cmd) => (cmd === "registry_get" ? registryGet() : null));
 });
 
-afterEach(() => {
-  clearMocks();
+afterEach(async () => {
+  await clearTauriMocks();
   vi.clearAllMocks();
 });
 

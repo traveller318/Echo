@@ -3,7 +3,7 @@
  * WHAT:  Runner: executes every SessionEffect through the ports, in the order the machine lists them, and turns the
  *        replies of the work it started (WorkerReply) back into SessionInputs. It holds the resources of the
  *        current take and nothing else: the open microphone and ASR take (TakeSlot), the Esc guard, the one timer,
- *        a spare voice detector, the polish chain and a pending clipboard restore.
+ *        a spare voice detector and a pending clipboard restore (the polish chain is the shared PolishChains).
  * WHY:   The machine decides, the runner only does (02 §5): no copy of the state lives here, so the two can never
  *        disagree. Every effect is idempotent against a resource that is already gone (a second abort, a cancel
  *        after the timer fired), which is what lets the machine release everything on every exit path. Slow work
@@ -15,15 +15,16 @@
  *        and `Drained` are in, whatever order they arrive in. Aborting a capture waits for its journal to be
  *        finalized before the next effect, so DeleteTake never races the capture worker for the WAV (a discard)
  *        and a failed take's audio is complete on disk. The detector a take used comes back for the next take, so
- *        Silero is loaded once, not per press; a detector that failed is rebuilt. The polish chain is rebuilt only
- *        when `polish_plan` changes (settings), reusing the stages that did not. With `keep_on_clipboard` off,
+ *        Silero is loaded once, not per press; a detector that failed is rebuilt. The polish chain comes from the
+ *        shared PolishChains (SessionEngines), rebuilt only when `polish_plan` changes, so retry uses the same one. With `keep_on_clipboard` off,
  *        the clipboard is given back CLIPBOARD_RESTORE_DELAY after the paste (05 W6); a delivery that starts
  *        before then, or the app exiting, restores it first, so a later take never saves the previous transcript
  *        as "the user's clipboard". A row write that fails is logged and the take goes on: the machine has
  *        already decided, and startup recovery repairs whatever status is left. Transcript text is never logged
  *        (02 §10).
  * WHERE: Owned by the session actor (actor.rs): `run` for each effect of a transition, `absorb` for each
- *        WorkerReply, `prepare` on Message::Prepare, `shutdown` on Message::Shutdown.
+ *        WorkerReply, `paste_last` on Message::PasteLast, `prepare` on Message::Prepare, `shutdown` on
+ *        Message::Shutdown.
  */
 
 use std::{
@@ -38,7 +39,7 @@ use super::{
     actor::SessionConfig,
     arm::{self, ArmOutcome, ArmRequest},
     hotkey_input,
-    inbox::{HotkeyForwarder, Outbox, WorkerReply},
+    inbox::{HotkeyForwarder, Outbox, PasteLastReply, WorkerReply},
     notices::HOTKEY_UNAVAILABLE_TOAST,
 };
 use crate::{
@@ -46,16 +47,17 @@ use crate::{
         asr::AsrTake,
         capture::{Capture, CaptureOutcome, journal},
         delivery::{CLIPBOARD_RESTORE_DELAY, Delivery},
+        history,
         hotkeys::{self, SessionHotkeys},
-        polish::{PolishChain, polish_context, polish_plan},
+        polish::polish_context,
     },
     ports::VoiceActivity,
     registry, services,
     types::{
         AppError, AppTarget, AsrEvent, CaptureEvent, CaptureSummary, ClipboardRestore,
-        DeliveryReport, EngineId, HistoryChangeReason, HistoryChanged, Language, MetricsChanged,
-        PolishOutcome, PortError, PortResult, SessionEffect, SessionInput, SessionStateChanged,
-        SettingsSnapshot, TimerToken, TranscriptChange, TranscriptId, TranscriptSaved,
+        DeliveryReport, EngineId, HistoryChangeReason, HistoryChanged, Language, PolishOutcome,
+        PortError, PortResult, SessionEffect, SessionInput, SessionStateChanged, SettingsSnapshot,
+        TimerToken, TranscriptChange, TranscriptId,
     },
 };
 
@@ -102,7 +104,6 @@ pub(super) struct Runner {
     timer: Option<LiveTimer>,
     /// A detector ready for the next take.
     detector: Option<Box<dyn VoiceActivity>>,
-    chain: Option<Arc<PolishChain>>,
     restore: Option<PendingRestore>,
 }
 
@@ -115,7 +116,6 @@ impl Runner {
             esc: None,
             timer: None,
             detector: None,
-            chain: None,
             restore: None,
         }
     }
@@ -176,7 +176,7 @@ impl Runner {
                 },
             );
         }
-        let chain = self.chain_for(&settings);
+        let chain = self.config.engines.polish.for_settings(&settings);
         tokio::spawn(async move {
             chain.prepare().await;
         });
@@ -253,6 +253,7 @@ impl Runner {
             WorkerReply::Detector(detector) => {
                 self.detector.get_or_insert(detector);
             }
+            WorkerReply::PastedLast { result, reply } => self.pasted_last(result, reply),
         }
     }
 
@@ -619,26 +620,8 @@ impl Runner {
             None => true,
         };
         if row {
-            self.announce(take);
+            history::announce_saved(&self.config.db, self.config.events.as_ref(), take);
         }
-    }
-
-    /// TranscriptSaved, HistoryChanged and MetricsChanged for a take whose row changed for the last time.
-    fn announce(&self, take: TranscriptId) {
-        let events = &self.config.events;
-        match services::transcripts::get::summary(&self.config.db, take) {
-            Ok(summary) => events.emit(TranscriptSaved(summary).into()),
-            Err(error) => {
-                tracing::error!(%take, detail = error.detail(), "the saved take could not be read back")
-            }
-        }
-        events.emit(
-            HistoryChanged {
-                reason: HistoryChangeReason::Updated,
-            }
-            .into(),
-        );
-        events.emit(MetricsChanged {}.into());
     }
 
     // ---- Delivery ------------------------------------------------------------------------------------------------
@@ -677,7 +660,7 @@ impl Runner {
             return;
         };
         let context = polish_context(&settings, caps, language);
-        let chain = self.chain_for(&settings);
+        let chain = self.config.engines.polish.for_settings(&settings);
         let policy = registry::settings::delivery_policy(&settings);
         let pending = self.restore.take().map(|pending| {
             pending.task.abort();
@@ -739,6 +722,61 @@ impl Runner {
         }
     }
 
+    /**
+     * SOURCE OF TRUTH KEYWORDS: runner paste_last, paste-last delivery, clipboard restore ownership
+     * WHAT:  Delivers the newest completed take to the focused window on the blocking pool (after giving back a
+     *        clipboard restore still pending); the reply schedules its own restore and answers the caller.
+     * WHY:   Same restore rules as a take's delivery (05 W6), owned by the one runner; it never touches recording
+     *        state, so it is not a machine input.
+     * WHERE: The actor, on Message::PasteLast.
+     */
+    pub fn paste_last(&mut self, reply: Option<PasteLastReply>) {
+        let settings = self.settings();
+        let pending = self.restore.take().map(|pending| {
+            pending.task.abort();
+            pending.restore
+        });
+        let delivery = self.config.delivery.clone();
+        let db = self.config.db.clone();
+        let foreground = Arc::clone(&self.config.foreground);
+        spawn_reply(
+            &self.outbox,
+            move || {
+                if let Some(previous) = pending {
+                    restore_clipboard(&delivery, &previous);
+                }
+                history::paste_last(&db, &delivery, foreground.as_ref(), &settings)
+            },
+            move |result| {
+                Some(WorkerReply::PastedLast {
+                    result: result
+                        .unwrap_or_else(|error| Err(panicked("pasting the last take", &error))),
+                    reply,
+                })
+            },
+        );
+    }
+
+    fn pasted_last(&mut self, result: PortResult<DeliveryReport>, reply: Option<PasteLastReply>) {
+        let answer = result.map(|report| {
+            if let Some(restore) = report.restore {
+                self.schedule_restore(restore);
+            }
+            report.outcome
+        });
+        if let Err(error) = &answer {
+            tracing::warn!(
+                code = error.error().code().as_str(),
+                detail = error.detail(),
+                "the last take could not be pasted"
+            );
+        }
+        if let Some(reply) = reply {
+            // The caller may have given up; the delivery happened either way.
+            let _ = reply.send(answer);
+        }
+    }
+
     fn schedule_restore(&mut self, restore: ClipboardRestore) {
         let delivery = self.config.delivery.clone();
         let later = restore.clone();
@@ -749,29 +787,6 @@ impl Runner {
         if let Some(previous) = self.restore.replace(PendingRestore { restore, task }) {
             previous.task.abort();
         }
-    }
-
-    /// The polish chain for `settings`, rebuilt (reusing unchanged stages) only when the plan changed.
-    fn chain_for(&mut self, settings: &SettingsSnapshot) -> Arc<PolishChain> {
-        let plan = polish_plan(settings);
-        if let Some(chain) = &self.chain
-            && chain.plan() == &plan
-        {
-            return Arc::clone(chain);
-        }
-        let build = Arc::clone(&self.config.engines.polisher);
-        let chain = Arc::new(PolishChain::build_with(plan, self.chain.as_deref(), |id| {
-            build(id)
-        }));
-        if self.chain.is_some() {
-            // A new stage (the LLM sidecar) starts warming now; this take falls back if it is not ready yet.
-            let warming = Arc::clone(&chain);
-            tokio::spawn(async move {
-                warming.prepare().await;
-            });
-        }
-        self.chain = Some(Arc::clone(&chain));
-        chain
     }
 
     fn toast(&self, toast: &crate::types::Toast) {

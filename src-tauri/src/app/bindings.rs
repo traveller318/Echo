@@ -1,11 +1,13 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: tauri-specta builder, bindings export, src/bindings.ts, typed IPC, invoke handler, mount events
+ * SOURCE OF TRUTH KEYWORDS: tauri-specta builder, bindings export, src/bindings.ts, typed IPC, invoke handler, mount events, exported constants
  * WHAT:  Builds the tauri-specta builder that owns the IPC surface (commands, the registry event catalog and every
  *        IPC type) and, in tests, exports it to src/bindings.ts.
  * WHY:   One builder serves both the running app (invoke handler + event mounting) and the TS export, so the
  *        bindings can never describe a different surface than the app serves. The export runs as a `cargo test`
  *        (the gate runs cargo test before tsc), not at app startup, so a normal run never writes into src/.
  *        Types no command or event references yet are registered explicitly so the UI can import them today.
+ *        Input limits the UI must validate against too (root CLAUDE.md §5) are exported as constants, so the Zod
+ *        schema and the garde schema read one number.
  * WHERE: `builder()` is called by app::run; the export test writes src/bindings.ts (generated, never edited,
  *        excluded from lint, type-checked by tsc).
  */
@@ -56,6 +58,12 @@ pub fn builder<R: Runtime>() -> Builder<R> {
         .typ::<types::UpdateStatus>()
         .typ::<types::PermissionState>()
         .typ::<types::HistoryChangeReason>()
+        // 200 fits any integer type; the UI's search schema reads this instead of restating it.
+        .constant(
+            "HISTORY_SEARCH_MAX_CHARS",
+            u32::try_from(types::HistoryListInput::MAX_SEARCH_CHARS).unwrap_or(u32::MAX),
+        )
+        .constant("HISTORY_PAGE_MAX", types::HistoryListInput::MAX_LIMIT)
 }
 
 /**

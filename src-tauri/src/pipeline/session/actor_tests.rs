@@ -155,12 +155,12 @@ impl Rig {
                 paths: paths.clone(),
                 db: db.clone(),
                 events: Arc::clone(&events) as _,
-                engines: SessionEngines {
-                    vad: Arc::new(|| Ok(Box::new(FakeVoiceActivity::new(32)) as _)),
-                    polisher: Arc::new(move |id: &EngineId| {
+                engines: SessionEngines::new(
+                    Arc::new(|| Ok(Box::new(FakeVoiceActivity::new(32)) as _)),
+                    Arc::new(move |id: &EngineId| {
                         registry::engines::build_polisher(id, &polish_ctx)
                     }),
-                },
+                ),
             },
             inbox,
         );

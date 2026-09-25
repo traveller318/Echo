@@ -2,7 +2,7 @@
  * SOURCE OF TRUTH KEYWORDS: session actor, SessionActor, SessionHandle, SessionInbox, SessionConfig, SessionEngines, actor loop, sole owner of recording state, session_get_state, shutdown finalize
  * WHAT:  The session actor of 02 §5: one tokio task with an mpsc inbox that owns SessionState, feeds every input
  *        through the pure `transition` and hands the effects to the Runner. SessionHandle is the cloneable way in
- *        (the pill's Stop, the current view, prepare, shutdown); SessionConfig is what the actor works through
+ *        (the pill's Stop, the current view, paste-last, prepare, shutdown); SessionConfig is what the actor works through
  *        (settings, ports, the ASR worker, delivery, paths, database, event sink, engine builders).
  * WHY:   There is exactly one owner of recording state and no copy anywhere else: the view `session_get_state`
  *        returns is computed from the state at the moment of the query, and every change is published as the full
@@ -35,39 +35,52 @@ use super::{
     transition,
 };
 use crate::{
-    pipeline::{asr::AsrWorker, delivery::Delivery},
-    ports::{
-        AudioCapture, EventSink, ForegroundApp, HotkeyService, Notifier, TextPolisher,
-        WorkerScheduler,
+    pipeline::{
+        asr::AsrWorker,
+        delivery::Delivery,
+        polish::{PolishChains, PolisherBuilder},
     },
+    ports::{AudioCapture, EventSink, ForegroundApp, HotkeyService, Notifier, WorkerScheduler},
     registry::{self, engines::BuildCtx},
     services::Db,
     types::{
-        AppError, AppEvent, AppPaths, EngineId, MonotonicMs, PortError, PortResult, SessionInput,
-        SessionState, SessionUiInput, SessionView, SharedSettings,
+        AppError, AppEvent, AppPaths, DeliveryOutcome, EngineId, MonotonicMs, PortError,
+        PortResult, SessionInput, SessionState, SessionUiInput, SessionView, SharedSettings,
     },
 };
 
-/// Builds a polish stage by its registry id.
-pub type PolisherBuilder =
-    Arc<dyn Fn(&EngineId) -> PortResult<Arc<dyn TextPolisher>> + Send + Sync>;
-
-/// How the actor builds the engines a take uses besides ASR (which the ASR worker owns).
+/**
+ * SOURCE OF TRUTH KEYWORDS: SessionEngines, take engines, VadBuilder, PolishChains, shared with retry
+ * WHAT:  The engines a take uses besides ASR (which the ASR worker owns): a builder for fresh voice activity
+ *        detectors and the app's one polish chain. Clones share the chain.
+ * WHY:   A live take and a History retry must segment and polish the same way (02 §8.3), and the chain may own a
+ *        sidecar that must exist once (05 A13), so the actor and CommandCtx hold clones of the same engines.
+ * WHERE: Built by app/bootstrap (`registry`) or tests (`new` over fakes); held by SessionConfig and CommandCtx.
+ */
+#[derive(Clone)]
 pub struct SessionEngines {
     /// A fresh voice activity detector.
     pub vad: VadBuilder,
-    /// A polish stage by id.
-    pub polisher: PolisherBuilder,
+    /// The polish chain for the settings in effect.
+    pub polish: PolishChains,
 }
 
 impl SessionEngines {
+    /// Engines from a detector builder and a polish stage builder.
+    pub fn new(vad: VadBuilder, polisher: PolisherBuilder) -> Self {
+        Self {
+            vad,
+            polish: PolishChains::new(polisher),
+        }
+    }
+
     /// Engines built through the registry (only the ones a take asks for are ever constructed, 02 §3.5).
     pub fn registry(ctx: BuildCtx) -> Self {
         let vad_ctx = ctx.clone();
-        Self {
-            vad: Arc::new(move || registry::engines::build_default_vad(&vad_ctx)),
-            polisher: Arc::new(move |id: &EngineId| registry::engines::build_polisher(id, &ctx)),
-        }
+        Self::new(
+            Arc::new(move || registry::engines::build_default_vad(&vad_ctx)),
+            Arc::new(move |id: &EngineId| registry::engines::build_polisher(id, &ctx)),
+        )
     }
 }
 
@@ -125,6 +138,21 @@ impl SessionHandle {
         let (reply, answer) = oneshot::channel();
         self.send(Message::View(reply))?;
         answer.await.map_err(|_| stopped())
+    }
+
+    /**
+     * SOURCE OF TRUTH KEYWORDS: SessionHandle::paste_last, history_paste_last, re-deliver newest take
+     * WHAT:  Asks the actor to deliver the newest completed take to the focused window again; answers what reached
+     *        the user (pasted or copied) or why nothing did.
+     * WHY:   Paste-last writes the clipboard like a take's delivery, so it goes through the runner that owns the
+     *        pending clipboard restore (05 W6): one owner, so a restore never puts back a transcript as "the user's
+     *        clipboard".
+     * WHERE: ipc/commands/history.rs (history_paste_last); the paste-last hotkey posts Message::PasteLast(None).
+     */
+    pub async fn paste_last(&self) -> PortResult<DeliveryOutcome> {
+        let (reply, answer) = oneshot::channel();
+        self.send(Message::PasteLast(Some(reply)))?;
+        answer.await.map_err(|_| stopped())?
     }
 
     /// The windows exist: start listening to hotkeys and warm up what the first take needs.
@@ -201,6 +229,7 @@ impl SessionActor {
                     // The asker may have given up (a closed window); nothing to do then.
                     let _ = reply.send(self.state.phase.view(self.now()));
                 }
+                Message::PasteLast(reply) => self.runner.paste_last(reply),
                 Message::Prepare => self.runner.prepare(),
                 Message::Shutdown(reply) => {
                     self.runner.shutdown().await;

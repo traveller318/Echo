@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: AppError, AppErrorCode, error code, IPC error, HotkeyIssue, ResourceKind, user-safe message
+ * SOURCE OF TRUTH KEYWORDS: AppError, AppErrorCode, error code, IPC error, HotkeyIssue, ResourceKind, NotFound resource, user-safe message
  * WHAT:  AppError, the only error that crosses IPC, plus AppErrorCode, the stable fieldless code of each variant.
  * WHY:   One error surface for the UI (02 §4.2): the frontend maps `code` to copy and an action in one place
  *        (src/lib/app-error.ts). `#[serde(tag = "code")]` makes the variant name the wire code, so a variant is
@@ -27,6 +27,10 @@ pub enum ResourceKind {
     AudioDevice,
     /// An update to install (the updater found none, or updates are not configured, 02 §11).
     Update,
+    /// A take's WAV journal: retention deleted it, or it never reached the disk (retry needs it, 02 §7.3).
+    Recording,
+    /// A take's text: it was never transcribed, or it was empty (copy and paste-last need it).
+    TranscriptText,
 }
 
 /// Why a hotkey could not be registered.

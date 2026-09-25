@@ -344,13 +344,15 @@ pub const SETTINGS: &[SettingSpec] = &[
         key: keys::HISTORY_RETENTION_DAYS,
         section: SettingSection::Storage,
         label: StaticStr::new("Keep history"),
-        help: StaticStr::new("Days to keep transcripts. 0 keeps them forever."),
+        help: StaticStr::new(
+            "Days to keep transcripts. Dashboard totals count only what is kept. 0 keeps them forever.",
+        ),
         kind: SettingKind::Int {
             min: 0,
             max: 3650,
             unit: Some(SettingUnit::Days),
         },
-        default: SettingValue::Int(0),
+        default: SettingValue::Int(30),
         restart_required: false,
         visible: true,
         requires: None,

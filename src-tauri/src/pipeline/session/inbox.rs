@@ -1,7 +1,7 @@
 /*!
  * SOURCE OF TRUTH KEYWORDS: session inbox, Message, WorkerReply, Outbox, HotkeyForwarder, TakeEvents, actor mailbox, weak sender
- * WHAT:  The session actor's mailbox: every message it can receive (Message: hotkeys, the pill, queries, lifecycle
- *        and WorkerReply, the replies of the work its effects started), the Outbox the actor's own tasks and sinks
+ * WHAT:  The session actor's mailbox: every message it can receive (Message: hotkeys, the pill, queries, paste-last,
+ *        lifecycle and WorkerReply, the replies of the work its effects started), the Outbox the actor's own tasks and sinks
  *        post through, and the port sinks that forward into it (HotkeyForwarder for the hotkey port, TakeEvents for
  *        one take's capture and ASR events).
  * WHY:   All inputs go through one inbox, so the actor handles them one at a time in arrival order and is the only
@@ -25,8 +25,8 @@ use crate::{
     pipeline::capture::CaptureOutcome,
     ports::{EventSink, VoiceActivity},
     types::{
-        AsrEvent, CaptureEvent, DeliveryReport, HotkeyEvent, PolishOutcome, PortResult,
-        SessionInput, SessionUiInput, SessionView, TranscriptId,
+        AsrEvent, CaptureEvent, DeliveryOutcome, DeliveryReport, HotkeyEvent, PolishOutcome,
+        PortResult, SessionInput, SessionUiInput, SessionView, TranscriptId,
     },
 };
 
@@ -56,7 +56,15 @@ pub(super) enum WorkerReply {
     Timer(SessionInput),
     /// A voice activity detector built ahead of the next take.
     Detector(Box<dyn VoiceActivity>),
+    /// Paste-last delivered the newest completed take (or failed to); `reply` is the caller waiting, if any.
+    PastedLast {
+        result: PortResult<DeliveryReport>,
+        reply: Option<PasteLastReply>,
+    },
 }
+
+/// Where a paste-last answers: what reached the user, or why nothing did.
+pub(super) type PasteLastReply = oneshot::Sender<PortResult<DeliveryOutcome>>;
 
 /// Everything the session actor receives.
 pub(super) enum Message {
@@ -67,6 +75,8 @@ pub(super) enum Message {
     Worker(WorkerReply),
     /// `session_get_state`: the view at this moment.
     View(oneshot::Sender<SessionView>),
+    /// Deliver the newest completed take again (`history_paste_last`; the paste-last hotkey sends no reply).
+    PasteLast(Option<PasteLastReply>),
     /// The windows exist: listen to hotkeys, bind them, warm the detector and the polish chain.
     Prepare,
     /// The app is exiting: finalize every open journal, then answer and stop.

@@ -64,6 +64,20 @@ pub struct SessionView {
     pub error: Option<AppError>,
 }
 
+impl SessionStatus {
+    /// A take is between its hotkey press and its settled result: its row and journal may still be written.
+    pub const fn is_in_progress(self) -> bool {
+        matches!(
+            self,
+            Self::Arming
+                | Self::Recording
+                | Self::CancelPending
+                | Self::Finalizing
+                | Self::Delivering
+        )
+    }
+}
+
 impl SessionView {
     /// The view while no take is active.
     pub const IDLE: Self = Self {
@@ -74,6 +88,17 @@ impl SessionView {
         outcome: None,
         error: None,
     };
+
+    /**
+     * SOURCE OF TRUTH KEYWORDS: live take, take in progress, is_live, history action guard
+     * WHAT:  True when `id` is the take the session is still recording, transcribing or delivering.
+     * WHY:   The session actor owns that take's row and WAV until it settles (02 §5); deleting or retrying it from
+     *        History meanwhile would race the actor's writes, so those commands refuse it with `Busy`.
+     * WHERE: history_delete and session_retry (pipeline/history.rs, pipeline/retry.rs callers).
+     */
+    pub fn is_live(&self, id: TranscriptId) -> bool {
+        self.status.is_in_progress() && self.transcript_id == Some(id)
+    }
 }
 
 /// Session inputs the UI is allowed to send through `session_input`; every variant is valid as sent, so the
@@ -115,6 +140,38 @@ mod tests {
             SessionUiInput::Stop
         );
         assert!(serde_json::from_str::<SessionUiInput>("\"record_pressed\"").is_err());
+    }
+
+    #[test]
+    fn only_an_unsettled_take_with_that_id_is_live() {
+        let id = TranscriptId::generate();
+        let view = |status| SessionView {
+            status,
+            transcript_id: Some(id),
+            ..SessionView::IDLE
+        };
+        for status in [
+            SessionStatus::Arming,
+            SessionStatus::Recording,
+            SessionStatus::CancelPending,
+            SessionStatus::Finalizing,
+            SessionStatus::Delivering,
+        ] {
+            assert!(view(status).is_live(id), "{status:?}");
+            assert!(
+                !view(status).is_live(TranscriptId::generate()),
+                "{status:?}"
+            );
+        }
+        for status in [
+            SessionStatus::Idle,
+            SessionStatus::Done,
+            SessionStatus::Discarded,
+            SessionStatus::Failed,
+        ] {
+            assert!(!view(status).is_live(id), "{status:?}");
+        }
+        assert!(!SessionView::IDLE.is_live(id));
     }
 
     #[test]

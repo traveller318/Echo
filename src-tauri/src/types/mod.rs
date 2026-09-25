@@ -105,8 +105,8 @@ pub use settings::{
 pub use static_data::{StaticList, StaticStr};
 pub use target::{AppTarget, ScreenRect, WindowHandle};
 pub use transcript::{
-    NewTranscript, Page, PageCursor, Transcript, TranscriptChange, TranscriptRef,
-    TranscriptSelector, TranscriptStatus, TranscriptSummary,
+    HistoryListInput, NewTranscript, Page, PageCursor, Transcript, TranscriptChange,
+    TranscriptInput, TranscriptRef, TranscriptSelector, TranscriptStatus, TranscriptSummary,
 };
 pub use units::{ByteCount, MonotonicMs, UnixMs};
 pub use update::UpdateStatus;

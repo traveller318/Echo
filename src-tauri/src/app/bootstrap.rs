@@ -123,6 +123,9 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<(), Box<dyn Error>> {
     let audio: Arc<dyn AudioCapture> = Arc::new(CpalWasapiCapture::new(Arc::clone(&consent)));
     let hotkeys: Arc<dyn HotkeyService> = Arc::new(LowLevelKeyboardHotkeys::new());
     let (session, inbox) = SessionHandle::new();
+    let engines = SessionEngines::registry(BuildCtx {
+        paths: paths.clone(),
+    });
     let actor = SessionActor::new(
         SessionConfig {
             settings: settings.clone(),
@@ -136,9 +139,7 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<(), Box<dyn Error>> {
             paths: paths.clone(),
             db: db.clone(),
             events: Arc::clone(&events),
-            engines: SessionEngines::registry(BuildCtx {
-                paths: paths.clone(),
-            }),
+            engines: engines.clone(),
         },
         inbox,
     );
@@ -159,6 +160,7 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<(), Box<dyn Error>> {
         notifier,
         delivery,
         session,
+        engines,
         pill,
         main_window: Arc::new(TauriMainWindow::new(app.handle().clone(), MAIN_WINDOW)),
         paths,

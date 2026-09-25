@@ -3,7 +3,7 @@
  * WHAT:  The session of 02 §5: the pure `transition` (transition.rs) and the toasts it raises (notices.rs), and the
  *        actor that owns the state and runs the machine (actor.rs: SessionActor, SessionHandle, SessionConfig),
  *        with its inbox (inbox.rs), the hotkey → input mapping (hotkey_input.rs), the Arm effect (arm.rs) and the
- *        effect runner (runner.rs). The machine's state, inputs, effects and policy are data in
+ *        effect runner (runner.rs); the row writes that end a take (rows.rs, shared with retry). The machine's state, inputs, effects and policy are data in
  *        types/session_machine.rs.
  * WHY:   The session is the sole owner of recording state; keeping the decisions in one pure function means the
  *        actor only executes effects through ports and cannot disagree with the table. The data shapes live in
@@ -18,6 +18,7 @@ mod arm;
 mod hotkey_input;
 mod inbox;
 mod notices;
+pub mod rows;
 mod runner;
 mod transition;
 
@@ -26,9 +27,7 @@ mod actor_tests;
 #[cfg(test)]
 mod tests;
 
-pub use actor::{
-    PolisherBuilder, SessionActor, SessionConfig, SessionEngines, SessionHandle, SessionInbox,
-};
+pub use actor::{SessionActor, SessionConfig, SessionEngines, SessionHandle, SessionInbox};
 pub use arm::VadBuilder;
 pub use notices::{
     DEVICE_LOST_TOAST, HOTKEY_UNAVAILABLE_TOAST, MAX_DURATION_TOAST, START_FAILED_TOAST,

@@ -34,7 +34,10 @@
 
 use std::collections::BTreeMap;
 
-use super::notices::{START_FAILED_TOAST, TAKE_FAILED_TOAST, stop_toast};
+use super::{
+    notices::{START_FAILED_TOAST, TAKE_FAILED_TOAST, stop_toast},
+    rows,
+};
 use crate::{
     pipeline::polish::join_segments,
     types::{
@@ -658,11 +661,8 @@ impl Step {
             ..
         } = finalizing;
         let text = join_segments(take.segments.values().map(|output| output.text.as_str()));
-        let mut changes = vec![
-            TranscriptChange::DurationMs(saturate_u32(audio.duration_ms)),
-            TranscriptChange::SpeechMs(saturate_u32(audio.speech_ms)),
-        ];
-        if audio.speech_ms < take.policy.min_speech_ms || text.is_empty() {
+        let mut changes = rows::measured(audio);
+        if rows::is_empty(audio, &text, take.policy.min_speech_ms) {
             changes.push(TranscriptChange::Status(TranscriptStatus::Empty));
             self.push(SessionEffect::UpdateRow {
                 take: take.id,
@@ -683,10 +683,7 @@ impl Step {
             .segments
             .values()
             .find_map(|output| output.language.clone());
-        changes.push(TranscriptChange::RawText(Some(text.clone())));
-        if language.is_some() {
-            changes.push(TranscriptChange::Language(language.clone()));
-        }
+        changes.extend(rows::heard(&text, language.as_ref()));
         // The raw text is stored before delivery, so it is in History even if delivery fails (02 §7.3).
         self.push(SessionEffect::UpdateRow {
             take: take.id,
@@ -739,28 +736,18 @@ impl Step {
         outcome: DeliveryOutcome,
         polish: PolishOutcome,
     ) -> SessionPhase {
-        let latency_ms = saturate_u32(self.now.saturating_since(delivering.stopped_at));
-        let final_text = polish.text.trim();
+        let latency_ms = rows::saturate_u32(self.now.saturating_since(delivering.stopped_at));
         // Polish can leave nothing (a filler-only take): nothing was delivered, so the take is empty.
-        let (outcome, hold_ms, mut changes) =
-            if outcome == DeliveryOutcome::NoSpeech || final_text.is_empty() {
-                (
-                    DeliveryOutcome::NoSpeech,
-                    delivering.policy.notice_hold_ms,
-                    vec![TranscriptChange::Status(TranscriptStatus::Empty)],
-                )
-            } else {
-                let words = final_text.split_whitespace().count();
-                (
-                    outcome,
-                    delivering.policy.done_hold_ms,
-                    vec![
-                        TranscriptChange::Status(TranscriptStatus::Done),
-                        TranscriptChange::FinalText(Some(final_text.to_owned())),
-                        TranscriptChange::WordCount(u32::try_from(words).unwrap_or(u32::MAX)),
-                    ],
-                )
-            };
+        let completed =
+            rows::completed(&polish.text).filter(|_| outcome != DeliveryOutcome::NoSpeech);
+        let (outcome, hold_ms, mut changes) = match completed {
+            Some(changes) => (outcome, delivering.policy.done_hold_ms, changes),
+            None => (
+                DeliveryOutcome::NoSpeech,
+                delivering.policy.notice_hold_ms,
+                vec![TranscriptChange::Status(TranscriptStatus::Empty)],
+            ),
+        };
         changes.push(TranscriptChange::PolisherIds(polish.polisher_ids));
         changes.push(TranscriptChange::LatencyMs(latency_ms));
         self.push(SessionEffect::UpdateRow {
@@ -811,9 +798,4 @@ impl Step {
 /// Keeps a segment's text under its index; a repeated index keeps the latest text.
 fn record_segment(take: &mut TakeData, index: u32, output: AsrOutput) {
     take.segments.insert(index, output);
-}
-
-/// `value` as u32, saturating (49 days of milliseconds, far beyond any take).
-fn saturate_u32(value: u64) -> u32 {
-    u32::try_from(value).unwrap_or(u32::MAX)
 }

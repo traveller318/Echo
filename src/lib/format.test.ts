@@ -1,5 +1,5 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: format test, formatDuration test, formatClock test, formatBytes test, metric unit format test, setting unit format test
+ * SOURCE OF TRUTH KEYWORDS: format test, formatDuration test, formatClock test, formatBytes test, formatTakeTime test, metric unit format test
  * WHAT:  Verifies every formatter's output for typical, boundary and missing values in a fixed locale.
  * WHY:   The dashboard, history, models and settings all read numbers through lib/format.ts; a wrong rounding or
  *        unit here shows up everywhere at once (and negative time saved must read as negative).
@@ -17,6 +17,8 @@ import {
   formatMinutes,
   formatSeconds,
   formatSettingInt,
+  formatTakeTime,
+  formatWords,
   formatWpm,
   MISSING_VALUE,
 } from "./format";
@@ -107,5 +109,26 @@ describe("formatSettingInt", () => {
     expect(formatSettingInt("days", 0, LOCALE)).toBe("0 days");
     expect(formatSettingInt("words_per_minute", 40, LOCALE)).toBe("40 wpm");
     expect(formatSettingInt(null, 2500, LOCALE)).toBe("2,500");
+  });
+});
+
+describe("formatWords", () => {
+  it("counts words with the right noun", () => {
+    expect(formatWords(1, LOCALE)).toBe("1 word");
+    expect(formatWords(1204, LOCALE)).toBe("1,204 words");
+    expect(formatWords(0, LOCALE)).toBe("0 words");
+  });
+});
+
+describe("formatTakeTime", () => {
+  const now = new Date(2026, 8, 25, 18, 30).getTime();
+
+  it("shows only the time for a take from today", () => {
+    expect(formatTakeTime(new Date(2026, 8, 25, 14, 5).getTime(), now, LOCALE)).toBe("2:05 PM");
+  });
+
+  it("adds the day this year and the year before that", () => {
+    expect(formatTakeTime(new Date(2026, 8, 12, 9, 0).getTime(), now, LOCALE)).toBe("Sep 12, 9:00 AM");
+    expect(formatTakeTime(new Date(2025, 11, 31, 23, 59).getTime(), now, LOCALE)).toBe("Dec 31, 2025, 11:59 PM");
   });
 });

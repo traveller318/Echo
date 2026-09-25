@@ -1,5 +1,5 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: components ui barrel, shadcn primitives, Button, Badge, Dialog, Input, Kbd, Select, Sheet, Slider, Switch, Toast, Tooltip
+ * SOURCE OF TRUTH KEYWORDS: components ui barrel, shadcn primitives, Button, Badge, Dialog, Field, Input, Kbd, Select, Sheet, Slider, Switch, Toast, Tooltip
  * WHAT:  Barrel for the shadcn primitives restyled to Echo tokens (04 §6).
  * WHY:   One import path (`@/components/ui`) for every primitive; files inside can be reorganised without touching
  *        call sites. Primitives never import routes or feature code, only lib/, styles/ and GlassSurface.
@@ -23,6 +23,7 @@ export {
   DialogTrigger,
   type DialogContentProps,
 } from "./Dialog";
+export { Field, FieldDescription, FieldError, FieldLabel, type FieldErrorProps } from "./Field";
 export { Input } from "./Input";
 export { Kbd, KbdGroup } from "./Kbd";
 export {

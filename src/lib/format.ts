@@ -1,7 +1,8 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: format, formatCount, formatDuration, formatClock, formatWpm, formatBytes, formatMetricValue, formatSettingInt, tabular numbers, NUMERIC_CLASS
+ * SOURCE OF TRUTH KEYWORDS: format, formatCount, formatDuration, formatClock, formatWpm, formatBytes, formatWords, formatTakeTime, formatMetricValue, NUMERIC_CLASS
  * WHAT:  Every number the UI shows, turned into text: counts, human durations (`2 h 5 min`), the pill clock
- *        (`m:ss`), words per minute, milliseconds, days, byte sizes, and the two unit-driven entry points
+ *        (`m:ss`), words per minute, milliseconds, days, byte sizes, word counts, when a take happened
+ *        (`formatTakeTime`), and the two unit-driven entry points
  *        `formatMetricValue(unit, value)` (dashboard) and `formatSettingInt(unit, value)` (Settings). Plus
  *        NUMERIC_CLASS, the class that makes numerals tabular.
  * WHY:   One place decides how a number reads, so the dashboard, history, models and settings agree. The unit
@@ -154,4 +155,34 @@ const SETTING_FORMAT: Readonly<Record<SettingUnit, Formatter>> = {
 /** An `Int` setting value in its registry unit; a unit-less int is a plain count. */
 export function formatSettingInt(unit: SettingUnit | null, value: number, locale?: string): string {
   return unit === null ? formatCount(value, locale) : SETTING_FORMAT[unit](value, locale);
+}
+
+/** A word count: `1 word`, `1,204 words`. */
+export function formatWords(value: number, locale?: string): string {
+  return `${formatCount(value, locale)} ${plural(value, "word", "words")}`;
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: formatTakeTime, take timestamp, today time only, date and time, locale date
+ * WHAT:  When a take happened, as short as it can be read: the time alone today (`2:05 PM`), the day and time this
+ *        year (`Sep 12, 2:05 PM` in en-US), and the full date and time before that.
+ * WHY:   History is scanned by recency; repeating today's date on every row is noise. The order and 12/24-hour
+ *        clock follow the Windows locale through Intl (the locale is a parameter so tests are deterministic);
+ *        `now` is a parameter so the rule is testable and a list renders with one clock.
+ * WHERE: TranscriptRow (History rows, later the Dashboard's recent takes), the History detail sheet.
+ */
+export function formatTakeTime(createdAt: number, now: number = Date.now(), locale?: string): string {
+  const at = new Date(createdAt);
+  const today = new Date(now);
+  const time: Intl.DateTimeFormatOptions = { hour: "numeric", minute: "2-digit" };
+  const sameYear = at.getFullYear() === today.getFullYear();
+  if (sameYear && at.getMonth() === today.getMonth() && at.getDate() === today.getDate()) {
+    return new Intl.DateTimeFormat(locale, time).format(at);
+  }
+  return new Intl.DateTimeFormat(locale, {
+    ...time,
+    day: "numeric",
+    month: "short",
+    ...(sameYear ? {} : { year: "numeric" }),
+  }).format(at);
 }

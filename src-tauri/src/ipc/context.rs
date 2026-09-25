@@ -1,12 +1,13 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: CommandCtx, CommandDeps, command context, managed state, handler dependencies, SharedSettings, AudioCapture, WorkerScheduler, SystemLauncher, AsrWorker, HotkeyService, ForegroundApp, Notifier, Delivery, SessionHandle, PillPresenter, MainWindow, AppPaths, Db, event sink
+ * SOURCE OF TRUTH KEYWORDS: CommandCtx, CommandDeps, command context, managed state, handler dependencies, SharedSettings, AsrWorker, SessionEngines, RetryDeps, Delivery, SessionHandle, PillPresenter, AppPaths, Db, event sink
  * WHAT:  CommandCtx: everything a command handler and the factory pipeline may use, managed once by Tauri and
  *        passed to every handler as `&CommandCtx`; CommandDeps: the named parts it is built from.
  * WHY:   Handlers take their dependencies from one place instead of Tauri state lookups, so they stay plain async
  *        fns that tests call with a context built from port fakes and an in-memory database. It holds only ports
  *        (`Arc<dyn …>`, never an adapter, 02 §3.2), the services' `Db` handle, the resolved AppPaths (paths are
  *        resolved only in app/, 05 W23), shared handles (settings, the ASR worker that owns the speech engine, the
- *        delivery that owns the paste rules, the session actor's handle) and the factory's own reentrancy locks; the
+ *        delivery that owns the paste rules, the session actor's handle, the take engines the actor shares with
+ *        retry) and the factory's own reentrancy locks; the
  *        registry needs no handle because it is compiled-in `const` data. Events leave through the
  *        `EventSink<AppEvent>` port, so no handler imports Tauri. Built from a named-field struct so a new
  *        dependency is one field here plus one line where it is wired. The session actor is reached through its
@@ -20,7 +21,13 @@ use std::sync::Arc;
 
 use super::reentrancy::ReentrancyLocks;
 use crate::{
-    pipeline::{asr::AsrWorker, delivery::Delivery, pill::PillPresenter, session::SessionHandle},
+    pipeline::{
+        asr::AsrWorker,
+        delivery::Delivery,
+        pill::PillPresenter,
+        retry::RetryDeps,
+        session::{SessionEngines, SessionHandle},
+    },
     ports::{
         AudioCapture, EventSink, ForegroundApp, HotkeyService, MainWindow, Notifier,
         PrivacyConsent, SystemAppearance, SystemLauncher, WorkerScheduler,
@@ -55,6 +62,8 @@ pub struct CommandDeps {
     pub delivery: Delivery,
     /// The session actor (sole owner of recording state): the current view and the pill's inputs.
     pub session: SessionHandle,
+    /// The detector builder and polish chain the session actor uses (shared with it), for retry.
+    pub engines: SessionEngines,
     /// The pill window's presenter: where the page's buttons are, when its exit animation ended.
     pub pill: PillPresenter,
     /// Echo's main window, brought forward by surfaces outside it (the pill, later the tray).
@@ -81,6 +90,7 @@ pub struct CommandCtx {
     notifier: Arc<dyn Notifier>,
     delivery: Delivery,
     session: SessionHandle,
+    engines: SessionEngines,
     pill: PillPresenter,
     main_window: Arc<dyn MainWindow>,
     paths: AppPaths,
@@ -104,6 +114,7 @@ impl CommandCtx {
             notifier,
             delivery,
             session,
+            engines,
             pill,
             main_window,
             paths,
@@ -123,6 +134,7 @@ impl CommandCtx {
             notifier,
             delivery,
             session,
+            engines,
             pill,
             main_window,
             paths,
@@ -195,6 +207,22 @@ impl CommandCtx {
     /// The session actor's handle.
     pub fn session(&self) -> &SessionHandle {
         &self.session
+    }
+
+    /// What a retry works through: the same ASR worker, engines, paths, database and events as a live take.
+    pub fn retry_deps(&self) -> RetryDeps {
+        RetryDeps {
+            asr: self.asr.clone(),
+            engines: self.engines.clone(),
+            paths: self.paths.clone(),
+            db: self.db.clone(),
+            events: Arc::clone(&self.events),
+        }
+    }
+
+    /// The event sink, for pipeline calls that announce their own changes.
+    pub fn events(&self) -> &dyn EventSink<AppEvent> {
+        self.events.as_ref()
     }
 
     /// The pill window's presenter.
@@ -338,6 +366,10 @@ pub mod testing {
         let polish_ctx = BuildCtx {
             paths: paths.clone(),
         };
+        let engines = SessionEngines::new(
+            Arc::new(|| Ok(Box::new(FakeVoiceActivity::new(32)) as _)),
+            Arc::new(move |id: &EngineId| registry::engines::build_polisher(id, &polish_ctx)),
+        );
         let session_actor = SessionActor::new(
             SessionConfig {
                 settings: settings.clone(),
@@ -352,12 +384,7 @@ pub mod testing {
                 paths: paths.clone(),
                 db: db.clone(),
                 events: Arc::clone(&events) as _,
-                engines: SessionEngines {
-                    vad: Arc::new(|| Ok(Box::new(FakeVoiceActivity::new(32)) as _)),
-                    polisher: Arc::new(move |id: &EngineId| {
-                        registry::engines::build_polisher(id, &polish_ctx)
-                    }),
-                },
+                engines: engines.clone(),
             },
             inbox,
         );
@@ -374,6 +401,7 @@ pub mod testing {
             notifier: Arc::clone(&notifier) as _,
             delivery,
             session,
+            engines,
             pill,
             main_window: Arc::clone(&main_window) as _,
             paths,

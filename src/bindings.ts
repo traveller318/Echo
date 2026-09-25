@@ -19,6 +19,18 @@ export const commands = {
 	sessionGetState: () => typedError<SessionView, AppError>(__TAURI_INVOKE("session_get_state")),
 	/**  Sends a pill input (`stop`) to the current take. */
 	sessionInput: (input: SessionUiInput) => typedError<null, AppError>(__TAURI_INVOKE("session_input", { input })),
+	/**  Transcribes a stored take again from its saved audio and returns its updated History row. */
+	sessionRetry: (input: TranscriptInput) => typedError<TranscriptSummary, AppError>(__TAURI_INVOKE("session_retry", { input })),
+	/**  One page of History, newest first: every take, or those whose text matches `search`. */
+	historyList: (input: HistoryListInput) => typedError<Page<TranscriptSummary>, AppError>(__TAURI_INVOKE("history_list", { input })),
+	/**  One take in full (both texts and every measurement). */
+	historyGet: (input: TranscriptInput) => typedError<Transcript, AppError>(__TAURI_INVOKE("history_get", { input })),
+	/**  Copies a take's text to the clipboard (kept out of Windows clipboard history). */
+	historyCopy: (input: TranscriptInput) => typedError<null, AppError>(__TAURI_INVOKE("history_copy", { input })),
+	/**  Deletes a take and its saved audio. */
+	historyDelete: (input: TranscriptInput) => typedError<null, AppError>(__TAURI_INVOKE("history_delete", { input })),
+	/**  Pastes the newest completed take into the focused app again (copies it when pasting is not possible). */
+	historyPasteLast: () => typedError<DeliveryOutcome, AppError>(__TAURI_INVOKE("history_paste_last")),
 	/**  Where the pill's buttons are now, in the page's CSS pixels; an empty list when it shows none. */
 	pillSetHitAreas: (input: PillHitAreas) => typedError<null, AppError>(__TAURI_INVOKE("pill_set_hit_areas", { input })),
 	/**  The pill finished its exit animation. */
@@ -56,6 +68,11 @@ export const events = {
 	settingsChanged: makeEvent<SettingsChanged>("SettingsChanged"),
 	transcriptSaved: makeEvent<TranscriptSaved>("TranscriptSaved"),
 };
+
+/* Constants */
+export const HISTORY_PAGE_MAX = 500 as const;
+
+export const HISTORY_SEARCH_MAX_CHARS = 200 as const;
 
 /* Types */
 /**  Where inference runs. `gpu` means any DX12 adapter (DirectML), not one vendor. */
@@ -218,6 +235,25 @@ export type HistoryChangeReason = "inserted" | "updated" | "deleted" |
 /**  History rows changed; list queries should refetch. */
 export type HistoryChanged = {
 	reason: HistoryChangeReason,
+};
+
+/**
+ * 
+ *  * SOURCE OF TRUTH KEYWORDS: HistoryListInput, history_list input, search query, cursor, page size, garde schema
+ *  * WHAT:  The input of `history_list`: an optional full-text search, the cursor of the page to continue after (None
+ *  *        = the newest page) and how many rows to return.
+ *  * WHY:   The factory enforces the declared bounds before the handler runs (02 §4.1): a search longer than
+ *  *        MAX_SEARCH_CHARS or a page outside 1..=MAX_LIMIT is a Validation error on its field, so the service never
+ *  *        builds a huge FTS query or reads an unbounded page. Blank search text means "no search" (the service turns
+ *  *        text with no letters or digits into an empty page, so the command normalizes blanks first). Whether the
+ *  *        cursor is one the service produced is the service's answer (`Validation { cursor }`).
+ *  * WHERE: ipc/commands/history.rs; built in the UI by the history list query (src/hooks/use-history.ts).
+ *  
+ */
+export type HistoryListInput = {
+	search: string | null,
+	cursor: PageCursor | null,
+	limit: number,
 };
 
 /**
@@ -539,7 +575,11 @@ export type RegistryView = {
 /**  What a `NotFound` error could not find. */
 export type ResourceKind = "transcript" | "model" | "engine" | "setting" | "audio_device" | 
 /**  An update to install (the updater found none, or updates are not configured, 02 §11). */
-"update";
+"update" | 
+/**  A take's WAV journal: retention deleted it, or it never reached the disk (retry needs it, 02 §7.3). */
+"recording" | 
+/**  A take's text: it was never transcribed, or it was empty (copy and paste-last need it). */
+"transcript_text";
 
 /**  The session changed state; carries the full view, so the UI never merges partial updates. */
 export type SessionStateChanged = SessionView;
@@ -705,6 +745,22 @@ export type Transcript = {
 
 /**  Primary key of one take: a ULID, so ids sort by creation time. */
 export type TranscriptId = string;
+
+/**
+ * 
+ *  * SOURCE OF TRUTH KEYWORDS: TranscriptInput, transcript id input, history_get, history_copy, history_delete, session_retry input
+ *  * WHAT:  The input of every command that acts on one stored take: its id.
+ *  * WHY:   One shape for get, copy, delete and retry, so a new per-take command (export, share) takes the same input.
+ *  *        A struct, not a bare id, so a command can grow options without changing its call sites. The id is a ULID
+ *  *        that serde already refuses when malformed (W27: the factory maps that to `Validation`), so garde has
+ *  *        nothing left to check.
+ *  * WHERE: ipc/commands/history.rs, ipc/commands/session.rs (`session_retry`); built in the UI by the History
+ *  *        actions.
+ *  
+ */
+export type TranscriptInput = {
+	id: TranscriptId,
+};
 
 /**  A take was written to history. */
 export type TranscriptSaved = TranscriptSummary;

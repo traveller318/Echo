@@ -7,6 +7,7 @@
 export {
   CommandError,
   describeAppError,
+  describeTakeFailure,
   isAppError,
   isAppErrorCode,
   toAppError,
@@ -44,6 +45,8 @@ export {
   formatMinutes,
   formatSeconds,
   formatSettingInt,
+  formatTakeTime,
+  formatWords,
   formatWpm,
   MISSING_VALUE,
   NUMERIC_CLASS,

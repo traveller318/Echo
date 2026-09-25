@@ -6,9 +6,8 @@
  *        command), and that a failing page keeps the sidebar and offers a reload.
  * WHY:   The shell is the frame every later page lives in (04 §5); these are the behaviours a user notices first
  *        and the ones a registry or router change would silently break.
- * WHERE: Runs in the `web` Vitest project (jsdom) with @tauri-apps/api/mocks.
+ * WHERE: Runs in the `web` Vitest project (jsdom) with Tauri's IPC and events mocked (test/tauri-mocks.ts).
  */
-import { clearMocks, mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
@@ -16,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { NavItem, RegistryView } from "@/bindings";
 import { RegistryContext } from "@/hooks/use-registry";
 import { showAppErrorToast, useToastStore } from "@/stores/toast-store";
+import { clearTauriMocks, mockTauri } from "@/test/tauri-mocks";
 import { NAV_PAGES, type NavPages } from "./nav-page";
 import { Providers } from "./providers";
 import { buildAppRoutes } from "./routes";
@@ -43,15 +43,19 @@ function renderShell(path = "/", pages: NavPages = NAV_PAGES) {
   return router;
 }
 
+/** What the mocked Rust answers for reads the real pages make on mount. */
+const PAGE_READS: Readonly<Record<string, unknown>> = {
+  history_list: { items: [], next_cursor: null },
+};
+
 beforeEach(() => {
-  mockWindows("main");
-  mockIPC((cmd, payload) => ipc(cmd, payload));
-  ipc.mockReturnValue(null);
+  mockTauri((cmd, payload) => ipc(cmd, payload));
+  ipc.mockImplementation((cmd) => PAGE_READS[cmd] ?? null);
   useToastStore.setState({ toasts: [], nextId: 1 });
 });
 
-afterEach(() => {
-  clearMocks();
+afterEach(async () => {
+  await clearTauriMocks();
   vi.clearAllMocks();
 });
 
