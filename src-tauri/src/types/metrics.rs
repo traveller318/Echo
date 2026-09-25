@@ -1,8 +1,9 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: MetricSpec, LogMetricSpec, MetricQuery, MetricEmphasis, MetricsSummary, MetricValue, MetricAggregate, MetricUnit, MetricsRange, ActivityDay, TranscriptTotals
+ * SOURCE OF TRUTH KEYWORDS: MetricSpec, LogMetricSpec, MetricQuery, MetricEmphasis, MetricsSummary, MetricValue, MetricAggregate, MetricUnit, MetricsRange, ActivityDay, TranscriptTotals, MetricsSummaryInput, MetricsActivityInput
  * WHAT:  Dashboard metric shapes: the registry entry (MetricSpec: label, unit, query, emphasis), which SQL
  *        aggregate or series a metric reads (MetricQuery / MetricAggregate), how it is displayed (MetricUnit,
- *        MetricEmphasis), the time window (MetricsRange), the computed results (MetricsSummary, ActivityDay) and
+ *        MetricEmphasis), the time window (MetricsRange), the command inputs (MetricsSummaryInput,
+ *        MetricsActivityInput), the computed results (MetricsSummary, ActivityDay) and
  *        the log-only metrics (LogMetricSpec) and the raw sums the aggregates are computed from (TranscriptTotals).
  * WHY:   Metrics are computed from `transcripts`, never counted (02 §7.4, 05 decision log). The dashboard renders
  *        registry metric entries and looks each value up by aggregate, so adding a metric is a registry entry plus
@@ -15,7 +16,7 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use super::{MetricId, StaticStr};
+use super::{LocalDate, MetricId, StaticStr};
 
 /// How a metric value is formatted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
@@ -105,7 +106,7 @@ pub struct LogMetricSpec {
     pub unit: MetricUnit,
 }
 
-/// The window a summary covers, ending now.
+/// The window a summary covers, ending now: whole local calendar days counted back from today, or every kept take.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum MetricsRange {
@@ -117,10 +118,64 @@ pub enum MetricsRange {
     AllTime,
 }
 
+impl MetricsRange {
+    /// Every range, shortest first (the order a range picker offers them).
+    pub const ALL: [Self; 4] = [
+        Self::Today,
+        Self::Last7Days,
+        Self::Last30Days,
+        Self::AllTime,
+    ];
+
+    /// Local calendar days the range covers, today included; None for every kept take.
+    pub const fn local_days(self) -> Option<u32> {
+        match self {
+            Self::Today => Some(1),
+            Self::Last7Days => Some(7),
+            Self::Last30Days => Some(30),
+            Self::AllTime => None,
+        }
+    }
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: MetricsSummaryInput, metrics_summary input, dashboard range, summary window
+ * WHAT:  The input of `metrics_summary`: which MetricsRange to compute over.
+ * WHY:   A struct, not a bare enum, so the command can grow options (a comparison window for trends) without
+ *        changing its call sites, like every other command input. serde already refuses an unknown range (the
+ *        factory maps that to `Validation`, 05 W27), so garde has nothing left to check.
+ * WHERE: ipc/commands/metrics.rs; built in the UI by the dashboard summary query (src/hooks/use-metrics.ts).
+ */
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type, garde::Validate)]
+pub struct MetricsSummaryInput {
+    #[garde(skip)]
+    pub range: MetricsRange,
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: MetricsActivityInput, metrics_activity input, activity days, chart length, garde schema
+ * WHAT:  The input of `metrics_activity`: how many local calendar days, today included, the series covers.
+ * WHY:   The factory enforces 1..=MAX_DAYS before the handler runs (02 §4.1), so the series is never empty and
+ *        never an unbounded allocation; a year and a day covers any chart the dashboard could draw. The UI reads
+ *        the days from the registry's activity metric (`MetricQuery::Activity { days }`), never its own number.
+ * WHERE: ipc/commands/metrics.rs; built in the UI by the dashboard activity query (src/hooks/use-metrics.ts).
+ */
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type, garde::Validate)]
+pub struct MetricsActivityInput {
+    #[garde(range(min = 1, max = Self::MAX_DAYS))]
+    pub days: u32,
+}
+
+impl MetricsActivityInput {
+    /// Longest activity series a caller may ask for, in days.
+    pub const MAX_DAYS: u32 = 366;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Type)]
 pub struct MetricValue {
     pub aggregate: MetricAggregate,
-    /// None when there is no completed take in the range.
+    /// None when there is nothing to compute it from yet (no completed take in the range, no speech time, no
+    /// latency), so the UI can tell "no data" from zero.
     pub value: Option<f64>,
 }
 
@@ -145,7 +200,7 @@ impl MetricsSummary {
  * WHY:   Metrics are formulas over these sums (02 §7.4): time saved, speaking WPM and averages are computed by the
  *        metrics command from them, so the service stays one aggregate query with no business rule. Sums are u64
  *        because a long history can exceed u32; the type never crosses IPC (MetricsSummary does).
- * WHERE: Returned by services/transcripts/aggregate::totals; read by the metrics commands (dashboard step).
+ * WHERE: Returned by services/transcripts/aggregate::totals; read by pipeline/metrics (the summary formulas).
  */
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TranscriptTotals {
@@ -155,12 +210,25 @@ pub struct TranscriptTotals {
     pub speech_ms: u64,
 }
 
-/// Words delivered on one local calendar day.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+/// Words and completed takes on one local calendar day.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct ActivityDay {
-    /// Local date as `YYYY-MM-DD`.
-    pub date: String,
+    /// Local date, `YYYY-MM-DD`.
+    #[specta(type = String)]
+    pub date: LocalDate,
     pub words: u32,
+    pub transcriptions: u32,
+}
+
+impl ActivityDay {
+    /// A day with no completed take.
+    pub const fn empty(date: LocalDate) -> Self {
+        Self {
+            date,
+            words: 0,
+            transcriptions: 0,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -219,5 +287,52 @@ mod tests {
             serde_json::to_value(MetricsRange::Last30Days).unwrap(),
             "last_30_days"
         );
+    }
+
+    #[test]
+    fn ranges_count_local_days_and_all_time_is_unbounded() {
+        let days: Vec<Option<u32>> = MetricsRange::ALL
+            .iter()
+            .map(|range| range.local_days())
+            .collect();
+        assert_eq!(days, [Some(1), Some(7), Some(30), None]);
+        let input: MetricsSummaryInput =
+            serde_json::from_value(json!({ "range": "all_time" })).unwrap();
+        assert_eq!(input.range, MetricsRange::AllTime);
+        assert!(
+            serde_json::from_value::<MetricsSummaryInput>(json!({ "range": "forever" })).is_err()
+        );
+    }
+
+    #[test]
+    fn activity_input_bounds_are_declared() {
+        use garde::Validate;
+        for (days, valid) in [
+            (0, false),
+            (1, true),
+            (30, true),
+            (MetricsActivityInput::MAX_DAYS, true),
+            (MetricsActivityInput::MAX_DAYS + 1, false),
+        ] {
+            assert_eq!(
+                MetricsActivityInput { days }.validate().is_ok(),
+                valid,
+                "{days}"
+            );
+        }
+    }
+
+    #[test]
+    fn activity_days_carry_their_date_as_text() {
+        let day = ActivityDay {
+            date: "2026-09-25".parse().unwrap(),
+            words: 42,
+            transcriptions: 3,
+        };
+        assert_eq!(
+            serde_json::to_value(day).unwrap(),
+            json!({ "date": "2026-09-25", "words": 42, "transcriptions": 3 })
+        );
+        assert_eq!(ActivityDay::empty(day.date).words, 0);
     }
 }

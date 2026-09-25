@@ -1,8 +1,9 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: components global barrel, reusable components, GlassSurface, EmptyState, ProgressBar, NavIcon, Page, DataList, TranscriptRow, SettingField, HotkeyInput
+ * SOURCE OF TRUTH KEYWORDS: components global barrel, reusable components, GlassSurface, EmptyState, ProgressBar, NavIcon, Page, DataList, TranscriptRow, SettingField, HotkeyInput, StatCard, take actions
  * WHAT:  Barrel for every reusable app component (one folder each under components/global).
  * WHY:   Routes import `@/components/global` and never reach into a folder, so components can be reorganised
- *        inside their folders freely (03 §3). StatCard joins with its step.
+ *        inside their folders freely (03 §3). Components inside global/ import each other by folder, never
+ *        through this barrel, so no folder depends on the whole set.
  * WHERE: Imported by routes, the app shell and the pill.
  */
 export {
@@ -44,6 +45,30 @@ export {
   type SettingFieldProps,
   type SettingForm,
 } from "./setting-field";
+export {
+  StatCard,
+  StatFigure,
+  StatUnit,
+  type StatCardProps,
+  type StatCardSize,
+  type StatFigureProps,
+} from "./stat-card";
+export {
+  DeleteTakeDialog,
+  TakeActionButton,
+  takeAvailability,
+  TakeOverlays,
+  TakeRowActions,
+  TranscriptSheet,
+  useTakeInspector,
+  type DeleteTakeDialogProps,
+  type TakeActionButtonProps,
+  type TakeAvailability,
+  type TakeInspector,
+  type TakeOverlaysProps,
+  type TakeRowActionsProps,
+  type TranscriptSheetProps,
+} from "./take-actions";
 export {
   TRANSCRIPT_STATUS_LOOK,
   TranscriptRow,

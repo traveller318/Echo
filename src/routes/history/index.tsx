@@ -4,8 +4,9 @@
  *        two-line preview, duration, status badge), row actions Copy / Retry / Delete on hover or focus, a detail
  *        Sheet with the full text, and a confirmation before a delete.
  * WHY:   All data comes from Rust through useHistoryList / useTranscript and stays fresh from HistoryChanged and
- *        TranscriptSaved; the page keeps only UI state (the search text, which take is open, which is being
- *        deleted), never a copy of the takes (root CLAUDE.md §7). Pages load 100 rows at a time as the list nears
+ *        TranscriptSaved; the page keeps only UI state (the search text, and through useTakeInspector which take
+ *        is open and which is being deleted), never a copy of the takes (root CLAUDE.md §7). The row actions, sheet
+ *        and confirmation are the shared components/global/take-actions, also used by the Dashboard. Pages load 100 rows at a time as the list nears
  *        its end. The row clock is the list's last refresh (`dataUpdatedAt`), so "today" is judged once per
  *        refresh, not per row. The search limit is the one Rust enforces (HISTORY_SEARCH_MAX_CHARS, generated).
  *        Loading shows an indeterminate bar only after --delay-loading (ProgressBar), so a fast read never flashes.
@@ -13,22 +14,27 @@
  */
 import { SearchXIcon } from "lucide-react";
 import { useCallback, useState } from "react";
-import { HISTORY_SEARCH_MAX_CHARS, type TranscriptId, type TranscriptSummary } from "@/bindings";
-import { DataList, EmptyState, NavIcon, Page, ProgressBar, TranscriptRow } from "@/components/global";
+import { HISTORY_SEARCH_MAX_CHARS, type TranscriptSummary } from "@/bindings";
+import {
+  DataList,
+  EmptyState,
+  NavIcon,
+  Page,
+  ProgressBar,
+  TakeOverlays,
+  TakeRowActions,
+  TranscriptRow,
+  useTakeInspector,
+} from "@/components/global";
 import { Button } from "@/components/ui";
 import type { NavPageProps } from "@/app/nav-page";
-import { useHistoryList, useTranscriptActions } from "@/hooks";
+import { useHistoryList } from "@/hooks";
 import { describeAppError, toAppError } from "@/lib/app-error";
-import { DeleteTakeDialog } from "./_components/DeleteTakeDialog";
-import { HistoryRowActions } from "./_components/HistoryRowActions";
-import { TranscriptSheet } from "./_components/TranscriptSheet";
 
 export default function HistoryPage({ nav }: NavPageProps) {
   const [search, setSearch] = useState("");
-  const [openId, setOpenId] = useState<TranscriptId | null>(null);
-  const [deleting, setDeleting] = useState<TranscriptId | null>(null);
   const list = useHistoryList(search);
-  const actions = useTranscriptActions();
+  const takes = useTakeInspector();
   const { fetchNextPage, isFetchingNextPage } = list;
 
   const loadMore = useCallback(() => {
@@ -36,12 +42,6 @@ export default function HistoryPage({ nav }: NavPageProps) {
       void fetchNextPage();
     }
   }, [fetchNextPage, isFetchingNextPage]);
-  const closeSheet = useCallback(() => {
-    setOpenId(null);
-  }, []);
-  const askDelete = useCallback((take: { readonly id: TranscriptId }) => {
-    setDeleting(take.id);
-  }, []);
 
   const empty = list.isPending ? (
     <ProgressBar value={null} aria-label="Loading your takes" />
@@ -78,10 +78,10 @@ export default function HistoryPage({ nav }: NavPageProps) {
         items={list.items}
         getKey={(take) => take.id}
         row={(take) => <TranscriptRow take={take} now={list.dataUpdatedAt} />}
-        actions={(take) => <HistoryRowActions take={take} actions={actions} onDelete={askDelete} />}
+        actions={(take) => <TakeRowActions take={take} actions={takes.actions} onDelete={takes.askDelete} />}
         empty={empty}
         onActivate={(take) => {
-          setOpenId(take.id);
+          takes.open(take.id);
         }}
         search={{
           value: search,
@@ -95,21 +95,7 @@ export default function HistoryPage({ nav }: NavPageProps) {
         onEndReached={loadMore}
         footer={isFetchingNextPage ? <ProgressBar value={null} aria-label="Loading more takes" /> : null}
       />
-      <TranscriptSheet id={openId} onClose={closeSheet} actions={actions} onDelete={askDelete} />
-      <DeleteTakeDialog
-        take={deleting}
-        onCancel={() => {
-          setDeleting(null);
-        }}
-        onConfirm={(id) => {
-          setDeleting(null);
-          actions.remove.run(id, () => {
-            if (openId === id) {
-              setOpenId(null);
-            }
-          });
-        }}
-      />
+      <TakeOverlays inspector={takes} />
     </Page>
   );
 }

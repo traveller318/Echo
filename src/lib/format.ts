@@ -1,8 +1,10 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: format, formatCount, formatDuration, formatClock, formatWpm, formatBytes, formatTakeTime, formatMetricValue, formatSettingUnit, formatLanguage
+ * SOURCE OF TRUTH KEYWORDS: format, formatCount, formatDuration, formatClock, formatWpm, formatBytes, formatTakeTime, formatMetricValue, formatMetricParts, formatSettingUnit, formatLanguage, formatDay
  * WHAT:  Every number the UI shows, turned into text: counts, human durations (`2 h 5 min`), the pill clock
  *        (`m:ss`), words per minute, milliseconds, days, byte sizes, word counts, when a take happened
- *        (`formatTakeTime`), and the unit-driven entry points `formatMetricValue(unit, value)` (dashboard),
+ *        (`formatTakeTime`), a local calendar day (`formatDay`), and the unit-driven entry points
+ *        `formatMetricValue(unit, value)` and `formatMetricParts(unit, value)` (dashboard: figures and unit words
+ *        apart, so a stat card can size them differently),
  *        `formatSettingInt(unit, value)` and `formatSettingUnit(unit)` (Settings); plus language names
  *        (`formatLanguage`) and NUMERIC_CLASS, the class that makes numerals tabular.
  * WHY:   One place decides how a number reads, so the dashboard, history, models and settings agree. The unit
@@ -55,26 +57,47 @@ export function formatCount(value: number, locale?: string): string {
  * WHERE: formatMetricValue (`duration`), History durations.
  */
 export function formatDuration(ms: number, locale?: string): string {
+  return joinParts(durationParts(ms, locale));
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: NumberPart, number and unit parts, durationParts, joinParts, stat value parts
+ * WHAT:  A formatted number split into its figures and unit word (`{ value: "142", unit: "wpm" }`); a duration is
+ *        one part per unit (`2 h 5 min` → `2`/`h`, `5`/`min`). `joinParts` writes them back as one string.
+ * WHY:   The dashboard shows figures large and unit words small (04 §1 "numbers are heroes"), so it needs the two
+ *        apart; the joined text is the same string the rest of the UI shows, so the two can never disagree.
+ * WHERE: formatDuration, formatMetricValue and formatMetricParts below; the Dashboard's stat cards.
+ */
+export interface NumberPart {
+  readonly value: string;
+  /** The unit word after the figures; empty for a plain count. */
+  readonly unit: string;
+}
+
+function joinParts(parts: readonly NumberPart[]): string {
+  return parts.map((part) => (part.unit === "" ? part.value : `${part.value} ${part.unit}`)).join(" ");
+}
+
+function durationParts(ms: number, locale?: string): NumberPart[] {
   const totalSeconds = Math.round(Math.abs(ms) / MS_PER_SECOND);
   const sign = ms < 0 && totalSeconds > 0 ? MINUS : "";
   const hours = Math.floor(totalSeconds / SECONDS_PER_HOUR);
   const minutes = Math.floor((totalSeconds % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE);
   const seconds = totalSeconds % SECONDS_PER_MINUTE;
   const count = numberFormat(locale);
-  const parts = [
+  const units = [
     { value: hours, unit: "h" },
     { value: minutes, unit: "min" },
     { value: seconds, unit: "s" },
   ];
-  const first = parts.findIndex((part) => part.value > 0);
+  const first = units.findIndex((part) => part.value > 0);
   if (first === -1) {
-    return "0 s";
+    return [{ value: "0", unit: "s" }];
   }
-  const shown = parts
+  return units
     .slice(first, first + 2)
     .filter((part) => part.value > 0)
-    .map((part) => `${count.format(part.value)} ${part.unit}`);
-  return `${sign}${shown.join(" ")}`;
+    .map((part, index) => ({ value: `${index === 0 ? sign : ""}${count.format(part.value)}`, unit: part.unit }));
 }
 
 /** Elapsed time as a clock: `0:07`, `12:45`, `1:02:03` (the pill timer, 04 §4). */
@@ -131,18 +154,24 @@ export function formatBytes(bytes: number, locale?: string): string {
 }
 
 type Formatter = (value: number, locale?: string) => string;
+type PartsFormatter = (value: number, locale?: string) => NumberPart[];
 
-const METRIC_FORMAT: Readonly<Record<MetricUnit, Formatter>> = {
-  duration: formatDuration,
-  count: formatCount,
-  wpm: formatWpm,
-  ms: formatMilliseconds,
-  days: formatDays,
+const METRIC_PARTS: Readonly<Record<MetricUnit, PartsFormatter>> = {
+  duration: durationParts,
+  count: (value, locale) => [{ value: formatCount(value, locale), unit: "" }],
+  wpm: (value, locale) => [{ value: formatCount(value, locale), unit: "wpm" }],
+  ms: (value, locale) => [{ value: formatCount(value, locale), unit: "ms" }],
+  days: (value, locale) => [{ value: formatCount(value, locale), unit: plural(value, "day", "days") }],
 };
 
-/** A dashboard metric value in its registry unit; `null` (no completed take yet) reads as an em dash. */
+/** A dashboard metric value in its registry unit as figures and unit words; `null` (no data yet) is an em dash. */
+export function formatMetricParts(unit: MetricUnit, value: number | null, locale?: string): readonly NumberPart[] {
+  return value === null ? [{ value: MISSING_VALUE, unit: "" }] : METRIC_PARTS[unit](value, locale);
+}
+
+/** A dashboard metric value in its registry unit as one string; `null` (no data yet) reads as an em dash. */
 export function formatMetricValue(unit: MetricUnit, value: number | null, locale?: string): string {
-  return value === null ? MISSING_VALUE : METRIC_FORMAT[unit](value, locale);
+  return joinParts(formatMetricParts(unit, value, locale));
 }
 
 const SETTING_FORMAT: Readonly<Record<SettingUnit, Formatter>> = {
@@ -213,4 +242,39 @@ export function formatTakeTime(createdAt: number, now: number = Date.now(), loca
     month: "short",
     ...(sameYear ? {} : { year: "numeric" }),
   }).format(at);
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: formatDay, parseLocalDate, local calendar day, YYYY-MM-DD, chart axis date, activity day label
+ * WHAT:  `parseLocalDate("2026-09-25")` gives that day at local midnight (null for anything else);
+ *        `formatDay(text, style)` writes a local `YYYY-MM-DD` day as `Sep 25` (`short`) or `Friday, September 25`
+ *        (`long`); text that is not such a day is returned as it is.
+ * WHY:   Rust sends calendar days as local `YYYY-MM-DD` strings (ActivityDay), and `new Date("2026-09-25")` would
+ *        read that as UTC midnight, the previous evening west of Greenwich; building the Date from its parts keeps
+ *        the day the user lived. Month names and order follow the Windows locale through Intl.
+ * WHERE: The Dashboard activity chart (axis labels, tooltip heading).
+ */
+const LOCAL_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+export function parseLocalDate(text: string): Date | null {
+  const match = LOCAL_DATE.exec(text);
+  if (match === null) {
+    return null;
+  }
+  const [year, month, day] = match.slice(1).map(Number);
+  if (year === undefined || month === undefined || day === undefined) {
+    return null;
+  }
+  const date = new Date(year, month - 1, day);
+  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day ? date : null;
+}
+
+const DAY_STYLES: Readonly<Record<"short" | "long", Intl.DateTimeFormatOptions>> = {
+  short: { month: "short", day: "numeric" },
+  long: { weekday: "long", month: "long", day: "numeric" },
+};
+
+export function formatDay(text: string, style: "short" | "long" = "short", locale?: string): string {
+  const date = parseLocalDate(text);
+  return date === null ? text : new Intl.DateTimeFormat(locale, DAY_STYLES[style]).format(date);
 }

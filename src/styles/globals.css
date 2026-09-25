@@ -99,6 +99,7 @@
   --spacing-popover-max: var(--popover-max-height);
   --spacing-setting-control: var(--setting-control-width);
   --spacing-number-field: var(--number-field-width);
+  --spacing-chart: var(--chart-height);
   --container-content: var(--content-max);
   --container-dialog: var(--dialog-width);
   --container-measure: var(--text-measure);

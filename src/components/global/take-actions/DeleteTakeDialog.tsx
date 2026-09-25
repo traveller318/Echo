@@ -5,7 +5,7 @@
  * WHY:   00 constraint 5 "never lose a take": deleting is the one History action that cannot be undone, so it is
  *        confirmed, with the destructive action in --color-record (04 §1 "red only means … destructive") and Cancel
  *        focused first by Radix so Enter never deletes by accident.
- * WHERE: routes/history/index.tsx (from a row's Delete or the detail sheet).
+ * WHERE: TakeOverlays (this folder), from a row's Delete or the detail sheet.
  */
 import type { TranscriptId } from "@/bindings";
 import {

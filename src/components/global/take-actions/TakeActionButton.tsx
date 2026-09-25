@@ -1,11 +1,11 @@
 /**
  * SOURCE OF TRUTH KEYWORDS: TakeActionButton, icon action with tooltip, row action button, busy action
- * WHAT:  One History action as an icon-only ghost button with its name as the tooltip and accessible label;
+ * WHAT:  One take action as an icon-only ghost button with its name as the tooltip and accessible label;
  *        `busy` disables it and says so while its command runs.
  * WHY:   Icon-only buttons need a name on hover and focus (04 §6 Tooltip); the three row actions (Copy, Retry,
  *        Delete) share this so they look and behave alike. The tooltip content is the label, so the label is
  *        never written twice.
- * WHERE: HistoryRowActions (this folder).
+ * WHERE: TakeRowActions (this folder).
  */
 import type { LucideIcon } from "lucide-react";
 import { Button, Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui";

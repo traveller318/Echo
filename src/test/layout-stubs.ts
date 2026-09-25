@@ -1,12 +1,13 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: jsdom layout stubs, stubListLayout, offsetHeight stub, scrollTop stub, scrollTo stub, virtualized list tests
+ * SOURCE OF TRUTH KEYWORDS: jsdom layout stubs, stubListLayout, stubResizeObserver, offsetHeight stub, scrollTop stub, scrollTo stub, virtualized list tests
  * WHAT:  `stubListLayout({ viewport, row })` gives jsdom just enough layout for a virtualized DataList: the element
  *        marked `data-slot="data-list-viewport"` is `viewport` px tall, every other element `row` px; its scroll
  *        height is the virtual list's height; scrollTop is kept and `scrollTo` scrolls and fires `scroll`. Returns
  *        the function that puts HTMLElement.prototype back.
  * WHY:   jsdom has no layout (every size and scroll position is 0), so TanStack Virtual would render nothing and
  *        never scroll. Stubbing the prototype for one test at a time keeps every other test on plain jsdom.
- * WHERE: components/global/data-list/DataList.test.tsx, routes/history/HistoryPage.test.tsx.
+ * WHERE: components/global/data-list/DataList.test.tsx, routes/history/HistoryPage.test.tsx,
+ *        routes/dashboard/DashboardPage.test.tsx (with stubResizeObserver below for its chart).
  */
 
 const STUBBED = ["offsetHeight", "offsetWidth", "clientHeight", "scrollHeight", "scrollTop", "scrollTo"] as const;
@@ -68,6 +69,62 @@ export function stubListLayout({ viewport, row }: ListLayout): () => void {
       if (descriptor !== undefined) {
         Object.defineProperty(proto, name, descriptor);
       }
+    }
+  };
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: stubResizeObserver, ResizeObserver stub, chart size in tests, Recharts ResponsiveContainer test
+ * WHAT:  `stubResizeObserver({ width, height })` installs a ResizeObserver that reports every observed element at
+ *        that size as soon as it is observed; returns the function that puts the previous one (or none) back.
+ * WHY:   jsdom has no ResizeObserver, so Recharts' ResponsiveContainer never learns its size and draws nothing; a
+ *        fixed size lets page tests see the real chart without changing the component.
+ * WHERE: routes/dashboard/DashboardPage.test.tsx.
+ */
+export function stubResizeObserver({ width, height }: { readonly width: number; readonly height: number }): () => void {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
+  class FixedSizeObserver {
+    readonly #callback: ResizeObserverCallback;
+
+    constructor(callback: ResizeObserverCallback) {
+      this.#callback = callback;
+    }
+
+    observe(target: Element): void {
+      const rect: DOMRectReadOnly = {
+        x: 0,
+        y: 0,
+        top: 0,
+        left: 0,
+        width,
+        height,
+        right: width,
+        bottom: height,
+        toJSON: () => ({ width, height }),
+      };
+      const entry: ResizeObserverEntry = {
+        target,
+        contentRect: rect,
+        borderBoxSize: [{ inlineSize: width, blockSize: height }],
+        contentBoxSize: [{ inlineSize: width, blockSize: height }],
+        devicePixelContentBoxSize: [{ inlineSize: width, blockSize: height }],
+      };
+      this.#callback([entry], this);
+    }
+
+    unobserve(): void {
+      // Nothing is tracked between calls.
+    }
+
+    disconnect(): void {
+      // Nothing is tracked between calls.
+    }
+  }
+  Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, writable: true, value: FixedSizeObserver });
+  return () => {
+    Reflect.deleteProperty(globalThis, "ResizeObserver");
+    if (previous !== undefined) {
+      Object.defineProperty(globalThis, "ResizeObserver", previous);
     }
   };
 }

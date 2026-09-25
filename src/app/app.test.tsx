@@ -46,6 +46,8 @@ function renderShell(path = "/", pages: NavPages = NAV_PAGES) {
 /** What the mocked Rust answers for reads the real pages make on mount. */
 const PAGE_READS: Readonly<Record<string, unknown>> = {
   history_list: { items: [], next_cursor: null },
+  metrics_summary: { range: "all_time", values: [] },
+  metrics_activity: [],
 };
 
 beforeEach(() => {
@@ -63,7 +65,7 @@ describe("app shell", () => {
   it("lists the registry nav in order and marks the current page", async () => {
     renderShell("/");
     expect(await screen.findByRole("heading", { level: 1, name: "Dashboard" })).toBeInTheDocument();
-    expect(screen.getByText("This page is being set up")).toBeInTheDocument();
+    expect(await screen.findByRole("group", { name: "Recent takes" })).toBeInTheDocument();
 
     const nav = screen.getByRole("navigation", { name: "Main" });
     const links = within(nav).getAllByRole("link");

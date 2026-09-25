@@ -1,11 +1,12 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: bootstrap, composition root, startup sequence, ASR worker, session actor, pill presenter, event fan-out, start_speech_engine, prepare_session, stop_session, command context, startup recovery, retention sweeper, panic hook, sound player, audio device watch
+ * SOURCE OF TRUTH KEYWORDS: bootstrap, composition root, startup sequence, ASR worker, session actor, pill presenter, event fan-out, start_speech_engine, prepare_session, stop_session, command context, startup recovery, retention sweeper, panic hook, sound player, audio device watch, day watch
  * WHAT:  `start`: the startup sequence that runs before any window exists: resolve AppPaths from the Tauri path
  *        API, start local logging, open and migrate the database, settle the takes a crash left unfinished
  *        (pipeline/recovery.rs), resolve the stored settings over the registry defaults, start the appearance
  *        watcher and the microphone hot-plug watch (DeviceListRelay), start the (empty) ASR worker, start the sound
  *        player, spawn the (idle) session actor over the same ports (with the sound cues) and point the
- *        panic hook at it (app/panics.rs), spawn the retention sweeper (first sweep now, then daily), start the
+ *        panic hook at it (app/panics.rs), spawn the retention sweeper (first sweep now, then daily) and the
+ *        dashboard's day watch (MetricsChanged when the local day changes), start the
  *        pill presenter over the overlay adapter, and manage the CommandCtx (settings;
  *        consent, appearance, launcher, microphone, thread-priority, hotkey, foreground-window, toast and
  *        main-window adapters; the ASR worker; the Delivery over the clipboard, paste and toast adapters; the
@@ -69,6 +70,7 @@ use crate::{
         audio_devices::{DEVICE_SETTLE, DeviceListRelay},
         delivery::{Delivery, DeliveryPorts},
         fan_out::FanOut,
+        metrics::DayWatch,
         pill::{PillPresenter, PillTiming},
         recovery,
         retention::{RetentionDeps, RetentionHandle},
@@ -179,6 +181,8 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<RecoveryReport, Box<dyn Error>>
     });
     // Its first sweep runs now, on the blocking pool, after recovery settled every unfinished take.
     tauri::async_runtime::spawn(sweeper.run());
+    // Refreshes the dashboard's "today" when the local day changes; runs until the runtime stops.
+    tauri::async_runtime::spawn(DayWatch::new(db.clone(), Arc::clone(&events)).run());
     // The pill window exists only once the event loop runs; app/windows.rs attaches it then.
     app.manage(overlay);
     app.manage(CommandCtx::new(CommandDeps {

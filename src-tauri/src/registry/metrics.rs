@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: metrics registry, METRICS, LOG_METRICS, COMMAND_DURATION, dashboard metrics, time saved, speaking WPM, median latency, streak, activity
+ * SOURCE OF TRUTH KEYWORDS: metrics registry, METRICS, LOG_METRICS, COMMAND_DURATION, dashboard metrics, time saved, speaking WPM, median latency, streak, activity, MEDIAN_LATENCY_TAKES
  * WHAT:  Every dashboard metric of 02 §7.4 with its label, help, unit, query (a summary aggregate or the daily
  *        activity series) and emphasis, plus lookups; and every log-only metric (LOG_METRICS, 02 §12), such as
  *        the command duration the factory records.
@@ -8,7 +8,9 @@
  *        never counted (05 decision log). Order within an emphasis is the order on the page (04 §5).
  * WHERE: Sent to the UI by `registry_get`; `summary_aggregates` tells `metrics_summary` what to compute;
  *        `inputs_changed` tells a settings write whether the dashboard must read again;
- *        `ACTIVITY_DAYS` bounds `metrics_activity`; `COMMAND_DURATION` is recorded by ipc/factory.rs.
+ *        `ACTIVITY_DAYS` is the chart's length (the UI asks `metrics_activity` for it through the activity entry);
+ *        `MEDIAN_LATENCY_TAKES` bounds the median in pipeline/metrics; `COMMAND_DURATION` is recorded by
+ *        ipc/factory.rs.
  */
 
 use super::settings::keys;
@@ -19,6 +21,9 @@ use crate::types::{
 
 /// Days the activity chart covers.
 pub const ACTIVITY_DAYS: u32 = 30;
+
+/// Newest completed takes whose latencies the median is taken over (02 §7.4 "last 100").
+pub const MEDIAN_LATENCY_TAKES: u32 = 100;
 
 /// Every metric, in dashboard order.
 pub const METRICS: &[MetricSpec] = &[
@@ -199,6 +204,10 @@ mod tests {
             .collect();
         assert_eq!(series.len(), 1);
         assert_eq!(series[0].query, MetricQuery::Activity { days: 30 });
+        assert!(
+            (1..=crate::types::MetricsActivityInput::MAX_DAYS).contains(&ACTIVITY_DAYS),
+            "the chart asks for a series metrics_activity accepts"
+        );
         assert_eq!(
             find(&MetricId::from_static("streak")).map(|spec| spec.unit),
             Some(MetricUnit::Days)

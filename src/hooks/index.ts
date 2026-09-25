@@ -1,7 +1,8 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: hooks barrel, useEchoQuery, useEchoInfiniteQuery, useEchoEvent, useEchoMutation, useRegistryView, useSessionView, useHistoryList, useSettingValues, useSettingWrite, data hooks
+ * SOURCE OF TRUTH KEYWORDS: hooks barrel, useEchoQuery, useEchoInfiniteQuery, useEchoEvent, useEchoMutation, useRegistryView, useSessionView, useHistoryList, useMetricsSummary, useSettingValues, useSettingWrite, data hooks
  * WHAT:  Barrel for src/hooks: the data hooks every window uses to read commands (single and paged), run writes,
- *        follow Rust events, read the registry, follow the current take, read and act on History and on Settings, plus the
+ *        follow Rust events, read the registry, follow the current take, read and act on History, read the
+ *        Dashboard metrics and read and act on Settings, plus the
  *        timing hooks for delayed indicators and live counters.
  * WHY:   One import path (`@/hooks`) for the data layer keeps components free of TanStack and Tauri details.
  * WHERE: Imported by the app shell, routes and (later) the pill.
@@ -20,12 +21,21 @@ export {
   HISTORY_EVENTS,
   HISTORY_PAGE_SIZE,
   historyListQuery,
+  recentTakesQuery,
   transcriptQuery,
   useHistoryList,
+  useRecentTakes,
   useTranscript,
   useTranscriptActions,
   type TranscriptActions,
 } from "./use-history";
+export {
+  METRICS_EVENTS,
+  metricsActivityQuery,
+  metricsSummaryQuery,
+  useMetricsActivity,
+  useMetricsSummary,
+} from "./use-metrics";
 export { useRunningClock, type RunningClockOptions } from "./use-running-clock";
 export { useSessionView, type UseSessionViewOptions } from "./use-session-view";
 export {

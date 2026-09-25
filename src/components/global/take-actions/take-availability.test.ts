@@ -1,6 +1,6 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: takeAvailability test, History action rules test
- * WHAT:  Verifies which History actions each take offers: nothing while a take is still in progress, no copy for
+ * SOURCE OF TRUTH KEYWORDS: takeAvailability test, take action rules test
+ * WHAT:  Verifies which take actions each take offers: nothing while a take is still in progress, no copy for
  *        an empty take, no retry without audio.
  * WHY:   Buttons that cannot work would only raise error toasts; the rule is shared by the rows and the sheet.
  * WHERE: Runs in the `web` Vitest project.

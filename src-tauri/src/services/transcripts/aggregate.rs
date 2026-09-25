@@ -1,21 +1,22 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: aggregate transcripts, metrics sums, totals, recent latencies, active days, words per day, activity series, streak input
+ * SOURCE OF TRUTH KEYWORDS: aggregate transcripts, metrics sums, totals, recent latencies, active days, words per day, activity series, streak input, takes per day
  * WHAT:  The raw aggregates behind the dashboard (02 §7.4), over completed (`done`) takes only:
  *        `totals` (count, words, recorded ms, speech ms since a time), `recent_latencies` (newest first, for the
  *        median), `active_days` (distinct local dates with a take, newest first, for the streak) and
- *        `words_per_day` (the activity series).
+ *        `words_per_day` (words and takes per local date, the activity series).
  * WHY:   Metrics are computed from `transcripts`, never counted (05 decision log), and the formulas (time saved,
  *        speaking WPM, median, streak, filling empty days) are business rules for the metrics command, so this
  *        verb returns plain sums and lists. Calendar days use the operating system's local time zone
- *        (SQLite `localtime`), the same days the user sees. Empty windows give zero sums and empty lists.
- * WHERE: metrics_summary / metrics_activity (dashboard step); service tests.
+ *        (SQLite `localtime`), the same days the user sees; services/calendar.rs answers "which day is it" and
+ *        "when does a day start" with the same clock. Empty windows give zero sums and empty lists.
+ * WHERE: pipeline/metrics (behind metrics_summary / metrics_activity); service tests.
  */
 
 use rusqlite::{Row, params};
 
 use crate::{
     services::db::Db,
-    types::{ActivityDay, PortResult, TranscriptStatus, TranscriptTotals, UnixMs},
+    types::{ActivityDay, LocalDate, PortResult, TranscriptStatus, TranscriptTotals, UnixMs},
 };
 
 /// The local calendar date (`YYYY-MM-DD`) of `created_at`.
@@ -69,7 +70,7 @@ pub fn recent_latencies(db: &Db, since: Option<UnixMs>, limit: u32) -> PortResul
 }
 
 /// Every local date with at least one completed take, newest first.
-pub fn active_days(db: &Db) -> PortResult<Vec<String>> {
+pub fn active_days(db: &Db) -> PortResult<Vec<LocalDate>> {
     let sql = format!(
         "SELECT DISTINCT {LOCAL_DAY} AS day FROM transcripts WHERE status = ?1 ORDER BY day DESC"
     );
@@ -81,10 +82,10 @@ pub fn active_days(db: &Db) -> PortResult<Vec<String>> {
     })
 }
 
-/// Words of completed takes per local date since `since`, oldest first; days without takes are absent.
+/// Words and count of completed takes per local date since `since`, oldest first; days without takes are absent.
 pub fn words_per_day(db: &Db, since: UnixMs) -> PortResult<Vec<ActivityDay>> {
     let sql = format!(
-        "SELECT {LOCAL_DAY} AS day, COALESCE(SUM(word_count), 0) FROM transcripts \
+        "SELECT {LOCAL_DAY} AS day, COALESCE(SUM(word_count), 0), COUNT(*) FROM transcripts \
          WHERE status = ?1 AND created_at >= ?2 GROUP BY day ORDER BY day"
     );
     db.read(|connection| {
@@ -96,6 +97,7 @@ pub fn words_per_day(db: &Db, since: UnixMs) -> PortResult<Vec<ActivityDay>> {
                     Ok(ActivityDay {
                         date: row.get(0)?,
                         words: row.get(1)?,
+                        transcriptions: row.get(2)?,
                     })
                 },
             )?
@@ -122,14 +124,11 @@ mod tests {
     /// Noon UTC on 2026-01-10, so every fixture take falls well inside one local day in any time zone ±11 h.
     const NOON: u64 = 1_768_046_400_000;
 
-    fn local_day(db: &Db, millis: u64) -> String {
-        db.read(|connection| {
-            connection.query_row(
-                "SELECT date(?1 / 1000, 'unixepoch', 'localtime')",
-                params![i64::try_from(millis).unwrap()],
-                |row| row.get(0),
-            )
-        })
+    fn local_day(db: &Db, millis: u64) -> LocalDate {
+        crate::services::calendar::local_date(
+            db,
+            UnixMs::from_millis(i64::try_from(millis).unwrap()),
+        )
         .unwrap()
     }
 
@@ -191,17 +190,19 @@ mod tests {
 
         let first = local_day(&db, NOON);
         let third = local_day(&db, NOON + 2 * DAY_MS);
-        assert_eq!(active_days(&db).unwrap(), [third.clone(), first.clone()]);
+        assert_eq!(active_days(&db).unwrap(), [third, first]);
         assert_eq!(
             words_per_day(&db, UnixMs::from_millis(0)).unwrap(),
             [
                 ActivityDay {
                     date: first,
-                    words: 3
+                    words: 3,
+                    transcriptions: 2,
                 },
                 ActivityDay {
-                    date: third.clone(),
-                    words: 3
+                    date: third,
+                    words: 3,
+                    transcriptions: 1,
                 },
             ]
         );
@@ -210,7 +211,8 @@ mod tests {
             words_per_day(&db, since_second_day).unwrap(),
             [ActivityDay {
                 date: third,
-                words: 3
+                words: 3,
+                transcriptions: 1,
             }]
         );
     }

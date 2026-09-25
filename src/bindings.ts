@@ -31,6 +31,13 @@ export const commands = {
 	historyDelete: (input: TranscriptInput) => typedError<null, AppError>(__TAURI_INVOKE("history_delete", { input })),
 	/**  Pastes the newest completed take into the focused app again (copies it when pasting is not possible). */
 	historyPasteLast: () => typedError<DeliveryOutcome, AppError>(__TAURI_INVOKE("history_paste_last")),
+	/**
+	 *  Every dashboard summary metric over `range`, in dashboard order; a value is null when there is nothing
+	 *  to compute it from yet.
+	 */
+	metricsSummary: (input: MetricsSummaryInput) => typedError<MetricsSummary, AppError>(__TAURI_INVOKE("metrics_summary", { input })),
+	/**  Words and completed takes per local day for the last `days` days, today included, oldest first. */
+	metricsActivity: (input: MetricsActivityInput) => typedError<ActivityDay[], AppError>(__TAURI_INVOKE("metrics_activity", { input })),
 	/**  Where the pill's buttons are now, in the page's CSS pixels; an empty list when it shows none. */
 	pillSetHitAreas: (input: PillHitAreas) => typedError<null, AppError>(__TAURI_INVOKE("pill_set_hit_areas", { input })),
 	/**  The pill finished its exit animation. */
@@ -83,11 +90,12 @@ export const SETTING_TOKEN_MAX_CHARS = 128 as const;
 /**  Where inference runs. `gpu` means any DX12 adapter (DirectML), not one vendor. */
 export type Accelerator = "cpu" | "gpu";
 
-/**  Words delivered on one local calendar day. */
+/**  Words and completed takes on one local calendar day. */
 export type ActivityDay = {
-	/**  Local date as `YYYY-MM-DD`. */
+	/**  Local date, `YYYY-MM-DD`. */
 	date: string,
 	words: number,
+	transcriptions: number,
 };
 
 /**  The only error type that crosses IPC. The variant name is the stable wire `code`. */
@@ -413,19 +421,50 @@ export type MetricUnit =
 
 export type MetricValue = {
 	aggregate: MetricAggregate,
-	/**  None when there is no completed take in the range. */
+	/**
+	 *  None when there is nothing to compute it from yet (no completed take in the range, no speech time, no
+	 *  latency), so the UI can tell "no data" from zero.
+	 */
 	value: number | null,
+};
+
+/**
+ * 
+ *  * SOURCE OF TRUTH KEYWORDS: MetricsActivityInput, metrics_activity input, activity days, chart length, garde schema
+ *  * WHAT:  The input of `metrics_activity`: how many local calendar days, today included, the series covers.
+ *  * WHY:   The factory enforces 1..=MAX_DAYS before the handler runs (02 §4.1), so the series is never empty and
+ *  *        never an unbounded allocation; a year and a day covers any chart the dashboard could draw. The UI reads
+ *  *        the days from the registry's activity metric (`MetricQuery::Activity { days }`), never its own number.
+ *  * WHERE: ipc/commands/metrics.rs; built in the UI by the dashboard activity query (src/hooks/use-metrics.ts).
+ *  
+ */
+export type MetricsActivityInput = {
+	days: number,
 };
 
 /**  Dashboard aggregates changed; metric queries should refetch. */
 export type MetricsChanged = Record<string, never>;
 
-/**  The window a summary covers, ending now. */
+/**  The window a summary covers, ending now: whole local calendar days counted back from today, or every kept take. */
 export type MetricsRange = "today" | "last_7_days" | "last_30_days" | "all_time";
 
 export type MetricsSummary = {
 	range: MetricsRange,
 	values: MetricValue[],
+};
+
+/**
+ * 
+ *  * SOURCE OF TRUTH KEYWORDS: MetricsSummaryInput, metrics_summary input, dashboard range, summary window
+ *  * WHAT:  The input of `metrics_summary`: which MetricsRange to compute over.
+ *  * WHY:   A struct, not a bare enum, so the command can grow options (a comparison window for trends) without
+ *  *        changing its call sites, like every other command input. serde already refuses an unknown range (the
+ *  *        factory maps that to `Validation`, 05 W27), so garde has nothing left to check.
+ *  * WHERE: ipc/commands/metrics.rs; built in the UI by the dashboard summary query (src/hooks/use-metrics.ts).
+ *  
+ */
+export type MetricsSummaryInput = {
+	range: MetricsRange,
 };
 
 /**  The result of `audio_test_level`: levels over the test window and what they mean. */

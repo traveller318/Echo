@@ -1,13 +1,16 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: typed setting reads, sound_cues, notice_shown, theme read, transcription reads, polish reads, remove_fillers, dictionary, llm_polisher, trailing_space, delivery_policy, input_device, session_policy, record_mode, retention_policy
+ * SOURCE OF TRUTH KEYWORDS: typed setting reads, sound_cues, notice_shown, theme read, transcription reads, polish reads, remove_fillers, dictionary, llm_polisher, trailing_space, delivery_policy, input_device, session_policy, record_mode, retention_policy, typing_wpm
  * WHAT:  Typed reads of a SettingsSnapshot for the settings the core acts on.
  * WHY:   Values are stored as tagged SettingValues and enum text; spelling them is the registry's job, so the
  *        pipeline asks here instead of matching kinds or comparing strings. A resolved snapshot always holds a
  *        valid value for every key, so each fallback only guards a snapshot built outside `resolve` and uses the
  *        spec's own default.
  * WHERE: Re-exported by registry/settings; read by pipeline/appearance, pipeline/asr, pipeline/polish,
- *        pipeline/delivery and the session actor (session_policy, input_device, delivery_policy).
+ *        pipeline/delivery, pipeline/metrics (typing_wpm) and the session actor (session_policy, input_device,
+ *        delivery_policy).
  */
+
+use std::num::NonZeroU32;
 
 use super::{find, keys, values};
 use crate::types::{
@@ -193,14 +196,34 @@ pub fn retention_policy(settings: &SettingsSnapshot) -> RetentionPolicy {
     }
 }
 
+/**
+ * SOURCE OF TRUTH KEYWORDS: typing_wpm, typing speed setting, time saved input, metrics settings read
+ * WHAT:  `metrics.typing_wpm`: the user's typing speed in words per minute, never zero.
+ * WHY:   Time saved divides by it (02 §7.4). The registry bounds it to its Int range, so the fallbacks only guard a
+ *        snapshot built outside `resolve`: a value that is not a positive number falls back to the spec default,
+ *        and the type rules out a division by zero instead of a check at the formula.
+ * WHERE: pipeline/metrics (the time-saved formula), read at every metrics_summary, so a new speed applies at once.
+ */
+pub fn typing_wpm(settings: &SettingsSnapshot) -> NonZeroU32 {
+    let positive = |value: i32| u32::try_from(value).ok().and_then(NonZeroU32::new);
+    settings
+        .int(&keys::TYPING_WPM)
+        .and_then(positive)
+        .or_else(|| int_default(&keys::TYPING_WPM).and_then(positive))
+        .unwrap_or(NonZeroU32::MIN)
+}
+
 /// An Int setting, or its spec's default when the snapshot lacks it (only outside `resolve`).
 fn int_or_default(settings: &SettingsSnapshot, key: &SettingKey) -> Option<i32> {
-    settings
-        .int(key)
-        .or_else(|| match find(key).map(|spec| &spec.default) {
-            Some(SettingValue::Int(value)) => Some(*value),
-            _ => None,
-        })
+    settings.int(key).or_else(|| int_default(key))
+}
+
+/// The registry default of an Int setting.
+fn int_default(key: &SettingKey) -> Option<i32> {
+    match find(key).map(|spec| &spec.default) {
+        Some(SettingValue::Int(value)) => Some(*value),
+        _ => None,
+    }
 }
 
 /// A Bool setting, or its spec's default when the snapshot lacks it (only outside `resolve`).

@@ -68,6 +68,7 @@ export const THEME_SCALE = {
     "popover-max",
     "setting-control",
     "number-field",
+    "chart",
   ],
   container: ["content", "dialog", "measure", "sheet", "toast", "tooltip"],
   "font-weight": ["regular", "medium", "semibold", "bold"],

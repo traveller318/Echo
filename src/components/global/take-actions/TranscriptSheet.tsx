@@ -1,18 +1,17 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: TranscriptSheet, history detail drawer, full transcript text, take details, raw text, take failure reason
- * WHAT:  The History detail drawer for one take: when it happened and its status, its full text (the polished
+ * SOURCE OF TRUTH KEYWORDS: TranscriptSheet, take detail drawer, full transcript text, take details, raw text, take failure reason
+ * WHAT:  The detail drawer for one take: when it happened and its status, its full text (the polished
  *        text, else the raw text a failed delivery left, labelled as such), why it failed when it did, its
  *        measurements, and Copy / Retry / Delete.
  * WHY:   04 §5: the list shows two lines; the drawer shows everything without leaving the list. It reads the take
  *        through useTranscript, so it refreshes from HistoryChanged / TranscriptSaved like the list (a retry's new
  *        text appears in place) and closes itself when the take is deleted elsewhere (NotFound). The text is
  *        selectable for partial copies. Measurements that were never taken are left out, never shown as zero.
- * WHERE: routes/history/index.tsx (open on row activation; one at a time).
+ * WHERE: TakeOverlays (this folder), opened on row activation in History and the Dashboard's recent takes.
  */
 import { CopyIcon, RotateCcwIcon, Trash2Icon } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
 import type { Transcript, TranscriptId } from "@/bindings";
-import { EmptyState, ProgressBar, TranscriptStatusBadge } from "@/components/global";
 import {
   Button,
   Sheet,
@@ -26,6 +25,9 @@ import { useTranscript, type TranscriptActions } from "@/hooks";
 import { describeAppError, describeTakeFailure, toAppError } from "@/lib/app-error";
 import { cn } from "@/lib/cn";
 import { formatDuration, formatMilliseconds, formatTakeTime, formatWords, NUMERIC_CLASS } from "@/lib/format";
+import { EmptyState } from "../empty-state";
+import { ProgressBar } from "../progress-bar";
+import { TranscriptStatusBadge } from "../transcript-row";
 import { takeAvailability } from "./take-availability";
 
 export interface TranscriptSheetProps {

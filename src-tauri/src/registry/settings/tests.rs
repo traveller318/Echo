@@ -459,6 +459,27 @@ fn retention_policy_reads_both_storage_settings_and_their_defaults() {
     );
 }
 
+#[test]
+fn typing_wpm_is_the_setting_or_its_default_and_never_zero() {
+    let wpm = |snapshot: &SettingsSnapshot| typing_wpm(snapshot).get();
+    assert_eq!(wpm(&defaults()), 40, "02 §3.3 default");
+    assert_eq!(
+        wpm(&resolve([(keys::TYPING_WPM, SettingValue::Int(85))])),
+        85
+    );
+    assert_eq!(wpm(&SettingsSnapshot::default()), 40, "missing value");
+    for invalid in [0, -5] {
+        assert_eq!(
+            wpm(&SettingsSnapshot::from_resolved([(
+                keys::TYPING_WPM,
+                SettingValue::Int(invalid),
+            )])),
+            40,
+            "{invalid} falls back to the default"
+        );
+    }
+}
+
 /// Adapters with key-up and no update source, like the shipped build.
 const SHIPPED: AdapterCaps = AdapterCaps {
     hotkeys: HotkeyCaps {

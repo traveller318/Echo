@@ -35,7 +35,7 @@ pub use options::{options, validate, validate_reset};
 pub use reads::{
     accelerator_preference, asr_engine, delivery_policy, dictionary, input_device,
     language_preference, llm_polisher, notice_shown, record_mode, remove_fillers, retention_policy,
-    session_policy, sound_cues, theme, trailing_space,
+    session_policy, sound_cues, theme, trailing_space, typing_wpm,
 };
 pub use resolve::{defaults, find, resolve};
 pub use sections::SECTIONS;

@@ -1,5 +1,5 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: format test, formatDuration test, formatClock test, formatBytes test, formatTakeTime test, metric unit format test
+ * SOURCE OF TRUTH KEYWORDS: format test, formatDuration test, formatClock test, formatBytes test, formatTakeTime test, metric unit format test, formatMetricParts test, formatDay test
  * WHAT:  Verifies every formatter's output for typical, boundary and missing values in a fixed locale.
  * WHY:   The dashboard, history, models and settings all read numbers through lib/format.ts; a wrong rounding or
  *        unit here shows up everywhere at once (and negative time saved must read as negative).
@@ -10,8 +10,10 @@ import {
   formatBytes,
   formatClock,
   formatCount,
+  formatDay,
   formatDays,
   formatDuration,
+  formatMetricParts,
   formatMetricValue,
   formatMilliseconds,
   formatMinutes,
@@ -21,6 +23,7 @@ import {
   formatWords,
   formatWpm,
   MISSING_VALUE,
+  parseLocalDate,
 } from "./format";
 
 const LOCALE = "en-US";
@@ -99,6 +102,42 @@ describe("formatMetricValue", () => {
     expect(formatMetricValue("ms", 184, LOCALE)).toBe("184 ms");
     expect(formatMetricValue("days", 3, LOCALE)).toBe("3 days");
     expect(formatMetricValue("count", null, LOCALE)).toBe(MISSING_VALUE);
+    expect(formatMetricValue("days", 1, LOCALE)).toBe("1 day");
+    expect(formatMetricValue("duration", -30_000, LOCALE)).toBe("−30 s");
+  });
+});
+
+describe("formatMetricParts", () => {
+  it("splits figures from unit words, one part per duration unit", () => {
+    expect(formatMetricParts("duration", 7_500_000, LOCALE)).toEqual([
+      { value: "2", unit: "h" },
+      { value: "5", unit: "min" },
+    ]);
+    expect(formatMetricParts("duration", -3_605_000, LOCALE)).toEqual([{ value: "−1", unit: "h" }]);
+    expect(formatMetricParts("duration", 0, LOCALE)).toEqual([{ value: "0", unit: "s" }]);
+    expect(formatMetricParts("wpm", 148.6, LOCALE)).toEqual([{ value: "149", unit: "wpm" }]);
+    expect(formatMetricParts("count", 12_345, LOCALE)).toEqual([{ value: "12,345", unit: "" }]);
+    expect(formatMetricParts("days", 1, LOCALE)).toEqual([{ value: "1", unit: "day" }]);
+    expect(formatMetricParts("ms", null, LOCALE)).toEqual([{ value: MISSING_VALUE, unit: "" }]);
+  });
+});
+
+describe("formatDay", () => {
+  it("reads a YYYY-MM-DD day as that local day", () => {
+    const date = parseLocalDate("2026-03-12");
+    expect(date?.getFullYear()).toBe(2026);
+    expect(date?.getMonth()).toBe(2);
+    expect(date?.getDate()).toBe(12);
+    expect(date?.getHours()).toBe(0);
+    expect(formatDay("2026-03-12", "short", LOCALE)).toBe("Mar 12");
+    expect(formatDay("2026-03-12", "long", LOCALE)).toBe("Thursday, March 12");
+  });
+
+  it("leaves anything that is not a real day as it is", () => {
+    for (const bad of ["2026-02-30", "2026-3-12", "yesterday", ""]) {
+      expect(parseLocalDate(bad)).toBeNull();
+      expect(formatDay(bad, "short", LOCALE)).toBe(bad);
+    }
   });
 });
 

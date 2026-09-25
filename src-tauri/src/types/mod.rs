@@ -13,6 +13,7 @@
 mod appearance;
 mod asr;
 mod audio;
+mod calendar;
 mod clipboard;
 mod command;
 mod delivery;
@@ -55,6 +56,7 @@ pub use audio::{
     EndpointChange, MicCheck, MicVerdict, PIPELINE_SAMPLE_RATE_HZ, SegmentPolicy, SpeechSegment,
     VadEvent, samples_to_ms,
 };
+pub use calendar::{InvalidDate, LocalDate};
 pub use clipboard::ClipboardHistory;
 pub use command::{CommandSpec, Reentrancy};
 pub use delivery::{ClipboardRestore, CopyReason, DeliveryPlan, DeliveryPolicy, DeliveryReport};
@@ -81,7 +83,8 @@ pub use ids::{
 pub use launcher::SettingsPage;
 pub use metrics::{
     ActivityDay, LogMetricSpec, MetricAggregate, MetricEmphasis, MetricQuery, MetricSpec,
-    MetricUnit, MetricValue, MetricsRange, MetricsSummary, TranscriptTotals,
+    MetricUnit, MetricValue, MetricsActivityInput, MetricsRange, MetricsSummary,
+    MetricsSummaryInput, TranscriptTotals,
 };
 pub use model::{ModelFile, ModelManifest, ModelPhase, ModelStatus, Sha256Hex};
 pub use nav::{NavIcon, NavId, NavItem, OpenPageInput};
