@@ -1,16 +1,18 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: bootstrap, composition root, startup sequence, ASR worker, session actor, pill presenter, event fan-out, start_speech_engine, prepare_session, stop_session, command context
+ * SOURCE OF TRUTH KEYWORDS: bootstrap, composition root, startup sequence, ASR worker, session actor, pill presenter, event fan-out, start_speech_engine, prepare_session, stop_session, command context, startup recovery, retention sweeper, panic hook
  * WHAT:  `start`: the startup sequence that runs before any window exists: resolve AppPaths from the Tauri path
- *        API, start local logging, open and migrate the database, resolve the stored settings over the registry
- *        defaults, start the appearance watcher, start the (empty) ASR worker, spawn the (idle) session actor over
- *        the same ports, start the pill presenter over the overlay adapter, and manage the CommandCtx (settings;
+ *        API, start local logging, open and migrate the database, settle the takes a crash left unfinished
+ *        (pipeline/recovery.rs), resolve the stored settings over the registry defaults, start the appearance
+ *        watcher, start the (empty) ASR worker, spawn the (idle) session actor over the same ports and point the
+ *        panic hook at it (app/panics.rs), spawn the retention sweeper (first sweep now, then daily), start the
+ *        pill presenter over the overlay adapter, and manage the CommandCtx (settings;
  *        consent, appearance, launcher, microphone, thread-priority, hotkey, foreground-window, toast and
  *        main-window adapters; the ASR worker; the Delivery over the clipboard, paste and toast adapters; the
- *        session handle; the pill presenter; AppPaths, database, event sink) plus the overlay adapter itself, which
- *        app/windows.rs attaches to the pill window once it exists.
- *        `start_speech_engine` and `prepare_session`: once the windows exist, load and warm the selected speech
- *        engine in the background and let the session bind its hotkeys. `stop_session`: at exit, finalize an open
- *        recording.
+ *        session handle; the pill presenter; the retention handle; AppPaths, database, event sink) plus the overlay
+ *        adapter itself, which app/windows.rs attaches to the pill window once it exists; returns the recovery report.
+ *        `announce_recovery`, `start_speech_engine` and `prepare_session`: once the windows exist, toast what recovery
+ *        found, load and warm the selected speech engine in the background and let the session bind its hotkeys.
+ *        `stop_session`: at exit, finalize an open recording.
  * WHY:   The composition root is the only place that names a concrete adapter or resolves a path (02 §3.2,
  *        05 W23); every other layer receives ports, AppPaths and the Db handle. Logging starts first so every
  *        later failure is on disk. It runs on the built app before `run_return`, so the CommandCtx is managed
@@ -29,7 +31,9 @@
  *        goes through one FanOut: the pill presenter first (so the window starts showing before the page renders),
  *        then the windows; the presenter observes the session through it and the actor never knows about windows.
  *        The process opts out of Windows power throttling first thing, because Echo does its work while other apps
- *        are in front (05 W35).
+ *        are in front (05 W35). Recovery runs right after the database opens, before the session, the sweeper or
+ *        any command exists, so no take can be live while stuck rows are settled; a recovery failure is logged and
+ *        startup goes on (the next start retries), since the takes' audio stays on disk either way (02 §7.3).
  * WHERE: `start` is called once by app::run before the event loop, `start_speech_engine` and `prepare_session` on
  *        RunEvent::Ready, `stop_session` on RunEvent::Exit; its parts (TauriEventSink, logging) live next to it in
  *        app/.
@@ -39,7 +43,7 @@ use std::{error::Error, sync::Arc, time::Duration};
 
 use tauri::{App, AppHandle, Manager, Runtime};
 
-use super::{events::TauriEventSink, logging, windows::MAIN_WINDOW};
+use super::{events::TauriEventSink, logging, panics, windows::MAIN_WINDOW};
 use crate::{
     adapters::{
         appearance::Win32SystemAppearance,
@@ -61,6 +65,8 @@ use crate::{
         delivery::{Delivery, DeliveryPorts},
         fan_out::FanOut,
         pill::{PillPresenter, PillTiming},
+        recovery,
+        retention::{RetentionDeps, RetentionHandle},
         session::{SessionActor, SessionConfig, SessionEngines, SessionHandle},
     },
     ports::{
@@ -69,11 +75,12 @@ use crate::{
     },
     registry::{self, engines::BuildCtx},
     services::{self, Db},
-    types::{AppEvent, AppPaths, PortError, SharedSettings},
+    types::{AppEvent, AppPaths, PortError, RecoveryReport, SharedSettings},
 };
 
-/// Resolves paths, starts logging, opens the database and manages the CommandCtx on `app`.
-pub fn start<R: Runtime>(app: &App<R>) -> Result<(), Box<dyn Error>> {
+/// Resolves paths, starts logging, opens the database, settles the takes a crash left unfinished and manages the
+/// CommandCtx on `app`; returns what recovery found, for `announce_recovery` once the windows exist.
+pub fn start<R: Runtime>(app: &App<R>) -> Result<RecoveryReport, Box<dyn Error>> {
     let resolver = app.path();
     let paths = AppPaths::new(resolver.app_local_data_dir()?, resolver.resource_dir()?);
     logging::init(&paths.logs_dir())?;
@@ -82,6 +89,15 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<(), Box<dyn Error>> {
         "Echo is starting"
     );
     let db = Db::open(&paths).map_err(startup_failure)?;
+    // Before any window, command or take exists, so nothing can race it for a row (02 §7.3 step 4).
+    let recovered = recovery::recover(&db, &paths).unwrap_or_else(|error| {
+        tracing::error!(
+            code = error.error().code().as_str(),
+            detail = error.detail(),
+            "startup recovery could not list unfinished takes; the next start tries again"
+        );
+        RecoveryReport::default()
+    });
     let stored = services::settings::get::all(&db).map_err(startup_failure)?;
     let settings = SharedSettings::new(registry::settings::resolve(stored));
     let foreground: Arc<dyn ForegroundApp> = Arc::new(Win32ForegroundApp::new());
@@ -123,6 +139,7 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<(), Box<dyn Error>> {
     let audio: Arc<dyn AudioCapture> = Arc::new(CpalWasapiCapture::new(Arc::clone(&consent)));
     let hotkeys: Arc<dyn HotkeyService> = Arc::new(LowLevelKeyboardHotkeys::new());
     let (session, inbox) = SessionHandle::new();
+    panics::report_to_session(session.panic_reporter());
     let engines = SessionEngines::registry(BuildCtx {
         paths: paths.clone(),
     });
@@ -145,6 +162,14 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<(), Box<dyn Error>> {
     );
     // Nothing is opened or bound until `prepare_session` runs on RunEvent::Ready.
     tauri::async_runtime::spawn(actor.run());
+    let (retention, sweeper) = RetentionHandle::new(RetentionDeps {
+        settings: settings.clone(),
+        paths: paths.clone(),
+        db: db.clone(),
+        events: Arc::clone(&events),
+    });
+    // Its first sweep runs now, on the blocking pool, after recovery settled every unfinished take.
+    tauri::async_runtime::spawn(sweeper.run());
     // The pill window exists only once the event loop runs; app/windows.rs attaches it then.
     app.manage(overlay);
     app.manage(CommandCtx::new(CommandDeps {
@@ -163,12 +188,13 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<(), Box<dyn Error>> {
         engines,
         pill,
         main_window: Arc::new(TauriMainWindow::new(app.handle().clone(), MAIN_WINDOW)),
+        retention,
         paths,
         db,
         events,
     }));
     tracing::info!("startup finished");
-    Ok(())
+    Ok(recovered)
 }
 
 /**
@@ -183,6 +209,20 @@ pub fn prepare_session<R: Runtime>(app: &AppHandle<R>) {
     match app.try_state::<CommandCtx>() {
         Some(ctx) => ctx.session().prepare(),
         None => tracing::error!("the session was prepared before the command context was managed"),
+    }
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: announce_recovery, Recovered N takes toast, recovery toast on ready
+ * WHAT:  Shows the startup recovery's toasts and tells the windows History changed.
+ * WHY:   Recovery runs before any window exists (so nothing races it), but a toast raised before the shell and the
+ *        event loop are up can be lost (05 W19), so it is shown on RunEvent::Ready instead.
+ * WHERE: app::run on the first RunEvent::Ready, with the report `start` returned.
+ */
+pub fn announce_recovery<R: Runtime>(app: &AppHandle<R>, report: RecoveryReport) {
+    match app.try_state::<CommandCtx>() {
+        Some(ctx) => recovery::announce(report, ctx.notifier(), ctx.events()),
+        None => tracing::error!("recovery was announced before the command context was managed"),
     }
 }
 

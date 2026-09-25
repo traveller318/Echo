@@ -17,8 +17,9 @@ use crate::{
     registry::{engines, engines::tests::SAMPLE_ENGINES, hotkeys},
     types::{
         Accelerator, AppError, CapsRequirement, DeliveryPolicy, EnumOption, EnumOptions, Language,
-        OptionSource, RecordMode, ResourceKind, SessionPolicy, SettingKey, SettingKind,
-        SettingValue, SettingsSnapshot, StaticList, StaticStr, TextPair, ThemePreference,
+        OptionSource, RecordMode, ResourceKind, RetentionPolicy, SessionPolicy, SettingKey,
+        SettingKind, SettingValue, SettingsSnapshot, StaticList, StaticStr, TextPair,
+        ThemePreference,
     },
 };
 
@@ -419,5 +420,39 @@ fn session_policy_reads_the_mode_countdown_and_longest_take() {
         .max_duration_ms,
         SessionPolicy::DEFAULT.max_duration_ms,
         "a negative value from outside resolve never becomes a zero-length take"
+    );
+}
+
+#[test]
+fn retention_policy_reads_both_storage_settings_and_their_defaults() {
+    assert_eq!(
+        retention_policy(&defaults()),
+        RetentionPolicy::DEFAULT,
+        "02 §3.3 defaults are the policy's defaults"
+    );
+    let zeros = resolve([
+        (keys::AUDIO_RETENTION_DAYS, SettingValue::Int(0)),
+        (keys::HISTORY_RETENTION_DAYS, SettingValue::Int(0)),
+    ]);
+    assert_eq!(
+        retention_policy(&zeros),
+        RetentionPolicy {
+            audio_days: 0,
+            history_days: 0
+        }
+    );
+    assert_eq!(
+        retention_policy(&SettingsSnapshot::default()),
+        RetentionPolicy::DEFAULT,
+        "missing values fall back to the spec defaults"
+    );
+    assert_eq!(
+        retention_policy(&SettingsSnapshot::from_resolved([(
+            keys::AUDIO_RETENTION_DAYS,
+            SettingValue::Int(-3),
+        )]))
+        .audio_days,
+        RetentionPolicy::DEFAULT.audio_days,
+        "a negative value is never read as a huge one"
     );
 }

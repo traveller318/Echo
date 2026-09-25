@@ -7,7 +7,8 @@
  *        factory records the command name and request id, never its input. The file writer is blocking rather
  *        than a background worker, so the lines just before a crash or exit are never lost; at `info` Echo writes
  *        a few lines per command or take, so the cost is negligible. The panic hook logs the message and location,
- *        then runs the previous hook, so a panic is on disk even when no console is attached.
+ *        then runs the previous hook, so a panic is on disk even when no console is attached. Failing the live take
+ *        is chained on later by app/panics.rs, once the session exists (02 §12).
  * WHERE: Called once by app/bootstrap before anything else can log; the file layout comes from AppPaths.
  */
 

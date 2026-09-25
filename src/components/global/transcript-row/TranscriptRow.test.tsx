@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import type { TranscriptStatus, TranscriptSummary } from "@/bindings";
 import { TranscriptRow } from "./TranscriptRow";
 import { TranscriptStatusBadge } from "./TranscriptStatusBadge";
-import { TRANSCRIPT_STATUS_LOOK } from "./transcript-status";
+import { TRANSCRIPT_STATUS_LOOK, transcriptPlaceholder } from "./transcript-status";
 
 const NOW = new Date(2026, 8, 25, 18, 0).getTime();
 
@@ -50,6 +50,14 @@ describe("TranscriptRow", () => {
     expect(screen.getByText("Failed")).toBeInTheDocument();
     expect(screen.queryByText(/words/)).not.toBeInTheDocument();
     expect(screen.queryByText(/0 s/)).not.toBeInTheDocument();
+  });
+
+  it("never promises a retry for a failed take whose audio is gone", () => {
+    render(<TranscriptRow take={take({ status: "failed", preview: null, has_audio: false })} now={NOW} />);
+    expect(screen.getByText(transcriptPlaceholder({ status: "failed", has_audio: false }))).toBeInTheDocument();
+    expect(screen.queryByText(TRANSCRIPT_STATUS_LOOK.failed.placeholder)).not.toBeInTheDocument();
+    expect(transcriptPlaceholder({ status: "failed", has_audio: false })).not.toMatch(/Retry to/);
+    expect(transcriptPlaceholder({ status: "done", has_audio: false })).toBe(TRANSCRIPT_STATUS_LOOK.done.placeholder);
   });
 });
 

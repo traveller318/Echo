@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: typed setting reads, theme read, transcription reads, polish reads, remove_fillers, dictionary, llm_polisher, trailing_space, delivery_policy, input_device, session_policy, record_mode
+ * SOURCE OF TRUTH KEYWORDS: typed setting reads, theme read, transcription reads, polish reads, remove_fillers, dictionary, llm_polisher, trailing_space, delivery_policy, input_device, session_policy, record_mode, retention_policy
  * WHAT:  Typed reads of a SettingsSnapshot for the settings the core acts on.
  * WHY:   Values are stored as tagged SettingValues and enum text; spelling them is the registry's job, so the
  *        pipeline asks here instead of matching kinds or comparing strings. A resolved snapshot always holds a
@@ -11,8 +11,8 @@
 
 use super::{find, keys, values};
 use crate::types::{
-    Accelerator, AudioDeviceId, DeliveryPolicy, EngineId, Language, RecordMode, SessionPolicy,
-    SettingKey, SettingValue, SettingsSnapshot, TextPair, ThemePreference,
+    Accelerator, AudioDeviceId, DeliveryPolicy, EngineId, Language, RecordMode, RetentionPolicy,
+    SessionPolicy, SettingKey, SettingValue, SettingsSnapshot, TextPair, ThemePreference,
 };
 
 /// The `general.theme` choice in effect; a resolved snapshot always holds a valid one, so the default is only a
@@ -158,6 +158,29 @@ pub fn session_policy(settings: &SettingsSnapshot) -> SessionPolicy {
 }
 
 const MS_PER_MINUTE: u64 = 60_000;
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: retention_policy, audio retention setting, history retention setting, storage settings read
+ * WHAT:  The RetentionPolicy `storage.audio_retention_days` and `storage.history_retention_days` give.
+ * WHY:   The two zeros mean different things (audio 0 = delete right after success, history 0 = keep forever);
+ *        RetentionPolicy spells them, so the pipeline never compares raw Ints. Read at every sweep and every settled
+ *        take, so a change applies from the next one on. A negative value (only possible outside `resolve`) falls
+ *        back to the spec default like every other read.
+ * WHERE: pipeline/retention.rs (the sweeper, `release_after_success` for the session runner and retry, and the
+ *        live re-sweep after a storage setting changes).
+ */
+pub fn retention_policy(settings: &SettingsSnapshot) -> RetentionPolicy {
+    let days = |key: &SettingKey, fallback: u32| {
+        int_or_default(settings, key)
+            .and_then(|days| u32::try_from(days).ok())
+            .unwrap_or(fallback)
+    };
+    let defaults = RetentionPolicy::DEFAULT;
+    RetentionPolicy {
+        audio_days: days(&keys::AUDIO_RETENTION_DAYS, defaults.audio_days),
+        history_days: days(&keys::HISTORY_RETENTION_DAYS, defaults.history_days),
+    }
+}
 
 /// An Int setting, or its spec's default when the snapshot lacks it (only outside `resolve`).
 fn int_or_default(settings: &SettingsSnapshot, key: &SettingKey) -> Option<i32> {

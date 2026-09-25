@@ -10,8 +10,9 @@
  *        1.9 MB (05 decision log); `read` returns the same values the capture worker fed ASR, so a retry is
  *        deterministic (05 A2). A journal is a file under the resolved recordings folder, not a database row, so
  *        it lives in the pipeline next to the worker that writes it.
- * WHERE: Written by the capture worker (pipeline/capture/mod.rs); `repair` by startup recovery and `read` by retry
- *        (pipeline/recovery.rs, session retry); `remove` by the session when a take is discarded.
+ * WHERE: Written by the capture worker (pipeline/capture/mod.rs); `repair` by startup recovery and retry, `read` by retry
+ *        (pipeline/recovery.rs, pipeline/retry.rs); `remove` by the session when a take is discarded, History delete
+ *        and the retention sweep (pipeline/retention.rs).
  */
 
 use std::{
@@ -98,7 +99,8 @@ impl Journal {
  *        sample) and returns the number of samples it holds.
  * WHY:   A process killed between header rewrites leaves sizes that count less than the file holds (or zero). The
  *        chunk list is walked instead of assuming a 44-byte header, so a header with extra chunks is still found.
- * WHERE: Startup recovery (02 §7.3 step 4) before a `recording`/`transcribing` row becomes `recoverable`.
+ * WHERE: Startup recovery (02 §7.3 step 4) before a `recording`/`transcribing` row becomes `recoverable`; retry
+ *        before every read (pipeline/retry.rs).
  */
 pub fn repair(path: &Path) -> PortResult<u64> {
     let mut file = OpenOptions::new()

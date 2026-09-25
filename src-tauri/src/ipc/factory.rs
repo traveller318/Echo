@@ -15,11 +15,8 @@
  */
 
 use std::{
-    future::{Future, poll_fn},
-    panic::{self, AssertUnwindSafe},
-    pin::pin,
+    future::Future,
     sync::atomic::{AtomicU64, Ordering},
-    task::Poll,
     time::{Duration, Instant},
 };
 
@@ -28,6 +25,7 @@ use tracing::Instrument;
 
 use super::CommandCtx;
 use crate::{
+    pipeline::unwind::catch_unwind,
     registry::{
         metrics::COMMAND_DURATION,
         permissions::{self, PermissionCtx},
@@ -226,26 +224,6 @@ fn logged(error: PortError) -> AppError {
     error.into_app_error()
 }
 
-/**
- * SOURCE OF TRUTH KEYWORDS: catch_unwind future, handler panic, poll_fn, AssertUnwindSafe
- * WHAT:  Polls `future` to completion, returning None if a poll panicked.
- * WHY:   Tauri spawns async commands as tasks; a panic would kill the task and leave the UI's promise pending
- *        forever. The future is dropped right after a panic and never polled again, so no broken state is
- *        observed (hence AssertUnwindSafe). Built on std's poll_fn so no extra crate is needed.
- * WHERE: execute (step 5).
- */
-async fn catch_unwind<F: Future>(future: F) -> Option<F::Output> {
-    let mut future = pin!(future);
-    poll_fn(
-        |cx| match panic::catch_unwind(AssertUnwindSafe(|| future.as_mut().poll(cx))) {
-            Ok(Poll::Ready(output)) => Poll::Ready(Some(output)),
-            Ok(Poll::Pending) => Poll::Pending,
-            Err(_) => Poll::Ready(None),
-        },
-    )
-    .await
-}
-
 /// Step 7: one `command-duration` log line with the outcome (`ok` or the AppError code) and milliseconds.
 fn record<O>(result: &Result<O, AppError>, elapsed: Duration) {
     let outcome = match result {
@@ -268,7 +246,7 @@ mod tests {
             Arc, Mutex,
             atomic::{AtomicBool, Ordering},
         },
-        task::{Context, Waker},
+        task::{Context, Poll, Waker},
     };
 
     use super::*;

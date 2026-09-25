@@ -25,6 +25,7 @@ export {
   TRANSCRIPT_STATUS_LOOK,
   TranscriptRow,
   TranscriptStatusBadge,
+  transcriptPlaceholder,
   type BadgeVariant,
   type TranscriptRowProps,
   type TranscriptStatusBadgeProps,

@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: session actor, SessionActor, SessionHandle, SessionInbox, SessionConfig, SessionEngines, actor loop, sole owner of recording state, session_get_state, shutdown finalize
+ * SOURCE OF TRUTH KEYWORDS: session actor, SessionActor, SessionHandle, SessionInbox, SessionConfig, SessionEngines, PanicReporter, actor loop, sole owner of recording state, session_get_state, shutdown finalize, panic supervision
  * WHAT:  The session actor of 02 §5: one tokio task with an mpsc inbox that owns SessionState, feeds every input
  *        through the pure `transition` and hands the effects to the Runner. SessionHandle is the cloneable way in
  *        (the pill's Stop, the current view, paste-last, prepare, shutdown); SessionConfig is what the actor works through
@@ -14,13 +14,17 @@
  *        the handle can sit in CommandCtx before the actor is built. Engines come from builders (the registry in
  *        the app, fakes in tests), the same pattern as the ASR worker. The loop ends when every SessionHandle is
  *        gone or on Shutdown, which finalizes every open journal and then answers, so the app waits for the WAV
- *        header before it exits (02 §5).
+ *        header before it exits (02 §5). A panic while handling a message is caught (pipeline/unwind.rs): the live
+ *        take is failed with its audio kept and the actor starts over at Idle, so one bug never leaves Echo deaf
+ *        to its hotkeys; a panic anywhere else reaches the actor as a PanicReporter message (02 §12).
  * WHERE: app/bootstrap builds it from the same ports as CommandCtx and spawns `run`; `prepare` on RunEvent::Ready,
- *        `shutdown` on RunEvent::Exit; ipc/commands/session.rs calls `view` and `ui_input`.
+ *        `shutdown` on RunEvent::Exit; ipc/commands/session.rs calls `view` and `ui_input`; the panic hook
+ *        (app/panics.rs) holds a PanicReporter.
  */
 
 use std::{
     collections::VecDeque,
+    ops::ControlFlow,
     sync::{Arc, mpsc as std_mpsc},
     time::{Duration, Instant},
 };
@@ -39,13 +43,15 @@ use crate::{
         asr::AsrWorker,
         delivery::Delivery,
         polish::{PolishChains, PolisherBuilder},
+        unwind::catch_unwind,
     },
     ports::{AudioCapture, EventSink, ForegroundApp, HotkeyService, Notifier, WorkerScheduler},
     registry::{self, engines::BuildCtx},
     services::Db,
     types::{
         AppError, AppEvent, AppPaths, DeliveryOutcome, EngineId, MonotonicMs, PortError,
-        PortResult, SessionInput, SessionState, SessionUiInput, SessionView, SharedSettings,
+        PortResult, SessionEffect, SessionInput, SessionPhase, SessionState, SessionUiInput,
+        SessionView, SharedSettings,
     },
 };
 
@@ -175,8 +181,33 @@ impl SessionHandle {
         self.send(Message::Shutdown(reply)).is_ok() && done.recv_timeout(timeout).is_ok()
     }
 
+    /// A weak reporter the panic hook holds, so a panic anywhere fails the live take (02 §12).
+    pub fn panic_reporter(&self) -> PanicReporter {
+        PanicReporter(Outbox::new(&self.inbox))
+    }
+
     fn send(&self, message: Message) -> PortResult<()> {
         self.inbox.send(message).map_err(|_| stopped())
+    }
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: PanicReporter, panic hook to session, report panic, fail take on panic
+ * WHAT:  Tells the session actor that code panicked somewhere in the process; the actor then fails its live take.
+ * WHY:   The panic hook runs on whatever thread panicked (a worker, a command, the actor itself) and knows no take:
+ *        only the actor owns recording state (02 §5), so the hook only posts a message and the actor decides.
+ *        Posting never blocks and holds only a weak sender, so the hook can call it from any thread, at any time,
+ *        without keeping the actor alive at exit. A panic the actor catches itself is recovered first; the report
+ *        that follows then finds no live take and does nothing.
+ * WHERE: Built by SessionHandle::panic_reporter; held by the panic hook app/bootstrap installs (app/panics.rs).
+ */
+#[derive(Clone)]
+pub struct PanicReporter(Outbox);
+
+impl PanicReporter {
+    /// Reports a panic; does nothing once the actor has stopped.
+    pub fn report(&self) {
+        self.0.post(Message::Panicked);
     }
 }
 
@@ -207,45 +238,116 @@ impl SessionActor {
         }
     }
 
-    /// Handles messages until every handle is dropped or Shutdown arrives.
+    /// Handles messages until every handle is dropped or Shutdown arrives; a panic while handling one fails the
+    /// live take and the actor carries on (02 §12).
     pub async fn run(mut self) {
         tracing::info!("the session actor is running");
         while let Some(message) = self.receiver.recv().await {
-            match message {
-                Message::Hotkey(event) => {
-                    if let Some(input) = hotkey_input::input_for(&event, &self.runner.settings()) {
-                        self.feed(VecDeque::from([input])).await;
-                    }
-                }
-                Message::Ui(SessionUiInput::Stop) => {
-                    self.feed(VecDeque::from([SessionInput::Stop])).await;
-                }
-                Message::Worker(reply) => {
-                    let mut inputs = VecDeque::new();
-                    self.runner.absorb(reply, &mut inputs);
-                    self.feed(inputs).await;
-                }
-                Message::View(reply) => {
-                    // The asker may have given up (a closed window); nothing to do then.
-                    let _ = reply.send(self.state.phase.view(self.now()));
-                }
-                Message::PasteLast(reply) => self.runner.paste_last(reply),
-                Message::Prepare => self.runner.prepare(),
-                Message::Shutdown(reply) => {
-                    self.runner.shutdown().await;
-                    let _ = reply.send(());
-                    break;
-                }
+            match catch_unwind(self.handle(message)).await {
+                Some(ControlFlow::Continue(())) => {}
+                Some(ControlFlow::Break(())) => break,
+                None => self.recover_from_panic().await,
             }
         }
         tracing::info!("the session actor stopped");
+    }
+
+    /// Handles one message; Break after Shutdown.
+    async fn handle(&mut self, message: Message) -> ControlFlow<()> {
+        match message {
+            Message::Hotkey(event) => {
+                if let Some(input) = hotkey_input::input_for(&event, &self.runner.settings()) {
+                    self.feed(VecDeque::from([input])).await;
+                }
+            }
+            Message::Ui(SessionUiInput::Stop) => {
+                self.feed(VecDeque::from([SessionInput::Stop])).await;
+            }
+            Message::Worker(reply) => {
+                let mut inputs = VecDeque::new();
+                self.runner.absorb(reply, &mut inputs);
+                self.feed(inputs).await;
+            }
+            Message::View(reply) => {
+                // The asker may have given up (a closed window); nothing to do then.
+                let _ = reply.send(self.state.phase.view(self.now()));
+            }
+            Message::PasteLast(reply) => self.runner.paste_last(reply),
+            Message::Prepare => self.runner.prepare(),
+            Message::Panicked => self.fail_live_take().await,
+            Message::Shutdown(reply) => {
+                self.runner.shutdown().await;
+                let _ = reply.send(());
+                return ControlFlow::Break(());
+            }
+        }
+        ControlFlow::Continue(())
+    }
+
+    /**
+     * SOURCE OF TRUTH KEYWORDS: fail live take on panic, panic elsewhere, SessionInput Error Internal
+     * WHAT:  Fails the take in progress (Arming → Delivering) with `Internal` through the machine, like any error:
+     *        everything is released, the row becomes `failed` with its audio kept, a toast and the pill say so.
+     * WHY:   02 §12: after a panic anywhere, the state the take depends on can no longer be trusted, so the take
+     *        is ended safely and can be retried from History. Going through `transition` keeps the machine the one
+     *        place that decides; the reply the panicking work sends later is then stale and ignored.
+     * WHERE: Message::Panicked (PanicReporter, installed by app/bootstrap in the panic hook).
+     */
+    async fn fail_live_take(&mut self) {
+        if let Some(take) = self.state.phase.live_take_id() {
+            tracing::error!(%take, "a panic ends the take in progress; its audio is kept for a retry");
+            self.feed(VecDeque::from([SessionInput::Error {
+                take,
+                error: AppError::Internal,
+            }]))
+            .await;
+        }
+    }
+
+    /**
+     * SOURCE OF TRUTH KEYWORDS: recover_from_panic, actor supervision, session restart after panic, Idle after panic
+     * WHAT:  After a panic while handling a message: the runner abandons everything it holds (failing unfinished
+     *        takes, audio kept), the machine starts over at Idle and the Idle view is published (the pill leaves).
+     * WHY:   The panic may have struck between a transition and its effects, so the phase and what the runner holds
+     *        may disagree; the runner releases everything it holds plus the take the phase names, and starting over
+     *        at Idle keeps hotkeys working without a restart. The state is only replaced after `transition`
+     *        returns (`feed`), so the phase is never lost; the debounce anchor and timer counter survive, so no
+     *        stale timer token is ever reused. If releasing panics too, the state still resets and the next take
+     *        releases what is left (Arm drains the runner).
+     * WHERE: `run`.
+     */
+    async fn recover_from_panic(&mut self) {
+        let live = self.state.phase.live_take_id();
+        tracing::error!(take = ?live, "the session panicked; the take in progress is failed and the session starts over");
+        if catch_unwind(self.runner.abandon(live)).await.is_none() {
+            tracing::error!("releasing the take after a panic panicked as well");
+        }
+        let SessionState {
+            last_record_press,
+            last_timer,
+            ..
+        } = std::mem::take(&mut self.state);
+        self.state = SessionState {
+            phase: SessionPhase::Idle,
+            last_record_press,
+            last_timer,
+        };
+        let idle = SessionEffect::Publish(self.state.phase.view(self.now()));
+        if catch_unwind(self.runner.run(idle, &mut VecDeque::new()))
+            .await
+            .is_none()
+        {
+            tracing::error!("the Idle view could not be published after a panic");
+        }
     }
 
     /// Feeds `inputs` to the machine in order, running each transition's effects before the next input.
     async fn feed(&mut self, mut inputs: VecDeque<SessionInput>) {
         while let Some(input) = inputs.pop_front() {
             let name = input.name();
-            let (state, effects) = transition(std::mem::take(&mut self.state), input, self.now());
+            // A clone, not a take: if `transition` panics, the state before this input is still known, so the
+            // panic recovery can fail exactly the take that was live (inputs are rare, the state is small).
+            let (state, effects) = transition(self.state.clone(), input, self.now());
             self.state = state;
             tracing::debug!(
                 input = name,

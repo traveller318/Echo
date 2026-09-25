@@ -66,6 +66,25 @@ impl TranscriptStatus {
     pub const fn keeps_audio(self) -> bool {
         matches!(self, Self::Failed | Self::Recoverable)
     }
+
+    /// The take is still being captured or transcribed; at startup, a row left here was cut off by a crash.
+    pub const fn is_unfinished(self) -> bool {
+        matches!(self, Self::Recording | Self::Transcribing)
+    }
+
+    /// Retention may delete this take's audio and row: it succeeded (with or without speech). Unfinished takes
+    /// and the ones that keep their audio are never swept (02 §7.3).
+    pub const fn is_swept_by_retention(self) -> bool {
+        matches!(self, Self::Done | Self::Empty)
+    }
+
+    /// Every status in `ALL` that `keep` accepts, in declaration order (a selector's status list).
+    pub fn matching(keep: fn(Self) -> bool) -> Vec<Self> {
+        Self::ALL
+            .into_iter()
+            .filter(|status| keep(*status))
+            .collect()
+    }
 }
 
 /// One history list row.
@@ -315,6 +334,25 @@ mod tests {
             kept,
             [TranscriptStatus::Failed, TranscriptStatus::Recoverable]
         );
+    }
+
+    #[test]
+    fn retention_sweeps_only_settled_successes_and_never_what_recovery_or_retry_needs() {
+        assert_eq!(
+            TranscriptStatus::matching(TranscriptStatus::is_swept_by_retention),
+            [TranscriptStatus::Done, TranscriptStatus::Empty]
+        );
+        assert_eq!(
+            TranscriptStatus::matching(TranscriptStatus::is_unfinished),
+            [TranscriptStatus::Recording, TranscriptStatus::Transcribing]
+        );
+        for status in TranscriptStatus::ALL {
+            let swept = status.is_swept_by_retention();
+            assert!(
+                !(swept && (status.keeps_audio() || status.is_unfinished())),
+                "{status:?}"
+            );
+        }
     }
 
     #[test]

@@ -10,11 +10,13 @@
  *        machine (pipeline/session/rows.rs). Segments are fed one at a time, each after the previous result, so a
  *        live take that starts meanwhile waits behind at most one retry segment on the shared ASR thread instead of
  *        a whole backlog (its stop → paste budget, 02 §6.2). The take the session still owns is refused (`Busy`);
- *        a row left `recording`/`transcribing` by a crash gets its WAV header repaired first (journal::repair). The
+ *        every journal gets its header repaired first (journal::repair, idempotent): a crash, or a panic that failed
+ *        the take right before the process died, can leave the last second uncounted. The
  *        row is written only once everything succeeded, so a failed retry leaves the take exactly as it was (its
  *        error toast says why), and the stored error code is cleared on success. The engine that ran is stored,
  *        so a retry after switching engines records the new one (01 "re-run with a different engine"). Latency
- *        stays as it was: a retry has no stop → paste moment. Transcript text is never logged (02 §10).
+ *        stays as it was: a retry has no stop → paste moment. A retry that succeeds with `storage.audio_retention_days`
+ *        at 0 loses its audio like a live take (pipeline/retention.rs). Transcript text is never logged (02 §10).
  * WHERE: ipc/commands/session.rs (`session_retry`); built from CommandCtx (the same ASR worker, SessionEngines,
  *        paths, database and event sink as the session actor).
  */
@@ -31,6 +33,7 @@ use super::{
     capture::{self, journal},
     history,
     polish::{join_segments, polish_context},
+    retention,
     session::{SessionEngines, rows},
 };
 use crate::{
@@ -89,20 +92,24 @@ pub async fn retry(
             return Err(PortError::new(AppError::ModelMissing { model_id }));
         }
     };
-    let crashed = matches!(
-        take.status,
-        TranscriptStatus::Recording | TranscriptStatus::Transcribing
-    );
     let heard = {
         let deps = deps.clone();
         let settings = Arc::clone(&settings);
         run_blocking("retrying the take", move || {
-            hear(&deps, &settings, id, engine, crashed)
+            hear(&deps, &settings, id, engine)
         })
         .await?
     };
     let changes = outcome(deps, &settings, heard).await?;
     services::transcripts::update::update(&deps.db, id, &changes)?;
+    let policy = registry::settings::retention_policy(&settings);
+    if let Err(error) = retention::release_after_success(&deps.db, &deps.paths, policy, id) {
+        tracing::warn!(
+            take = %id,
+            detail = error.detail(),
+            "the retried take's audio could not be deleted after success; the retention sweep retries"
+        );
+    }
     history::announce_saved(&deps.db, deps.events.as_ref(), id);
     tracing::info!(take = %id, "the take was retried");
     services::transcripts::get::summary(&deps.db, id)
@@ -114,15 +121,13 @@ fn hear(
     settings: &SettingsSnapshot,
     id: TranscriptId,
     engine: EngineId,
-    crashed: bool,
 ) -> PortResult<Heard> {
     let path = deps.paths.recording(id);
     if !path.is_file() {
         return Err(no_recording());
     }
-    if crashed {
-        journal::repair(&path)?;
-    }
+    // Idempotent on a finalized journal; recounts one a crash (or a panic right before the process died) left stale.
+    journal::repair(&path)?;
     let samples = journal::read(&path)?;
     let replay = capture::replay(
         &samples,
@@ -266,11 +271,11 @@ mod tests {
         },
         registry::{
             engines::{BuildCtx, PARAKEET_TDT_V3},
-            settings::defaults,
+            settings::{defaults, keys, resolve},
         },
         types::{
             AppErrorCode, HistoryChangeReason, HistoryChanged, NewTranscript, SessionStatus,
-            TranscriptSaved, UnixMs, testing::TempDir,
+            SettingValue, TranscriptSaved, UnixMs, testing::TempDir,
         },
     };
 
@@ -445,6 +450,44 @@ mod tests {
         let row = retry_now(&fixture, id).unwrap();
         assert_eq!(row.status, TranscriptStatus::Done);
         assert_eq!(row.duration_ms, Some(3_300));
+    }
+
+    /// Zeroes the journal's RIFF and `data` sizes, as a process killed before its first header rewrite leaves them.
+    fn zero_header(fixture: &Fixture, id: TranscriptId) {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .open(fixture.deps.paths.recording(id))
+            .unwrap();
+        for offset in [4, 40] {
+            file.seek(SeekFrom::Start(offset)).unwrap();
+            file.write_all(&0_u32.to_le_bytes()).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_failed_take_with_a_stale_header_is_recounted_and_zero_day_audio_goes_after_success() {
+        let fixture = fixture();
+        // The panic hook failed the take, then the process died before the journal was finalized.
+        let id = stored_take(&fixture, TranscriptStatus::Failed, &two_sentences());
+        zero_header(&fixture, id);
+        fixture.engine.push_text("Hello there.");
+        fixture.engine.push_text("General Kenobi.");
+        let settings = resolve([(keys::AUDIO_RETENTION_DAYS, SettingValue::Int(0))]);
+
+        let row = run(retry(
+            &fixture.deps,
+            Arc::new(settings),
+            &SessionView::IDLE,
+            id,
+        ))
+        .unwrap();
+        assert_eq!(row.status, TranscriptStatus::Done);
+        assert_eq!(row.duration_ms, Some(3_300), "every sample was heard");
+        assert!(
+            !row.has_audio,
+            "0 days deletes the audio right after success"
+        );
+        assert!(!fixture.deps.paths.recording(id).exists());
     }
 
     #[test]

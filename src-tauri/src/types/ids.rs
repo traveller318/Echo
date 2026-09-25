@@ -19,6 +19,8 @@ use specta::Type;
 use thiserror::Error;
 use ulid::Ulid;
 
+use super::UnixMs;
+
 /**
  * SOURCE OF TRUTH KEYWORDS: static_str_id macro, string id newtype, StaticStr, const id
  * WHAT:  Declares a transparent StaticStr id newtype with `from_static` (const), `as_str`, `From<String>` and Display.
@@ -150,6 +152,11 @@ impl TranscriptId {
     pub fn generate() -> Self {
         Self(Ulid::generate())
     }
+
+    /// When the id was minted (the ULID's timestamp): a take's id is minted as its hotkey is pressed.
+    pub fn created_at(self) -> UnixMs {
+        UnixMs::from_millis(i64::try_from(self.0.timestamp_ms()).unwrap_or(i64::MAX))
+    }
 }
 
 impl fmt::Display for TranscriptId {
@@ -186,6 +193,12 @@ mod tests {
             serde_json::from_str::<TranscriptId>(&format!("\"{text}\"")).unwrap(),
             id
         );
+    }
+
+    #[test]
+    fn transcript_id_knows_when_it_was_minted() {
+        let id = TranscriptId(Ulid::from_parts(1_700_000_000_123, 42));
+        assert_eq!(id.created_at(), UnixMs::from_millis(1_700_000_000_123));
     }
 
     #[test]

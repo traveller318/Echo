@@ -13,7 +13,7 @@ import type { TranscriptSummary } from "@/bindings";
 import { cn } from "@/lib/cn";
 import { formatDuration, formatTakeTime, formatWords, NUMERIC_CLASS } from "@/lib/format";
 import { TranscriptStatusBadge } from "./TranscriptStatusBadge";
-import { TRANSCRIPT_STATUS_LOOK } from "./transcript-status";
+import { transcriptPlaceholder } from "./transcript-status";
 
 export interface TranscriptRowProps {
   readonly take: TranscriptSummary;
@@ -39,7 +39,7 @@ export function TranscriptRow({ take, now, className }: TranscriptRowProps) {
         <TranscriptStatusBadge status={take.status} className="ml-auto" />
       </div>
       <p className={cn("line-clamp-2 text-body", preview === "" ? "text-fg-tertiary" : "text-fg")}>
-        {preview === "" ? TRANSCRIPT_STATUS_LOOK[take.status].placeholder : preview}
+        {preview === "" ? transcriptPlaceholder(take) : preview}
       </p>
     </div>
   );

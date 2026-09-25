@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: CommandCtx, CommandDeps, command context, managed state, handler dependencies, SharedSettings, AsrWorker, SessionEngines, RetryDeps, Delivery, SessionHandle, PillPresenter, AppPaths, Db, event sink
+ * SOURCE OF TRUTH KEYWORDS: CommandCtx, CommandDeps, command context, managed state, handler dependencies, SharedSettings, AsrWorker, SessionEngines, RetryDeps, Delivery, SessionHandle, PillPresenter, RetentionHandle, AppPaths, Db, event sink
  * WHAT:  CommandCtx: everything a command handler and the factory pipeline may use, managed once by Tauri and
  *        passed to every handler as `&CommandCtx`; CommandDeps: the named parts it is built from.
  * WHY:   Handlers take their dependencies from one place instead of Tauri state lookups, so they stay plain async
@@ -25,6 +25,7 @@ use crate::{
         asr::AsrWorker,
         delivery::Delivery,
         pill::PillPresenter,
+        retention::RetentionHandle,
         retry::RetryDeps,
         session::{SessionEngines, SessionHandle},
     },
@@ -68,6 +69,8 @@ pub struct CommandDeps {
     pub pill: PillPresenter,
     /// Echo's main window, brought forward by surfaces outside it (the pill, later the tray).
     pub main_window: Arc<dyn MainWindow>,
+    /// Wakes the retention sweeper (a storage setting changed, or a later "clean up now" action).
+    pub retention: RetentionHandle,
     /// Every data and resource location, resolved once by app/bootstrap.
     pub paths: AppPaths,
     /// The database every service call goes through.
@@ -93,6 +96,7 @@ pub struct CommandCtx {
     engines: SessionEngines,
     pill: PillPresenter,
     main_window: Arc<dyn MainWindow>,
+    retention: RetentionHandle,
     paths: AppPaths,
     db: Db,
     events: Arc<dyn EventSink<AppEvent>>,
@@ -117,6 +121,7 @@ impl CommandCtx {
             engines,
             pill,
             main_window,
+            retention,
             paths,
             db,
             events,
@@ -137,6 +142,7 @@ impl CommandCtx {
             engines,
             pill,
             main_window,
+            retention,
             paths,
             db,
             events,
@@ -235,6 +241,11 @@ impl CommandCtx {
         self.main_window.as_ref()
     }
 
+    /// The retention sweeper's handle.
+    pub fn retention(&self) -> &RetentionHandle {
+        &self.retention
+    }
+
     /// Every data and resource location.
     pub fn paths(&self) -> &AppPaths {
         &self.paths
@@ -263,7 +274,7 @@ impl CommandCtx {
  *        English FakeAsrEngines (nothing loaded until a test asks), a hotkey fake, a focused Notepad target, a
  *        recording notifier, a delivery over a clipboard fake and a pasting inserter fake, a session handle whose
  *        actor (fake detector, registry polishers) is built but not running, a pill presenter over an overlay fake,
- *        a main-window fake, AppPaths under the system temp folder
+ *        a main-window fake, a retention handle whose sweeper is built but not running, AppPaths under the system temp folder
  *        (never touched: services take the in-memory database), a fresh in-memory database with the real migrations
  *        and a RecordingSink for events, plus handles to the sink and the fakes; `ctx()` is the all-defaults one.
  * WHY:   Factory, command and app tests all need the same context without a Tauri app or a disk; keeping the
@@ -280,6 +291,7 @@ pub mod testing {
             asr::{AsrWorker, AsrWorkerConfig},
             delivery::{Delivery, DeliveryPorts},
             pill::{PillPresenter, PillTiming},
+            retention::{RetentionDeps, RetentionHandle, RetentionSweeper},
             session::{SessionActor, SessionConfig, SessionEngines, SessionHandle},
         },
         ports::{
@@ -308,6 +320,8 @@ pub mod testing {
         /// The session actor over the same fakes, not running: a test spawns `run` on its own runtime, or drops
         /// it (the session commands then answer `Internal`).
         pub session_actor: SessionActor,
+        /// The retention sweeper over the same database, not running: a test spawns `run` or drops it.
+        pub retention_sweeper: RetentionSweeper,
         pub events: Arc<RecordingSink<AppEvent>>,
         pub appearance: Arc<FakeSystemAppearance>,
         pub launcher: Arc<FakeSystemLauncher>,
@@ -388,6 +402,12 @@ pub mod testing {
             },
             inbox,
         );
+        let (retention, retention_sweeper) = RetentionHandle::new(RetentionDeps {
+            settings: settings.clone(),
+            paths: paths.clone(),
+            db: db.clone(),
+            events: Arc::clone(&events) as _,
+        });
         let ctx = CommandCtx::new(CommandDeps {
             settings,
             consent: Arc::new(consent),
@@ -404,6 +424,7 @@ pub mod testing {
             engines,
             pill,
             main_window: Arc::clone(&main_window) as _,
+            retention,
             paths,
             db,
             events: Arc::clone(&events) as _,
@@ -411,6 +432,7 @@ pub mod testing {
         Harness {
             ctx,
             session_actor,
+            retention_sweeper,
             events,
             appearance,
             launcher,

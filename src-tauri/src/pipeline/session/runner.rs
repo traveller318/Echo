@@ -20,11 +20,13 @@
  *        the clipboard is given back CLIPBOARD_RESTORE_DELAY after the paste (05 W6); a delivery that starts
  *        before then, or the app exiting, restores it first, so a later take never saves the previous transcript
  *        as "the user's clipboard". A row write that fails is logged and the take goes on: the machine has
- *        already decided, and startup recovery repairs whatever status is left. Transcript text is never logged
- *        (02 §10).
+ *        already decided, and startup recovery repairs whatever status is left. A take that settles as a success
+ *        loses its audio at once when `storage.audio_retention_days` is 0 (pipeline/retention.rs). After a panic
+ *        the actor calls `abandon`, which releases everything held and fails the unfinished takes (02 §12).
+ *        Transcript text is never logged (02 §10).
  * WHERE: Owned by the session actor (actor.rs): `run` for each effect of a transition, `absorb` for each
  *        WorkerReply, `paste_last` on Message::PasteLast, `prepare` on Message::Prepare, `shutdown` on
- *        Message::Shutdown.
+ *        Message::Shutdown, `abandon` after a caught panic.
  */
 
 use std::{
@@ -40,7 +42,7 @@ use super::{
     arm::{self, ArmOutcome, ArmRequest},
     hotkey_input,
     inbox::{HotkeyForwarder, Outbox, PasteLastReply, WorkerReply},
-    notices::HOTKEY_UNAVAILABLE_TOAST,
+    notices::{HOTKEY_UNAVAILABLE_TOAST, TAKE_FAILED_TOAST},
 };
 use crate::{
     pipeline::{
@@ -50,6 +52,7 @@ use crate::{
         history,
         hotkeys::{self, SessionHotkeys},
         polish::polish_context,
+        retention,
     },
     ports::VoiceActivity,
     registry, services,
@@ -57,7 +60,7 @@ use crate::{
         AppError, AppTarget, AsrEvent, CaptureEvent, CaptureSummary, ClipboardRestore,
         DeliveryReport, EngineId, HistoryChangeReason, HistoryChanged, Language, PolishOutcome,
         PortError, PortResult, SessionEffect, SessionInput, SessionStateChanged, SettingsSnapshot,
-        TimerToken, TranscriptChange, TranscriptId,
+        TimerToken, TranscriptChange, TranscriptId, TranscriptStatus,
     },
 };
 
@@ -620,7 +623,94 @@ impl Runner {
             None => true,
         };
         if row {
+            self.release_audio_after_success(take);
             history::announce_saved(&self.config.db, self.config.events.as_ref(), take);
+        }
+    }
+
+    /// With `storage.audio_retention_days` at 0, a take that succeeded loses its audio now, before it is announced,
+    /// so History never offers a Retry for audio that is about to go (the journal was closed above).
+    fn release_audio_after_success(&self, take: TranscriptId) {
+        let policy = registry::settings::retention_policy(&self.settings());
+        if let Err(error) =
+            retention::release_after_success(&self.config.db, &self.config.paths, policy, take)
+        {
+            tracing::warn!(
+                %take,
+                detail = error.detail(),
+                "the take's audio could not be deleted after success; the retention sweep retries"
+            );
+        }
+    }
+
+    /**
+     * SOURCE OF TRUTH KEYWORDS: runner abandon, panic recovery, fail live take after panic, release everything held
+     * WHAT:  After the actor caught a panic: stops the timer, releases Esc, closes every open capture (finalizing its
+     *        journal) and ASR take, then marks every take it held, and `live`, failed with `Internal` if its row is
+     *        still `recording`/`transcribing`; announces each and toasts once.
+     * WHY:   02 §12: a panic fails the take in progress with its audio kept, and the app keeps running. The machine's
+     *        state may be half-updated after a panic, so the runner's own record of what it holds decides what to
+     *        release, and the stored status decides what to fail: a take that already settled (done, empty) is
+     *        never rewritten, and a row the Arm never inserted is simply not found. A row the still-running Arm
+     *        inserts later stays `recording` and startup recovery settles it (02 §7.3).
+     * WHERE: SessionActor::recover_from_panic (actor.rs).
+     */
+    pub async fn abandon(&mut self, live: Option<TranscriptId>) {
+        if let Some(timer) = self.timer.take() {
+            timer.task.abort();
+        }
+        self.esc = None;
+        let held: Vec<_> = self.takes.drain().collect();
+        let mut takes = Vec::with_capacity(held.len() + 1);
+        for (take, slot) in held {
+            if let Some(asr) = &slot.asr {
+                asr.cancel();
+            }
+            if let Some(capture) = slot.capture {
+                self.finish_now(capture).await;
+            }
+            takes.push(take);
+        }
+        if let Some(live) = live.filter(|live| !takes.contains(live)) {
+            takes.push(live);
+        }
+        let mut failed = false;
+        for take in takes {
+            failed |= self.fail_unfinished_row(take);
+        }
+        if failed {
+            self.toast(&TAKE_FAILED_TOAST);
+        }
+    }
+
+    /// Marks `take` failed with `Internal` when its row is still unfinished; true when it did.
+    fn fail_unfinished_row(&self, take: TranscriptId) -> bool {
+        let db = &self.config.db;
+        let unfinished = match services::transcripts::get::get(db, take) {
+            Ok(row) => row.status.is_unfinished(),
+            // The Arm had not inserted it yet: there is nothing to fail.
+            Err(error) if matches!(error.error(), AppError::NotFound { .. }) => false,
+            Err(error) => {
+                tracing::warn!(%take, detail = error.detail(), "the abandoned take's row could not be read");
+                false
+            }
+        };
+        if !unfinished {
+            return false;
+        }
+        let changes = [
+            TranscriptChange::Status(TranscriptStatus::Failed),
+            TranscriptChange::ErrorCode(Some(AppError::Internal.code())),
+        ];
+        match services::transcripts::update::update(db, take, &changes) {
+            Ok(()) => {
+                history::announce_saved(db, self.config.events.as_ref(), take);
+                true
+            }
+            Err(error) => {
+                tracing::error!(%take, detail = error.detail(), "the abandoned take could not be marked failed; startup recovery settles it");
+                false
+            }
         }
     }
 

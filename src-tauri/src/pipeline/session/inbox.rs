@@ -1,7 +1,7 @@
 /*!
  * SOURCE OF TRUTH KEYWORDS: session inbox, Message, WorkerReply, Outbox, HotkeyForwarder, TakeEvents, actor mailbox, weak sender
  * WHAT:  The session actor's mailbox: every message it can receive (Message: hotkeys, the pill, queries, paste-last,
- *        lifecycle and WorkerReply, the replies of the work its effects started), the Outbox the actor's own tasks and sinks
+ *        lifecycle, panic reports and WorkerReply, the replies of the work its effects started), the Outbox the actor's own tasks and sinks
  *        post through, and the port sinks that forward into it (HotkeyForwarder for the hotkey port, TakeEvents for
  *        one take's capture and ASR events).
  * WHY:   All inputs go through one inbox, so the actor handles them one at a time in arrival order and is the only
@@ -81,6 +81,8 @@ pub(super) enum Message {
     Prepare,
     /// The app is exiting: finalize every open journal, then answer and stop.
     Shutdown(std::sync::mpsc::Sender<()>),
+    /// Code panicked somewhere in the process (the panic hook, through PanicReporter): fail the live take.
+    Panicked,
 }
 
 /// The receiving end, owned by the actor.

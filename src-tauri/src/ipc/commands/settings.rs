@@ -18,7 +18,7 @@
 
 use crate::{
     ipc::{CommandCtx, factory::echo_command},
-    pipeline::appearance,
+    pipeline::{appearance, retention},
     registry::{engines, hotkeys, metrics, nav, settings},
     services,
     services::Db,
@@ -132,11 +132,13 @@ fn resolved(db: &Db) -> PortResult<SettingsSnapshot> {
 }
 
 /**
- * SOURCE OF TRUTH KEYWORDS: announce setting change, SettingsChanged emit, AppearanceChanged after theme write
+ * SOURCE OF TRUTH KEYWORDS: announce setting change, SettingsChanged emit, AppearanceChanged after theme write, retention re-sweep
  * WHAT:  Emits SettingsChanged with the effective value of `key` and, when the write changed the appearance
- *        (the theme), AppearanceChanged with the full view; returns the entry.
- * WHY:   The appearance view is derived state: which settings feed it is decided in pipeline/appearance, never
- *        by matching a key here. `before` is the snapshot the write replaced (always present after a successful
+ *        (the theme), AppearanceChanged with the full view; when it changed the retention policy, asks the
+ *        retention sweeper to apply it now; returns the entry.
+ * WHY:   The appearance view and the retention policy are derived state: which settings feed them is decided in
+ *        pipeline/appearance and pipeline/retention, never by matching a key here. A new retention value takes
+ *        effect at once (lowering it frees the disk now), not at the next daily sweep. `before` is the snapshot the write replaced (always present after a successful
  *        update).
  * WHERE: `set` and `reset`.
  */
@@ -157,6 +159,9 @@ fn announce(
         .and_then(|before| appearance::after_settings_change(before, snapshot, ctx.appearance()))
     {
         ctx.emit(AppearanceChanged(view));
+    }
+    if before.is_some_and(|before| retention::policy_changed(before, snapshot)) {
+        ctx.retention().sweep_soon();
     }
     Ok(SettingEntry { key, value })
 }
@@ -414,6 +419,35 @@ mod tests {
             Err(AppError::PermissionDenied {
                 permission: Permission::Network
             })
+        );
+    }
+
+    #[test]
+    fn a_retention_change_asks_for_a_sweep_and_other_writes_do_not() {
+        let mut harness = harness();
+        run_set(
+            &harness.ctx,
+            set_input(&keys::TYPING_WPM, SettingValue::Int(65)),
+        )
+        .unwrap();
+        assert!(!harness.retention_sweeper.take_requests());
+
+        run_set(
+            &harness.ctx,
+            set_input(&keys::AUDIO_RETENTION_DAYS, SettingValue::Int(0)),
+        )
+        .unwrap();
+        assert!(harness.retention_sweeper.take_requests());
+
+        run_reset(&harness.ctx, &keys::AUDIO_RETENTION_DAYS).unwrap();
+        assert!(
+            harness.retention_sweeper.take_requests(),
+            "going back to the default is a change too"
+        );
+        run_reset(&harness.ctx, &keys::HISTORY_RETENTION_DAYS).unwrap();
+        assert!(
+            !harness.retention_sweeper.take_requests(),
+            "an unchanged policy sweeps nothing"
         );
     }
 }

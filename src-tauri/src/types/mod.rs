@@ -16,6 +16,7 @@ mod audio;
 mod clipboard;
 mod command;
 mod delivery;
+mod durability;
 mod engine;
 mod error;
 mod events;
@@ -55,6 +56,7 @@ pub use audio::{
 pub use clipboard::ClipboardHistory;
 pub use command::{CommandSpec, Reentrancy};
 pub use delivery::{ClipboardRestore, CopyReason, DeliveryPlan, DeliveryPolicy, DeliveryReport};
+pub use durability::{RecoveryReport, RetentionPolicy, RetentionReport};
 pub use engine::{
     Accelerator, AppearanceCaps, AsrCaps, AudioCaps, EngineCaps, EngineKind, EngineSpec,
     HotkeyCaps, InserterCaps, Language, LanguageSupport, LatencyClass, PolisherCaps, UpdaterCaps,

@@ -27,7 +27,9 @@ mod actor_tests;
 #[cfg(test)]
 mod tests;
 
-pub use actor::{SessionActor, SessionConfig, SessionEngines, SessionHandle, SessionInbox};
+pub use actor::{
+    PanicReporter, SessionActor, SessionConfig, SessionEngines, SessionHandle, SessionInbox,
+};
 pub use arm::VadBuilder;
 pub use notices::{
     DEVICE_LOST_TOAST, HOTKEY_UNAVAILABLE_TOAST, MAX_DURATION_TOAST, START_FAILED_TOAST,

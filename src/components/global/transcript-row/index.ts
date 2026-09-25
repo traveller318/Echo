@@ -6,4 +6,9 @@
  */
 export { TranscriptRow, type TranscriptRowProps } from "./TranscriptRow";
 export { TranscriptStatusBadge, type TranscriptStatusBadgeProps } from "./TranscriptStatusBadge";
-export { TRANSCRIPT_STATUS_LOOK, type BadgeVariant, type TranscriptStatusLook } from "./transcript-status";
+export {
+  TRANSCRIPT_STATUS_LOOK,
+  transcriptPlaceholder,
+  type BadgeVariant,
+  type TranscriptStatusLook,
+} from "./transcript-status";

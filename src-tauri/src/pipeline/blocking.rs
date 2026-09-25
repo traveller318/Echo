@@ -6,7 +6,8 @@
  * WHY:   Command handlers and pipeline tasks are async and share Tauri's runtime threads; a clipboard held by
  *        another app blocks for up to the adapter's retries (05 W4), which must not stall other commands or
  *        events. One helper keeps the panic mapping identical everywhere (the factory's promise always settles).
- * WHERE: ipc/commands/history.rs (copy, delete), pipeline/retry.rs (reading and transcribing a journal).
+ * WHERE: ipc/commands/history.rs (copy, delete), pipeline/retry.rs (reading and transcribing a journal),
+ *        pipeline/retention.rs (each sweep).
  */
 
 use crate::types::{AppError, PortError, PortResult};

@@ -11,6 +11,7 @@ mod bindings;
 mod bootstrap;
 mod events;
 mod logging;
+mod panics;
 mod plugins;
 mod windows;
 
@@ -26,9 +27,9 @@ use std::process::ExitCode;
  *        before the event loop creates the windows, so no command or emit can run without them. A failure before
  *        logging exists goes to stderr; after that bootstrap has also written it to the log.
  *        Native window appearance (Mica, theme) is applied on RunEvent::Ready, the first moment the config
- *        windows exist, and the speech engine starts loading and the session binds its hotkeys right after, so the
- *        UI is never held up by them; on RunEvent::Exit the session finalizes an open recording before the process
- *        ends (02 §5); window events (close → hide) go to app/windows.rs.
+ *        windows exist, then the startup recovery toast is shown (once), and the speech engine starts loading and
+ *        the session binds its hotkeys right after, so the UI is never held up by them; on RunEvent::Exit the
+ *        session finalizes an open recording before the process ends (02 §5); window events (close → hide) go to app/windows.rs.
  * WHERE: Called once by main.rs.
  */
 pub fn run() -> ExitCode {
@@ -45,13 +46,19 @@ pub fn run() -> ExitCode {
         }
     };
     ipc.mount_events(&app);
-    if let Err(error) = bootstrap::start(&app) {
-        eprintln!("Echo could not start: {error}");
-        return ExitCode::FAILURE;
-    }
-    let code = app.run_return(|handle, event| match event {
+    let mut recovered = match bootstrap::start(&app) {
+        Ok(report) => Some(report),
+        Err(error) => {
+            eprintln!("Echo could not start: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let code = app.run_return(move |handle, event| match event {
         tauri::RunEvent::Ready => {
             windows::setup(handle);
+            if let Some(report) = recovered.take() {
+                bootstrap::announce_recovery(handle, report);
+            }
             bootstrap::start_speech_engine(handle);
             bootstrap::prepare_session(handle);
         }

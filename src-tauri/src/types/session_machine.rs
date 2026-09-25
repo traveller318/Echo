@@ -350,6 +350,15 @@ impl SessionPhase {
         }
     }
 
+    /// The take still in progress (Arming → Delivering), when there is one; a settled take is not live.
+    pub const fn live_take_id(&self) -> Option<TranscriptId> {
+        if self.status().is_in_progress() {
+            self.take_id()
+        } else {
+            None
+        }
+    }
+
     /// The token of the phase's live timer, when it has one.
     pub const fn timer(&self) -> Option<TimerToken> {
         match self {

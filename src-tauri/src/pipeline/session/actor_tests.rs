@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: session actor tests, pipeline tests, full take test, Esc undo test, Esc discard test, device loss test, ASR error test, exit mid-take test
+ * SOURCE OF TRUTH KEYWORDS: session actor tests, pipeline tests, full take test, Esc undo test, Esc discard test, device loss test, ASR error test, exit mid-take test, panic recovery test, audio retention after success test
  * WHAT:  End-to-end tests of the session actor over port fakes: a real capture worker, ASR worker, polish chain,
  *        delivery and in-memory database, driven by fake hotkeys and a fake microphone, observed through the
  *        events, the database, the journal on disk and the fakes.
@@ -12,7 +12,10 @@
  */
 
 use std::{
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread::{self, JoinHandle},
     time::Duration,
 };
@@ -29,7 +32,7 @@ use crate::{
         delivery::{Delivery, DeliveryPorts},
     },
     ports::{
-        AsrEngine,
+        AsrEngine, EventSink,
         fakes::{
             ChannelSink, FakeAsrEngine, FakeAudioCapture, FakeClipboard, FakeForegroundApp,
             FakeHotkeyService, FakeNotifier, FakeTextInserter, FakeVoiceActivity,
@@ -104,6 +107,26 @@ impl Rig {
 
     /// `settings`, and the engine's load failing with `load_error` when given.
     fn with(settings: SettingsSnapshot, load_error: Option<PortError>) -> Self {
+        Self::build(settings, load_error, None)
+    }
+
+    /// Toggle mode, with the actor panicking the first time it publishes `status` (a bug inside the actor).
+    fn panicking_on(status: SessionStatus) -> Self {
+        Self::build(
+            settings_with(vec![(
+                keys::HOTKEY_MODE,
+                SettingValue::Enum(StaticStr::new(values::TOGGLE)),
+            )]),
+            None,
+            Some(status),
+        )
+    }
+
+    fn build(
+        settings: SettingsSnapshot,
+        load_error: Option<PortError>,
+        panic_on: Option<SessionStatus>,
+    ) -> Self {
         let dir = TempDir::new("session-actor");
         let paths = AppPaths::new(dir.join("data"), dir.join("resources"));
         let events = Arc::new(ChannelSink::default());
@@ -154,7 +177,11 @@ impl Rig {
                 }),
                 paths: paths.clone(),
                 db: db.clone(),
-                events: Arc::clone(&events) as _,
+                events: Arc::new(PanicOnPublish {
+                    inner: Arc::clone(&events),
+                    status: panic_on,
+                    fired: AtomicBool::new(false),
+                }),
                 engines: SessionEngines::new(
                     Arc::new(|| Ok(Box::new(FakeVoiceActivity::new(32)) as _)),
                     Arc::new(move |id: &EngineId| {
@@ -249,6 +276,26 @@ impl Drop for Rig {
         if let Some(runner) = self.runner.take() {
             let _ = runner.join();
         }
+    }
+}
+
+/// Forwards every event to the rig's channel, except that it panics once, instead of forwarding, when the actor
+/// publishes `status`: the panic strikes on the actor's own task, in the middle of running a transition's effects.
+struct PanicOnPublish {
+    inner: Arc<ChannelSink<AppEvent>>,
+    status: Option<SessionStatus>,
+    fired: AtomicBool,
+}
+
+impl EventSink<AppEvent> for PanicOnPublish {
+    fn emit(&self, event: AppEvent) {
+        if let AppEvent::SessionStateChanged(changed) = &event
+            && Some(changed.0.status) == self.status
+            && !self.fired.swap(true, Ordering::SeqCst)
+        {
+            panic!("publishing {:?} went wrong", changed.0.status);
+        }
+        self.inner.emit(event);
     }
 }
 
@@ -563,4 +610,97 @@ fn exiting_while_recording_finalizes_the_journal() {
         "startup recovery finds it (02 §7.3)"
     );
     assert!(!rig.audio.is_open());
+}
+
+/// A panic anywhere in the process (reported by the panic hook) fails the live take with its audio kept, and the
+/// next take works.
+#[test]
+fn a_reported_panic_fails_the_live_take_and_keeps_its_audio() {
+    let rig = Rig::start();
+    let take = rig.record();
+    rig.feed(&speech(400));
+    rig.handle.panic_reporter().report();
+    let (failed, _) = rig.wait_for(SessionStatus::Failed);
+
+    assert_eq!(failed.error, Some(AppError::Internal));
+    assert_eq!(failed.transcript_id, Some(take));
+    let row = transcripts::get::get(&rig.db, take).unwrap();
+    assert_eq!(row.status, TranscriptStatus::Failed);
+    assert_eq!(row.error_code, Some(AppError::Internal.code()));
+    assert!(row.has_audio);
+    assert!(
+        WavReader::open(rig.paths.recording(take)).unwrap().len() > 0,
+        "the finalized WAV is kept for retry"
+    );
+    assert!(rig.notifier.toasts().contains(&TAKE_FAILED_TOAST));
+    assert!(rig.inserter.insertions().is_empty());
+    assert_eq!(rig.hotkeys.binding(&CANCEL), None);
+    assert!(!rig.audio.is_open());
+
+    rig.wait_for(SessionStatus::Idle);
+    thread::sleep(PAST_DEBOUNCE);
+    assert_ne!(rig.record(), take, "dictation keeps working");
+}
+
+/// A reported panic with no take in progress changes nothing.
+#[test]
+fn a_reported_panic_while_idle_is_ignored() {
+    let rig = Rig::start();
+    rig.handle.panic_reporter().report();
+    assert_eq!(rig.view(), SessionView::IDLE);
+    assert!(rig.notifier.toasts().is_empty());
+}
+
+/// The actor itself panics while running a transition's effects: it fails the take (audio kept), starts over at
+/// Idle and keeps answering hotkeys.
+#[test]
+fn a_panic_inside_the_actor_fails_the_take_and_the_session_starts_over() {
+    let rig = Rig::panicking_on(SessionStatus::Recording);
+    rig.press();
+    rig.wait_for(SessionStatus::Idle);
+
+    let row = transcripts::get::latest(&rig.db, TranscriptStatus::Failed)
+        .unwrap()
+        .expect("the take was marked failed");
+    assert_eq!(row.error_code, Some(AppError::Internal.code()));
+    assert!(row.has_audio);
+    assert!(
+        rig.paths.recording(row.id).is_file(),
+        "the journal is finalized and kept"
+    );
+    assert!(rig.notifier.toasts().contains(&TAKE_FAILED_TOAST));
+    assert!(!rig.audio.is_open(), "the microphone was released");
+    assert_eq!(rig.hotkeys.binding(&CANCEL), None, "Esc was released");
+    assert_eq!(rig.view(), SessionView::IDLE);
+
+    thread::sleep(PAST_DEBOUNCE);
+    let next = rig.record();
+    assert_ne!(next, row.id, "dictation keeps working after the panic");
+}
+
+/// With `storage.audio_retention_days` at 0, a take that succeeds loses its audio as soon as it settles.
+#[test]
+fn zero_day_audio_retention_deletes_the_journal_right_after_success() {
+    let rig = Rig::with(
+        settings_with(vec![
+            (
+                keys::HOTKEY_MODE,
+                SettingValue::Enum(StaticStr::new(values::TOGGLE)),
+            ),
+            (keys::AUDIO_RETENTION_DAYS, SettingValue::Int(0)),
+        ]),
+        None,
+    );
+    rig.engine.push_text("Delete me after.");
+    let take = rig.record();
+    rig.feed(&speech(400));
+    rig.feed(&silence(700));
+    rig.stop();
+    rig.wait_for(SessionStatus::Done);
+    rig.wait_for(SessionStatus::Idle);
+
+    let row = transcripts::get::get(&rig.db, take).unwrap();
+    assert_eq!(row.status, TranscriptStatus::Done);
+    assert!(!row.has_audio);
+    assert!(!rig.paths.recording(take).exists());
 }
