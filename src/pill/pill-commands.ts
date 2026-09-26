@@ -1,6 +1,6 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: pill commands, stopTake, openPage from pill, openOnboarding, reportHitAreas, reportExited, pill error action
- * WHAT:  The pill's calls into Rust: stop the take, report its button areas, report the end of its exit animation,
+ * SOURCE OF TRUTH KEYWORDS: pill commands, stopTake, cancelTake, openPage from pill, openOnboarding, reportHitAreas, reportExited, pill error action
+ * WHAT:  The pill's calls into Rust: stop the take, cancel it or undo the cancel (as Esc), report its button areas, report the end of its exit animation,
  *        bring the main window forward on a page or on onboarding, and perform an AppError action.
  * WHY:   The pill has no router, no toasts and no QueryClient (02 §6.2: a minimal bundle), so each call is a plain
  *        command whose failure is logged to the console: a pill that could not tell Rust something costs a click,
@@ -27,6 +27,11 @@ function send(call: () => Promise<CommandResult<null>>): void {
 /** The stop button: the same input as pressing the record hotkey while recording. */
 export function stopTake(): void {
   send(() => commands.sessionInput("stop"));
+}
+
+/** The ✕ and undo buttons: the same input as pressing Esc (cancel while recording, undo while cancelling). */
+export function cancelTake(): void {
+  send(() => commands.sessionInput("cancel"));
 }
 
 export function reportHitAreas(areas: OverlayRect[]): void {

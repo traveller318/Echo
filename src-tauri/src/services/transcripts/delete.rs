@@ -63,10 +63,16 @@ mod tests {
     use crate::types::{TranscriptStatus, UnixMs};
 
     fn searchable(db: &Db, word: &str) -> usize {
-        list::list(db, Some(word), None, NonZeroU32::MIN)
-            .unwrap()
-            .items
-            .len()
+        list::list(
+            db,
+            &TranscriptSelector::default(),
+            Some(word),
+            None,
+            NonZeroU32::MIN,
+        )
+        .unwrap()
+        .items
+        .len()
     }
 
     #[test]

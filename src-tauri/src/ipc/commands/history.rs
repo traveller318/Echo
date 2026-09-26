@@ -8,7 +8,8 @@
  *        polling (02 §4.4). Handlers are thin: the factory already validated the input schema (search length,
  *        page size, cursor shape) and maps errors, services own the SQL, and pipeline/history.rs owns the rules
  *        (what text a take offers, WAV before row, the session's live take is refused with `Busy`, Echo's own
- *        window is never a paste target). Clipboard and file work runs on the blocking pool (05 W4). Delete
+ *        window is never a paste target). The list shows only statuses `TranscriptStatus::is_listed_in_history`
+ *        accepts, so no-speech takes never bloat History or the Dashboard's recent takes. Clipboard and file work runs on the blocking pool (05 W4). Delete
  *        announces HistoryChanged and MetricsChanged (a deleted take leaves the dashboard sums). Paste-last goes
  *        through the session actor, which owns the clipboard restore (05 W6).
  * WHERE: Registered through `ipc::commands::catalog`; called from the UI as `commands.historyList(…)`,
@@ -24,12 +25,12 @@ use crate::{
     services,
     types::{
         AppError, DeliveryOutcome, HistoryListInput, Page, PortError, Transcript, TranscriptInput,
-        TranscriptSummary,
+        TranscriptSelector, TranscriptStatus, TranscriptSummary,
     },
 };
 
 echo_command! {
-    /// One page of History, newest first: every take, or those whose text matches `search`.
+    /// One page of History, newest first: every listed take (not no-speech ones), or those whose text matches `search`.
     name: history_list,
     input: HistoryListInput,
     output: Page<TranscriptSummary>,
@@ -85,7 +86,19 @@ pub async fn list(
     let limit = NonZeroU32::new(input.limit).ok_or_else(|| {
         PortError::new(AppError::validation("limit", "Ask for at least one row."))
     })?;
-    services::transcripts::list::list(ctx.db(), input.search_text(), input.cursor.as_ref(), limit)
+    let listed = TranscriptSelector {
+        statuses: Some(TranscriptStatus::matching(
+            TranscriptStatus::is_listed_in_history,
+        )),
+        ..TranscriptSelector::default()
+    };
+    services::transcripts::list::list(
+        ctx.db(),
+        &listed,
+        input.search_text(),
+        input.cursor.as_ref(),
+        limit,
+    )
 }
 
 /// Reads one take in full.
@@ -259,6 +272,34 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(blank.items.len(), 3, "a blank search lists everything");
+    }
+
+    #[test]
+    fn list_leaves_out_no_speech_takes() {
+        let harness = harness();
+        let ctx = &harness.ctx;
+        let spoken = done(ctx, 1_000, "Buy milk tomorrow.");
+        let silent = done(ctx, 2_000, "");
+        services::transcripts::update::update(
+            ctx.db(),
+            silent,
+            &[
+                TranscriptChange::Status(TranscriptStatus::Empty),
+                TranscriptChange::FinalText(None),
+            ],
+        )
+        .unwrap();
+
+        let page = block_on(factory::run(ctx, &LIST, list_input(None, None, 10), list)).unwrap();
+        assert_eq!(
+            page.items.iter().map(|row| row.id).collect::<Vec<_>>(),
+            [spoken]
+        );
+        assert_eq!(page.next_cursor, None);
+        // The row is only hidden from the list; it is still stored and readable.
+        let hidden =
+            block_on(factory::run(ctx, &GET, TranscriptInput { id: silent }, get)).unwrap();
+        assert_eq!(hidden.status, TranscriptStatus::Empty);
     }
 
     #[test]

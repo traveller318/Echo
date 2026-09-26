@@ -5,7 +5,7 @@
  * WHY:   The pill window lets clicks through everywhere except on its buttons (04 §4), so every button must report its
  *        rectangle (usePillHitArea); wrapping it once means no pill button can forget. Its size is --size-hit, the
  *        minimum hit target (04 §7); an icon-only button needs `label` for its accessible name.
- * WHERE: src/pill/Pill.tsx (stop, "Open", "Set up").
+ * WHERE: src/pill/Pill.tsx (cancel, stop, "Undo", "Open", "Set up").
  */
 import type { ReactNode } from "react";
 import { Button, type ButtonProps } from "@/components/ui";

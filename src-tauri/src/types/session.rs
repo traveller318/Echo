@@ -114,6 +114,9 @@ impl SessionView {
 pub enum SessionUiInput {
     /// The pill's stop button: same effect as pressing the record hotkey while recording.
     Stop,
+    /// The pill's cancel (✕) and undo buttons: same effect as pressing Esc, so the first press starts the cancel
+    /// countdown and a second one before it runs out resumes the take.
+    Cancel,
 }
 
 /**
@@ -165,10 +168,14 @@ mod tests {
     }
 
     #[test]
-    fn ui_input_accepts_only_stop() {
+    fn ui_input_accepts_only_stop_and_cancel() {
         assert_eq!(
             serde_json::from_str::<SessionUiInput>("\"stop\"").unwrap(),
             SessionUiInput::Stop
+        );
+        assert_eq!(
+            serde_json::from_str::<SessionUiInput>("\"cancel\"").unwrap(),
+            SessionUiInput::Cancel
         );
         assert!(serde_json::from_str::<SessionUiInput>("\"record_pressed\"").is_err());
     }

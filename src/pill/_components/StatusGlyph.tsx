@@ -4,7 +4,7 @@
  *        --color-warning), with an accessible name when no text accompanies it.
  * WHY:   04 §7: status is never conveyed by colour alone, so each status has its own shape, and the Done state (a
  *        glyph with no text) names itself for assistive tech.
- * WHERE: src/pill/Pill.tsx (done, copied and error layouts).
+ * WHERE: src/pill/Pill.tsx (copied and error layouts).
  */
 import { CheckIcon, TriangleAlertIcon } from "lucide-react";
 

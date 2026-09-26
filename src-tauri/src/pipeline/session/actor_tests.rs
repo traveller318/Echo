@@ -53,9 +53,9 @@ use crate::{
         Accelerator, AcceleratorRequest, AppError, AppEvent, AppPaths, AppTarget, AsrLoadRequest,
         AudioTransport, CaptureFormat, DeliveryOutcome, EngineId, HistoryChangeReason,
         HistoryChanged, HotkeyAction, HotkeyCaps, HotkeyRehearsed, KeyState, Permission, PortError,
-        ResourceKind, SessionCue, SessionRehearsal, SessionStatus, SessionView, SettingKey,
-        SettingValue, SettingsSnapshot, SharedSettings, StaticStr, TranscriptId, TranscriptStatus,
-        testing::TempDir,
+        ResourceKind, SessionCue, SessionRehearsal, SessionStatus, SessionUiInput, SessionView,
+        SettingKey, SettingValue, SettingsSnapshot, SharedSettings, StaticStr, TranscriptId,
+        TranscriptStatus, testing::TempDir,
     },
 };
 
@@ -497,6 +497,27 @@ fn esc_then_esc_resumes_and_keeps_the_text_from_both_sides() {
     let row = transcripts::get::get(&rig.db, take).unwrap();
     assert_eq!(row.final_text.as_deref(), Some("First part. Second part."));
     assert_eq!(rig.hotkeys.binding(&CANCEL), None);
+}
+
+/// The pill's ✕ is Esc: the first press starts the countdown, the second (its undo) resumes the same take.
+#[test]
+fn the_pill_cancel_acts_as_esc_and_a_second_press_resumes() {
+    let rig = Rig::start();
+    rig.engine.push_text("Kept.");
+    let take = rig.record();
+    rig.feed(&speech(400));
+    rig.handle.ui_input(SessionUiInput::Cancel).unwrap();
+    let (pending, _) = rig.wait_for(SessionStatus::CancelPending);
+    assert_eq!(pending.transcript_id, Some(take));
+    assert!(rig.audio.is_paused());
+
+    rig.handle.ui_input(SessionUiInput::Cancel).unwrap();
+    let (resumed, _) = rig.wait_for(SessionStatus::Recording);
+    assert_eq!(resumed.transcript_id, Some(take));
+    assert!(!rig.audio.is_paused());
+    rig.stop();
+    let (done, _) = rig.wait_for(SessionStatus::Done);
+    assert_eq!(done.outcome, Some(DeliveryOutcome::Pasted));
 }
 
 /// Esc and the countdown runs out: the row and the WAV are gone, nothing is pasted.

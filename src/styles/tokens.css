@@ -127,7 +127,6 @@
   --delay-loading: 150ms;
   --motion-scale-from: 0.96;
   --press-scale: 0.97;
-  --duration-breathe: 1600ms;
 
   /* 3.8 Layers and focus */
   --z-base: 0;
@@ -160,27 +159,28 @@
   --setting-control-width: 240px;
   --number-field-width: 72px;
   --chart-height: 160px;
-  --practice-pad-height: 160px;
+  --practice-pad-height: 64px;
   --step-dot: 8px;
   --opacity-disabled: 0.45;
 
   /* 3.10 Sizes: the pill (4) */
-  --pill-height: 44px;
-  --pill-width-recording: 212px;
-  --pill-width-cancel: 248px;
+  --pill-height: 28px;
+  --pill-width-recording: 146px;
+  --pill-width-cancel: 172px;
   --pill-width-processing: 132px;
-  --pill-width-done: 44px;
   --pill-width-copied: 112px;
   --pill-width-notice: 200px;
   --pill-width-error: 280px;
   --pill-width-setup: 260px;
-  --record-dot: 8px;
+  --pill-logo-width: 24px;
+  --pill-divider-height: 14px;
+  --pill-stop-size: 18px;
   --ring-size: 20px;
   --ring-stroke: 2px;
   --waveform-bar-width: 3px;
   --waveform-bar-gap: 2px;
-  --waveform-min: 4px;
-  --waveform-max: 24px;
+  --waveform-min: 3px;
+  --waveform-max: 14px;
   --opacity-waveform: 0.85;
 }
 

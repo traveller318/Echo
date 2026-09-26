@@ -1,10 +1,11 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: OnboardingPage test, onboarding flow test, microphone consent test, model step test, practice pad test, practice take test, onboarding complete test
+ * SOURCE OF TRUTH KEYWORDS: OnboardingPage test, onboarding flow test, microphone consent test, model step test, practice pad test, practice take test, window focus test, onboarding complete test
  * WHAT:  Renders onboarding inside the real routed shell (buildAppRoutes on a memory router at ONBOARDING_ROUTE, the
  *        real Providers) with Tauri's IPC and events mocked, and walks it: the dot indicator and the blocked-consent
  *        notice with its privacy link; the model step's card, its import-only actions and a Continue that waits for
- *        the model; the practice step's take rehearsal, its hotkey settings and the text of shown takes in the practice
- *        pad; Finish storing completion and opening the first page; and the "ready" screen when nothing is due.
+ *        the model; the practice step's take rehearsal, its hotkey settings, the text of shown takes in the practice
+ *        pad and the pad's "click here first" state while another app is in front; Finish storing completion and
+ *        opening the first page; and the "ready" screen when nothing is due.
  * WHY:   Onboarding wires Rust's view, the session rehearsal, events and History together; this is the one place that
  *        whole flow runs short of Rust (02 §13 frontend tests).
  * WHERE: Runs in the `web` Vitest project (jsdom) with @tauri-apps/api/mocks (events mocked).
@@ -297,7 +298,27 @@ describe("OnboardingPage", () => {
     await act(async () => {
       await events.sessionStateChanged.emit({ ...IDLE, status: "done", transcript_id: TAKE, outcome: "pasted" });
     });
-    expect(await screen.findByText(/That take went to another app/)).toBeInTheDocument();
+    expect(await screen.findByText(/That take went to the app in front/)).toBeInTheDocument();
+  });
+
+  it("asks for a click on the pad while another app is in front", async () => {
+    view = onboarding({ steps: [STEPS.practice], speech_model_ready: true });
+    const hasFocus = vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    renderOnboarding();
+    await screen.findByRole("heading", { level: 1, name: "Try your hotkey" });
+    const pad = screen.getByRole("log", { name: "Practice pad" });
+    expect(pad).toHaveAttribute("data-ready", "false");
+    expect(pad).toHaveTextContent("Click here first.");
+    expect(screen.getByText(/Another app is in front/)).toBeInTheDocument();
+
+    hasFocus.mockReturnValue(true);
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(pad).toHaveAttribute("data-ready", "true");
+    expect(pad).toHaveTextContent("Your words appear here.");
+    expect(screen.getByText(/Echo is in front/)).toBeInTheDocument();
+    hasFocus.mockRestore();
   });
 
   it("says Echo is ready when nothing is due", async () => {

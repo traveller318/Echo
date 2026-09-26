@@ -7,7 +7,8 @@
  *        SessionStateChanged replaces it. The value is keyed, so a new take (or a new base after an undo) never
  *        shows the previous take's count for a tick. Monotonic time (`performance.now`), so a clock change cannot
  *        make it jump.
- * WHERE: The pill's recording timer; any live counter over a value Rust sent.
+ * WHERE: Any live counter over a value Rust sent (the pill's timer until the compact pill, 05 decision log
+ *        2026-09-26; no caller today).
  */
 import { useEffect, useState } from "react";
 

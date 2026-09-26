@@ -282,6 +282,10 @@ impl SessionActor {
             Message::Ui(SessionUiInput::Stop) => {
                 self.feed(VecDeque::from([SessionInput::Stop])).await;
             }
+            // The pill's ✕ is the Esc hotkey: one input, so the machine's cancel and undo rules apply unchanged.
+            Message::Ui(SessionUiInput::Cancel) => {
+                self.feed(VecDeque::from([SessionInput::Esc])).await;
+            }
             Message::Rehearse(rehearsal) => self.runner.rehearse(rehearsal),
             Message::Worker(reply) => {
                 let mut inputs = VecDeque::new();

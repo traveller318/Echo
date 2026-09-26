@@ -17,7 +17,7 @@ export const commands = {
 	audioTestLevel: (input: AudioTestLevelInput) => typedError<MicCheck, AppError>(__TAURI_INVOKE("audio_test_level", { input })),
 	/**  The current take as the pill renders it; Idle when no take is running. */
 	sessionGetState: () => typedError<SessionView, AppError>(__TAURI_INVOKE("session_get_state")),
-	/**  Sends a pill input (`stop`) to the current take. */
+	/**  Sends a pill input (`stop`, or `cancel` which acts as Esc) to the current take. */
 	sessionInput: (input: SessionUiInput) => typedError<null, AppError>(__TAURI_INVOKE("session_input", { input })),
 	/**  Transcribes a stored take again from its saved audio and returns its updated History row. */
 	sessionRetry: (input: TranscriptInput) => typedError<TranscriptSummary, AppError>(__TAURI_INVOKE("session_retry", { input })),
@@ -26,7 +26,7 @@ export const commands = {
 	 *  take (HotkeyRehearsed), `take` shows a take's text in Echo instead of pasting it, `off` ends it.
 	 */
 	sessionRehearse: (input: SessionRehearsal) => typedError<null, AppError>(__TAURI_INVOKE("session_rehearse", { input })),
-	/**  One page of History, newest first: every take, or those whose text matches `search`. */
+	/**  One page of History, newest first: every listed take (not no-speech ones), or those whose text matches `search`. */
 	historyList: (input: HistoryListInput) => typedError<Page<TranscriptSummary>, AppError>(__TAURI_INVOKE("history_list", { input })),
 	/**  One take in full (both texts and every measurement). */
 	historyGet: (input: TranscriptInput) => typedError<Transcript, AppError>(__TAURI_INVOKE("history_get", { input })),
@@ -1042,7 +1042,12 @@ export type SessionStatus = "idle" |
  */
 export type SessionUiInput = 
 /**  The pill's stop button: same effect as pressing the record hotkey while recording. */
-"stop";
+"stop" | 
+/**
+ *  The pill's cancel (✕) and undo buttons: same effect as pressing Esc, so the first press starts the cancel
+ *  countdown and a second one before it runs out resumes the take.
+ */
+"cancel";
 
 /**  Everything the UI may know about the current take. */
 export type SessionView = {

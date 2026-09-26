@@ -1,5 +1,5 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: PracticeStep, onboarding try it, practice take, hotkey test, rehearsed take, practice pad, rebind hotkey on conflict, DeliveryOutcome shown
+ * SOURCE OF TRUTH KEYWORDS: PracticeStep, onboarding try it, practice take, hotkey test, rehearsed take, practice pad, rebind hotkey on conflict, DeliveryOutcome shown, Echo not in front
  * WHAT:  Onboarding's last step, the hotkey test and the practice take in one: says how to dictate with the hotkey
  *        as bound now, follows each take live (listening, transcribing), writes its text into the practice pad, or
  *        says why nothing came out; below, the hotkey and its mode from the registry so a clash is rebound on the
@@ -9,7 +9,10 @@
  *        this step shows (`session_rehearse("take")`): a take started in Echo's own window runs the whole pipeline
  *        and is delivered as `shown`, so its text lands in the pad instead of being pasted into Echo. The take's
  *        state is the session's (SessionStateChanged) and its text is History's; the step keeps only which takes to
- *        show. A take that reached another app (the user clicked elsewhere first) is explained rather than shown.
+ *        show. The take goes to whichever window is in front when the hotkey is pressed, and a visible Echo is not
+ *        always the one in front (another monitor, a click elsewhere), so the step follows the window's focus
+ *        (useWindowFocused): the pad and the line under it say "click here first" until Echo is in front. A take
+ *        that still reached another app is explained rather than shown.
  *        A press that never starts a take means another app holds the keys, which the hint says to fix below.
  * WHERE: onboarding-steps.ts (the `practice` entry).
  */
@@ -17,7 +20,7 @@ import { CircleAlertIcon, CircleCheckIcon } from "lucide-react";
 import { useState } from "react";
 import type { AppError, SessionView, TranscriptId } from "@/bindings";
 import { ShortcutKeys } from "@/components/global";
-import { useEchoEvent, useSessionRehearsal, useSessionView } from "@/hooks";
+import { useEchoEvent, useSessionRehearsal, useSessionView, useWindowFocused } from "@/hooks";
 import { describeAppError } from "@/lib/app-error";
 import { PracticePad } from "./PracticePad";
 import type { OnboardingStepProps } from "./step-props";
@@ -72,8 +75,8 @@ function missCopy(miss: PracticeMiss): { readonly title: string; readonly body: 
   switch (miss.kind) {
     case "elsewhere":
       return {
-        title: "That take went to another app",
-        body: "Click into this window first, then dictate again to see the text here.",
+        title: "That take went to the app in front",
+        body: "Click the box above so Echo is in front, then dictate again.",
       };
     case "no_speech":
       return { title: "No speech detected", body: "Try again, a little closer to the microphone." };
@@ -97,6 +100,7 @@ function MissNote({ miss }: { readonly miss: PracticeMiss }) {
 export function PracticeStep({ view, step }: OnboardingStepProps) {
   useSessionRehearsal("take");
   const session = useSessionView();
+  const focused = useWindowFocused();
   const [takes, setTakes] = useState<readonly TranscriptId[]>([]);
   const [miss, setMiss] = useState<PracticeMiss | null>(null);
   useEchoEvent("sessionStateChanged", (next) => {
@@ -129,9 +133,12 @@ export function PracticeStep({ view, step }: OnboardingStepProps) {
           {view.hold_to_talk ? ", say a sentence, then let go." : ", say a sentence, then press it again."}
         </p>
       )}
-      <PracticePad takes={takes} />
+      <PracticePad takes={takes} ready={focused} />
       <p role="status" aria-live="polite" className="text-footnote text-fg-secondary">
-        {live ?? "Keep this window in front: your words appear in the box instead of being pasted."}
+        {live ??
+          (focused
+            ? "Echo is in front, so your words appear in the box instead of being pasted."
+            : "Another app is in front, so the hotkey types there. Click the box to try it here.")}
       </p>
       {miss === null ? null : <MissNote miss={miss} />}
       {takes.length === 0 ? null : (

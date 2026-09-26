@@ -78,6 +78,12 @@ impl TranscriptStatus {
         matches!(self, Self::Done | Self::Empty)
     }
 
+    /// History lists this take. A no-speech take has nothing to read, copy or retry, so listing it only buries the
+    /// takes that do; the row stays stored (metrics, retention) and `history_get` still reads it.
+    pub const fn is_listed_in_history(self) -> bool {
+        !matches!(self, Self::Empty)
+    }
+
     /// Every status in `ALL` that `keep` accepts, in declaration order (a selector's status list).
     pub fn matching(keep: fn(Self) -> bool) -> Vec<Self> {
         Self::ALL

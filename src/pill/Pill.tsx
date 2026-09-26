@@ -1,30 +1,33 @@
 /**
  * SOURCE OF TRUTH KEYWORDS: Pill, pill window UI, pill morph, pill states, recording pill, cancel pending pill, processing shimmer, done check, pill error, model missing Set up
- * WHAT:  The pill window's UI: follows the session (useSessionView) and renders its 04 §4 layout — recording (dot,
- *        waveform, timer, stop), cancel pending (draining ring, "Cancelling · Esc to undo"), processing (shimmer,
- *        after --delay-loading), done (✓), copied, no speech, error (message, "Open") and model missing ("Set up") —
- *        inside a glass pill that springs in, morphs its width between layouts and springs out.
- * WHY:   Rust owns the session; the pill keeps no copy of domain state, only display state (a running timer, audio
- *        levels, whether the loading delay has passed). The pill is anchored bottom-centre, --space-6 above the
+ * WHAT:  The pill window's UI: follows the session (useSessionView) and renders its 04 §4 layout — recording (logo,
+ *        waveform, ✕, stop), cancel pending (draining ring, "Cancelling", "Undo"), processing (shimmer, after
+ *        --delay-loading), copied, no speech, error (message, "Open") and model missing ("Set up") —
+ *        inside a glass pill that springs in, morphs its width between layouts and springs out. Recording is the
+ *        compact layout: Echo's wave logo, a hairline divider, the accent waveform, ✕ and a red stop button.
+ *        ✕ and "Undo" send the Esc input, so the machine's cancel countdown and undo apply unchanged; a pasted take
+ *        needs no ✓, the pill just leaves.
+ * WHY:   Rust owns the session; the pill keeps no copy of domain state, only display state (audio levels,
+ *        whether the loading delay has passed). The pill is anchored bottom-centre, --space-6 above the
  *        window's bottom edge, which Rust puts on the taskbar's edge (04 §4). Layouts cross-fade while the surface
  *        springs its width (`pillMorph`); under reduced motion every spring becomes the --duration-base fade and
  *        nothing moves or scales (04 §3.7). When the pill has left, the page tells Rust (`pill_exited`) so the window
  *        is hidden only after the animation. Buttons report their rectangles (PillHitAreaRegistry), because the
  *        window lets every other click through. Status is never colour alone: each layout has a glyph or words, and
- *        the surface names its state for assistive tech.
+ *        the surface names its state for assistive tech. The logo is imported `?no-inline` because the CSP's
+ *        img-src is 'self' only: Vite would inline a small image as a data: URI, which the webview would block.
  * WHERE: Mounted by src/pill.tsx in the pill window. Layout choice in pill-layout.ts, Rust calls in
  *        pill-commands.ts, parts in pill/_components.
  */
-import { SquareIcon } from "lucide-react";
+import { SquareIcon, XIcon } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useState } from "react";
+import waveLogo from "@/assets/wave-logo.png?no-inline";
 import type { SessionView } from "@/bindings";
 import { GlassSurface } from "@/components/global";
 import { useDelayedFlag } from "@/hooks/use-delayed-flag";
-import { useRunningClock } from "@/hooks/use-running-clock";
 import { useSessionView } from "@/hooks/use-session-view";
 import { describeAppError } from "@/lib/app-error";
-import { formatClock, NUMERIC_CLASS } from "@/lib/format";
 import {
   fadeTransition,
   PILL_ENTER_FROM,
@@ -37,7 +40,14 @@ import {
 } from "@/styles/motion";
 import { CountdownRing, PillAction, StatusGlyph, Waveform } from "./_components";
 import { PillHitAreaRegistry, PillHitAreasContext } from "./hit-areas";
-import { openOnboarding, performPillAction, reportExited, reportHitAreas, stopTake } from "./pill-commands";
+import {
+  cancelTake,
+  openOnboarding,
+  performPillAction,
+  reportExited,
+  reportHitAreas,
+  stopTake,
+} from "./pill-commands";
 import { isFinishing, PILL_WIDTH_TOKENS, pillKind, type PillKind } from "./pill-layout";
 
 const MS_PER_SECOND = 1000;
@@ -50,7 +60,6 @@ const PILL_LABELS: Readonly<Record<PillKind, string>> = {
   recording: "Recording",
   cancel: "Cancelling",
   processing: "Transcribing",
-  done: "Done",
   copied: "Copied",
   no_speech: "No speech detected",
   error: "Something went wrong",
@@ -60,20 +69,25 @@ const PILL_LABELS: Readonly<Record<PillKind, string>> = {
 const LABEL_CLASS = "truncate text-footnote text-fg";
 
 function RecordingContent({ view, reducedMotion }: { readonly view: SessionView; readonly reducedMotion: boolean }) {
-  const recording = view.status === "recording";
-  const elapsed = useRunningClock({
-    key: view.transcript_id ?? UNKNOWN_TAKE,
-    baseMs: view.elapsed_ms,
-    running: recording,
-  });
   return (
-    <div className="flex h-full w-full items-center gap-2 pr-2 pl-3">
-      <span aria-hidden className="size-(--record-dot) shrink-0 rounded-pill bg-record motion-safe:animate-breathe" />
-      <Waveform listening={recording} reducedMotion={reducedMotion} />
-      <span className={`min-w-0 flex-1 text-center text-footnote text-fg ${NUMERIC_CLASS}`}>{formatClock(elapsed)}</span>
-      <PillAction size="icon-sm" label="Stop dictation" onPress={stopTake}>
-        <SquareIcon className="size-3 fill-current text-record" />
-      </PillAction>
+    <div className="flex h-full w-full items-center gap-2 pl-2">
+      <img src={waveLogo} alt="" aria-hidden draggable={false} className="w-(--pill-logo-width) shrink-0" />
+      <span aria-hidden className="h-(--pill-divider-height) w-hairline shrink-0 bg-fg-tertiary" />
+      <div className="flex min-w-0 flex-1 justify-center">
+        <Waveform listening={view.status === "recording"} reducedMotion={reducedMotion} />
+      </div>
+      {/* The buttons' empty target edges take the spacing (glyphs stay apart, targets stay 28px), and the stop
+          target reaches the pill's right edge: its circle is then as far from that edge as from the top and bottom. */}
+      <div className="-ml-2 flex shrink-0 items-center">
+        <PillAction size="icon-sm" label="Cancel dictation" className="text-fg-secondary" onPress={cancelTake}>
+          <XIcon />
+        </PillAction>
+        <PillAction size="icon-sm" label="Stop dictation" className="-ml-2" onPress={stopTake}>
+          <span className="flex size-(--pill-stop-size) items-center justify-center rounded-pill bg-record text-accent-fg">
+            <SquareIcon className="size-2 fill-current" />
+          </span>
+        </PillAction>
+      </div>
     </div>
   );
 }
@@ -110,9 +124,12 @@ function PillContent({
       return <RecordingContent view={view} reducedMotion={reducedMotion} />;
     case "cancel":
       return (
-        <div className="flex h-full w-full items-center justify-center gap-2 px-4">
+        <div className="flex h-full w-full items-center gap-2 pr-1 pl-3">
           <CountdownRing remainingMs={view.countdown_remaining_ms ?? 0} />
-          <span className={LABEL_CLASS}>Cancelling · Esc to undo</span>
+          <span className={`min-w-0 flex-1 ${LABEL_CLASS}`}>Cancelling</span>
+          <PillAction className="text-accent" onPress={cancelTake}>
+            Undo
+          </PillAction>
         </div>
       );
     case "processing":
@@ -128,8 +145,6 @@ function PillContent({
           Transcribing
         </span>
       );
-    case "done":
-      return <StatusGlyph status="success" label={PILL_LABELS.done} />;
     case "copied":
       return (
         <div className="flex items-center gap-2 px-4">

@@ -1,7 +1,8 @@
 /*!
  * SOURCE OF TRUTH KEYWORDS: session commands, session_get_state, session_input, session_retry, session_rehearse, SessionView read, pill stop, retry take, rehearsal
  * WHAT:  The session command group (02 §4.3): `session_get_state` returns the SessionView of the current take;
- *        `session_input` sends a UI input (only `stop`, the pill's stop button) to the session actor;
+ *        `session_input` sends a UI input (`stop`, the pill's stop button; `cancel`, its ✕ and
+ *        undo buttons, which act as Esc) to the session actor;
  *        `session_retry` re-runs a stored take from its saved audio and returns its updated History row;
  *        `session_rehearse` sets what the session rehearses while an Echo window has focus (onboarding).
  * WHY:   The UI reads the session once through this command and then stays fresh from SessionStateChanged (02 §4.4);
@@ -15,7 +16,7 @@
  *        what a hotkey or a delivery means only while Echo itself has focus (pipeline/session/rehearsal.rs), so the
  *        UI may set it freely and a window that forgets to turn it off cannot break dictation elsewhere.
  * WHERE: Registered through `ipc::commands::catalog`; called from the UI as `commands.sessionGetState()` and
- *        `commands.sessionInput("stop")` (the pill, step 15), `commands.sessionRetry({ id })` (History, step 16),
+ *        `commands.sessionInput("stop" | "cancel")` (the pill, step 15), `commands.sessionRetry({ id })` (History, step 16),
  *        `commands.sessionRehearse("take" | "off")` (onboarding's practice step; `hotkey` stays for a press-only test).
  */
 
@@ -38,7 +39,7 @@ echo_command! {
 }
 
 echo_command! {
-    /// Sends a pill input (`stop`) to the current take.
+    /// Sends a pill input (`stop`, or `cancel` which acts as Esc) to the current take.
     name: session_input,
     input: SessionUiInput,
     output: (),

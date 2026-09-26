@@ -30,10 +30,11 @@ describe("pillKind", () => {
     expect(pillKind(view({ status: "arming" }), false)).toBe("recording");
     expect(pillKind(view({ status: "recording" }), false)).toBe("recording");
     expect(pillKind(view({ status: "cancel_pending", countdown_remaining_ms: 3000 }), false)).toBe("cancel");
-    expect(pillKind(view({ status: "done", outcome: "pasted" }), false)).toBe("done");
+    expect(pillKind(view({ status: "done", outcome: "pasted" }), false)).toBeNull();
     expect(pillKind(view({ status: "done", outcome: "copied" }), false)).toBe("copied");
     expect(pillKind(view({ status: "done", outcome: "no_speech" }), false)).toBe("no_speech");
-    expect(pillKind(view({ status: "done", outcome: "shown" }), false)).toBe("done");
+    expect(pillKind(view({ status: "done", outcome: "shown" }), false)).toBeNull();
+    expect(pillKind(view({ status: "done" }), false)).toBeNull();
     expect(pillKind(view({ status: "failed", error: { code: "Asr" } }), false)).toBe("error");
     expect(
       pillKind(view({ status: "failed", error: { code: "ModelMissing", model_id: "parakeet-tdt-0.6b-v3" } }), false),

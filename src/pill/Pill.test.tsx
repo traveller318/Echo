@@ -114,18 +114,20 @@ describe("Pill", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 
-  it("records with a timer and a stop button that sends the pill's stop", async () => {
+  it("records with the waveform and a stop button that sends the pill's stop", async () => {
     await renderPill();
     push({ status: "arming", transcript_id: TAKE });
     expect(screen.getByRole("status", { name: "Recording" })).toBeInTheDocument();
     push({ status: "recording", transcript_id: TAKE, elapsed_ms: 65_000 });
-    expect(screen.getByText("1:05")).toBeInTheDocument();
+    expect(document.querySelector("[data-slot='waveform']")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Stop dictation" }));
     await waitFor(() => {
       expect(mocks.sessionInput).toHaveBeenCalledWith("stop");
     });
-    // The stop button is one of the pill's clickable areas.
-    expect(mocks.pillSetHitAreas).toHaveBeenCalledWith({ areas: [expect.objectContaining({ x: 0, y: 0 })] });
+    // The cancel and stop buttons are the pill's clickable areas.
+    expect(mocks.pillSetHitAreas).toHaveBeenCalledWith({
+      areas: [expect.objectContaining({ x: 0, y: 0 }), expect.objectContaining({ x: 0, y: 0 })],
+    });
   });
 
   it("keeps the recording layout while finishing, then shows Transcribing after the loading delay", async () => {
@@ -136,12 +138,29 @@ describe("Pill", () => {
     expect(await screen.findByText("Transcribing")).toBeInTheDocument();
   });
 
-  it("shows the Esc countdown, the check, copy and no-speech results", async () => {
+  it("cancels with ✕ and undoes with Undo, both as Esc", async () => {
     await renderPill();
+    push({ status: "recording", transcript_id: TAKE });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel dictation" }));
+    await waitFor(() => {
+      expect(mocks.sessionInput).toHaveBeenCalledWith("cancel");
+    });
     push({ status: "cancel_pending", transcript_id: TAKE, countdown_remaining_ms: 3_000 });
-    expect(screen.getByText("Cancelling · Esc to undo")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Cancelling" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => {
+      expect(mocks.sessionInput).toHaveBeenCalledTimes(2);
+    });
+    expect(mocks.sessionInput).toHaveBeenLastCalledWith("cancel");
+  });
+
+  it("leaves without a check after a paste, and shows copy and no-speech results", async () => {
+    await renderPill();
+    push({ status: "recording", transcript_id: TAKE });
     push({ status: "done", transcript_id: TAKE, outcome: "pasted" });
-    expect(screen.getByRole("img", { name: "Done" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByRole("status")).toBeNull();
+    });
     push({ status: "done", transcript_id: TAKE, outcome: "copied" });
     expect(screen.getByText("Copied")).toBeInTheDocument();
     push({ status: "done", transcript_id: TAKE, outcome: "no_speech" });
