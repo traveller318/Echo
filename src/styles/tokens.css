@@ -17,6 +17,8 @@
 
   /* 3.1 Color */
   --color-bg: #f5f5f7;
+  /* Paint laid over native Mica: light lets the wallpaper tint through, dark covers it with true black. */
+  --color-backdrop-veil: transparent;
   --color-fg: #1d1d1f;
   --color-fg-secondary: #6e6e73;
   --color-fg-tertiary: #aeaeb2;
@@ -79,7 +81,8 @@
   --content-pad: var(--space-8);
 
   /* 3.6 Typography */
-  --font-ui: "Inter Variable", "Segoe UI Variable", "Segoe UI", system-ui;
+  --font-ui: "Poppins", "Segoe UI Variable", "Segoe UI", system-ui;
+  --font-numeric: "Inter Variable", "Segoe UI Variable", "Segoe UI", system-ui;
   --font-weight-regular: 400;
   --font-weight-medium: 500;
   --font-weight-semibold: 600;
@@ -187,7 +190,8 @@
 /* Dark: explicit choice (general.theme = dark). Keep identical to the media-query copy below. */
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --color-bg: #161618;
+  --color-bg: #000000;
+  --color-backdrop-veil: var(--color-bg);
   --color-fg: #f5f5f7;
   --color-fg-secondary: #a1a1a6;
   --color-fg-tertiary: #636366;
@@ -219,7 +223,8 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --color-bg: #161618;
+    --color-bg: #000000;
+    --color-backdrop-veil: var(--color-bg);
     --color-fg: #f5f5f7;
     --color-fg-secondary: #a1a1a6;
     --color-fg-tertiary: #636366;

@@ -18,8 +18,8 @@
  */
 import type { MetricUnit, SettingUnit } from "@/bindings";
 
-/** Tailwind class that switches numerals to tabular figures (`font-variant-numeric: tabular-nums`). */
-export const NUMERIC_CLASS = "tabular-nums";
+/** Tailwind classes for tabular figures: the numeric face (Poppins has no `tnum`, 04 §3.6) plus `tabular-nums`. */
+export const NUMERIC_CLASS = "font-numeric tabular-nums";
 
 /** What a value that does not exist yet reads as. */
 export const MISSING_VALUE = "—";

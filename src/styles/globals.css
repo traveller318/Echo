@@ -1,7 +1,7 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: globals.css, tailwind import, theme mapping, @theme inline reference, Inter font-face, base styles, focus ring, animations, data-backdrop
- * WHAT:  Global stylesheet for both windows: loads Tailwind v4 and tokens.css, bundles Inter Variable, maps every
- *        token into Tailwind's theme, defines the enter/exit animations and the base layer (font, text colour,
+ * SOURCE OF TRUTH KEYWORDS: globals.css, tailwind import, theme mapping, @theme inline reference, Poppins font-face, Inter numeric font-face, base styles, focus ring, animations, data-backdrop
+ * WHAT:  Global stylesheet for both windows: loads Tailwind v4 and tokens.css, bundles Poppins (UI text) and Inter
+ *        Variable (numerals), maps every token into Tailwind's theme, defines the enter/exit animations and the base layer (font, text colour,
  *        window background per backdrop, focus ring, icon stroke).
  * WHY:   Tailwind's automatic source detection would crawl src-tauri/target, so `source("../")` limits scanning to
  *        src/ and the two HTML entries are added explicitly. `--*: initial` drops every default Tailwind value, so
@@ -10,13 +10,47 @@
  *        (`bg-bg` → `var(--color-bg)`) without re-emitting them: tokens.css already defines them under the same
  *        names, and a re-emitted `--color-bg: var(--color-bg)` would be a self-reference. Values never live here —
  *        only names and `var()` references (raw values belong in tokens.css after docs/04). Keyframes sit outside
- *        @theme so they are always emitted. The font is served from 'self', which the CSP requires (02 §10).
+ *        @theme so they are always emitted. Fonts are served from 'self', which the CSP requires (02 §10). Poppins
+ *        ships static weights, so each allowed weight (04 §3.6) gets its own face; it has no tabular figures,
+ *        so numerals keep Inter through `font-numeric` (NUMERIC_CLASS in src/lib/format.ts).
  * WHERE: Imported once by each window bootstrap (src/main.tsx, src/pill.tsx).
  */
 @import "tailwindcss" source("../");
 @import "./tokens.css";
 @source "../../index.html";
 @source "../../pill.html";
+
+@font-face {
+  font-family: "Poppins";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("./fonts/Poppins-Regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Poppins";
+  font-style: normal;
+  font-weight: 500;
+  font-display: block;
+  src: url("./fonts/Poppins-Medium.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Poppins";
+  font-style: normal;
+  font-weight: 600;
+  font-display: block;
+  src: url("./fonts/Poppins-SemiBold.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Poppins";
+  font-style: normal;
+  font-weight: 700;
+  font-display: block;
+  src: url("./fonts/Poppins-Bold.woff2") format("woff2");
+}
 
 @font-face {
   font-family: "Inter Variable";
@@ -30,6 +64,7 @@
   --*: initial;
 
   --font-sans: var(--font-ui);
+  --font-numeric: var(--font-numeric);
   --default-font-family: var(--font-ui);
   --default-transition-duration: var(--duration-fast);
   --default-transition-timing-function: var(--ease-standard);
@@ -233,9 +268,14 @@
     -webkit-font-smoothing: antialiased;
   }
 
-  /* The main window paints the token background only when no native Mica backdrop sits behind it. */
+  /* The main window paints the token background only when no native Mica backdrop sits behind it; over Mica it
+     paints the veil instead (transparent in light, black in dark so the wallpaper tint never shows). */
   html:not([data-backdrop="mica"]) body {
     background-color: var(--color-bg);
+  }
+
+  html[data-backdrop="mica"] body {
+    background-color: var(--color-backdrop-veil);
   }
 
   :focus-visible {
