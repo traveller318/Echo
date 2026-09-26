@@ -1,8 +1,9 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: registry layer, single source of truth, settings registry, engines registry, models, llm profiles, nav, network allowlist, hotkeys, metrics, permissions, events, sounds, notices, onboarding steps
+ * SOURCE OF TRUTH KEYWORDS: registry layer, single source of truth, settings registry, engines registry, models, llm profiles, nav, network allowlist, hotkeys, metrics, permissions, events, sounds, notices, onboarding steps, launch arguments, tray menu
  * WHAT:  Layer 4: declarative entries for everything the app has (engines, models, LLM polish profiles, settings,
- *        hotkeys, nav, metrics, permissions, events, sound cues, one-time notices, onboarding steps), exported through specta so the UI renders from them. Each module holds
- *        one `const` list plus lookups; entries that need behaviour (engine builders, permission checks) carry a
+ *        hotkeys, nav, metrics, permissions, events, sound cues, one-time notices, onboarding steps, launch
+ *        arguments, the tray menu), exported through specta where the UI renders from them. Each module holds one
+ *        `const` list plus lookups; entries that need behaviour (engine builders, permission checks) carry a
  *        plain fn pointer.
  * WHY:   Adding a feature is an entry here, not a new pattern; a `match` on a feature name anywhere else is a
  *        defect (02 §3.3). Entries build the selected adapters lazily. Shapes that cross IPC live in types/;
@@ -14,6 +15,7 @@
 pub mod engines;
 pub mod events;
 pub mod hotkeys;
+pub mod launch;
 pub mod llm;
 pub mod metrics;
 pub mod models;
@@ -24,6 +26,7 @@ pub mod onboarding;
 pub mod permissions;
 pub mod settings;
 pub mod sounds;
+pub mod tray;
 
 /**
  * SOURCE OF TRUTH KEYWORDS: registry id format test, kebab-case id check

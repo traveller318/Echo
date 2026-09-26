@@ -12,13 +12,14 @@
  */
 
 use super::{
-    DEVICE_LOST_TOAST, MAX_DURATION_TOAST, START_FAILED_TOAST, TAKE_FAILED_TOAST, transition,
+    DEVICE_LOST_TOAST, MAX_DURATION_TOAST, START_FAILED_TOAST, SUSPENDED_TOAST, TAKE_FAILED_TOAST,
+    transition,
 };
 use crate::types::{
     AppError, AppErrorCode, AppTarget, AsrOutput, CaptureSummary, DeliveryOutcome, EngineId,
     IgnoreReason, IgnoredInput, Language, ModelId, MonotonicMs, PolishOutcome, RecordMode,
     SessionCue, SessionEffect, SessionInput, SessionPhase, SessionPolicy, SessionState,
-    SessionStatus, SessionTimer, SessionView, StopCause, TimerToken, TranscriptChange,
+    SessionStatus, SessionTimer, SessionView, StopCause, TargetRule, TimerToken, TranscriptChange,
     TranscriptId, TranscriptStatus, WindowHandle,
 };
 
@@ -288,7 +289,12 @@ fn every_input(phase: &SessionPhase, mode: RecordMode) -> Vec<SessionInput> {
         SessionInput::RecordReleased,
         SessionInput::RecordInterrupted,
         SessionInput::Stop,
+        SessionInput::Toggle {
+            next_take: TranscriptId::generate(),
+            policy: policy(mode).from_ui(),
+        },
         SessionInput::Esc,
+        SessionInput::Suspend,
         SessionInput::Armed {
             take,
             target: Some(target()),
@@ -327,7 +333,7 @@ fn expected(from: SessionStatus, input: &SessionInput, mode: RecordMode) -> Sess
     use SessionStatus as S;
     let hold = mode == RecordMode::Hold;
     match (from, input) {
-        (S::Idle, SessionInput::RecordPressed { .. }) => S::Arming,
+        (S::Idle, SessionInput::RecordPressed { .. } | SessionInput::Toggle { .. }) => S::Arming,
         (S::Arming, SessionInput::Armed { .. }) => S::Recording,
         (S::Arming, SessionInput::ModelMissing { .. } | SessionInput::Error { .. }) => S::Failed,
         (S::Recording, SessionInput::RecordPressed { .. }) if !hold => S::Finalizing,
@@ -337,19 +343,26 @@ fn expected(from: SessionStatus, input: &SessionInput, mode: RecordMode) -> Sess
         (
             S::Recording,
             SessionInput::Stop
+            | SessionInput::Toggle { .. }
+            | SessionInput::Suspend
             | SessionInput::MaxDurationReached { .. }
             | SessionInput::DeviceLost { .. },
         ) => S::Finalizing,
         (S::Recording, SessionInput::Esc) => S::CancelPending,
         (S::CancelPending, SessionInput::Esc) => S::Recording,
-        (S::CancelPending, SessionInput::CountdownElapsed { .. }) => S::Discarded,
+        (S::CancelPending, SessionInput::CountdownElapsed { .. } | SessionInput::Suspend) => {
+            S::Discarded
+        }
         (S::Finalizing, SessionInput::AllSegmentsDone { .. }) => S::Delivering,
         (S::Delivering, SessionInput::Delivered { .. }) => S::Done,
         (
             S::Recording | S::CancelPending | S::Finalizing | S::Delivering,
             SessionInput::Error { .. },
         ) => S::Failed,
-        (S::Done | S::Discarded | S::Failed, SessionInput::RecordPressed { .. }) => S::Arming,
+        (
+            S::Done | S::Discarded | S::Failed,
+            SessionInput::RecordPressed { .. } | SessionInput::Toggle { .. },
+        ) => S::Arming,
         (S::Done | S::Discarded | S::Failed, SessionInput::SettleElapsed { .. }) => S::Idle,
         (same, _) => same,
     }
@@ -499,7 +512,10 @@ fn a_normal_take_runs_every_effect_in_order() {
                 transcript_id: Some(take),
                 ..SessionView::IDLE
             }),
-            SessionEffect::Arm { take },
+            SessionEffect::Arm {
+                take,
+                target: TargetRule::Focused
+            },
         ]
     );
 
@@ -1273,6 +1289,15 @@ fn a_copied_take_is_done_with_its_outcome() {
 fn stop_causes_come_from_the_input_that_stopped() {
     let cases = [
         (RecordMode::Toggle, SessionInput::Stop, StopCause::Ui),
+        (RecordMode::Hold, SessionInput::Suspend, StopCause::Suspend),
+        (
+            RecordMode::Hold,
+            SessionInput::Toggle {
+                next_take: TranscriptId::generate(),
+                policy: policy(RecordMode::Hold).from_ui(),
+            },
+            StopCause::Ui,
+        ),
         (
             RecordMode::Hold,
             SessionInput::RecordReleased,
@@ -1336,7 +1361,7 @@ impl Resources {
                         self.timer = None;
                     }
                 }
-                SessionEffect::Arm { take } => self.arming = Some(*take),
+                SessionEffect::Arm { take, .. } => self.arming = Some(*take),
                 SessionEffect::StopCapture { take } | SessionEffect::AbortCapture { take }
                     if self.microphone == Some(*take) =>
                 {
@@ -1372,7 +1397,7 @@ fn random_runs_never_leak_esc_timers_or_the_microphone() {
             };
             // Never the live token: a live timer only ever fires its own kind (case 6).
             let stale_timer = state.phase.timer().unwrap_or_default().next();
-            let input = match random.next(15) {
+            let input = match random.next(17) {
                 0 | 1 => SessionInput::RecordPressed {
                     next_take: TranscriptId::generate(),
                     policy: SessionPolicy {
@@ -1437,6 +1462,11 @@ fn random_runs_never_leak_esc_timers_or_the_microphone() {
                     error: AppError::Polish,
                 },
                 13 => SessionInput::DeviceLost { take },
+                14 => SessionInput::Toggle {
+                    next_take: TranscriptId::generate(),
+                    policy: policy(mode).from_ui(),
+                },
+                15 => SessionInput::Suspend,
                 _ => SessionInput::ModelMissing {
                     take,
                     model_id: ModelId::from_static("m"),
@@ -1466,4 +1496,96 @@ fn random_runs_never_leak_esc_timers_or_the_microphone() {
             state = after;
         }
     }
+}
+
+/// The tray's toggle: a take that toggles whatever the hotkey mode, aimed at the app the user left, stopped by the
+/// next toggle like the pill's Stop; ignored during the Esc countdown.
+#[test]
+fn a_toggle_starts_a_toggle_take_for_the_last_app_and_stops_it() {
+    let mut rig = Rig::new(RecordMode::Hold);
+    let tray = policy(RecordMode::Hold).from_ui();
+    let effects = rig
+        .send(SessionInput::Toggle {
+            next_take: TranscriptId::generate(),
+            policy: tray,
+        })
+        .to_vec();
+    let take = rig.take();
+    assert!(effects.contains(&SessionEffect::Arm {
+        take,
+        target: TargetRule::LastExternal
+    }));
+    rig.after(100).armed();
+    assert_eq!(rig.status(), SessionStatus::Recording);
+    rig.after(500).send(SessionInput::RecordReleased);
+    assert_eq!(
+        rig.status(),
+        SessionStatus::Recording,
+        "nothing is held, so a release means nothing"
+    );
+    rig.after(500).send(SessionInput::Esc);
+    let ignored_toggle = SessionInput::Toggle {
+        next_take: TranscriptId::generate(),
+        policy: tray,
+    };
+    assert!(ignored(rig.after(100).send(ignored_toggle)).is_some());
+    assert_eq!(rig.status(), SessionStatus::CancelPending);
+    rig.after(100).send(SessionInput::Esc);
+    let stopped = rig
+        .after(500)
+        .send(SessionInput::Toggle {
+            next_take: TranscriptId::generate(),
+            policy: tray,
+        })
+        .to_vec();
+    assert_eq!(rig.status(), SessionStatus::Finalizing);
+    assert!(stopped.contains(&SessionEffect::StopCapture { take }));
+    assert!(!has(&stopped, |effect| matches!(
+        effect,
+        SessionEffect::Toast(_)
+    )));
+
+    // A toggle while the microphone opens is a stop remembered for the moment it is open.
+    let mut quick = Rig::new(RecordMode::Toggle);
+    quick.send(SessionInput::Toggle {
+        next_take: TranscriptId::generate(),
+        policy: tray,
+    });
+    quick.after(20).send(SessionInput::Toggle {
+        next_take: TranscriptId::generate(),
+        policy: tray,
+    });
+    quick.after(80).armed();
+    assert_eq!(quick.status(), SessionStatus::Finalizing);
+}
+
+/// Sleep mid-take: a recording take is delivered with a toast, a pending cancel is carried out, a take still
+/// arming stops as soon as its microphone is open, and later phases carry on.
+#[test]
+fn a_suspend_finalizes_recording_and_carries_out_a_pending_cancel() {
+    let mut recording = Rig::recording(RecordMode::Hold);
+    let effects = recording.after(1_000).send(SessionInput::Suspend).to_vec();
+    assert_eq!(recording.status(), SessionStatus::Finalizing);
+    assert!(effects.contains(&SessionEffect::Toast(SUSPENDED_TOAST)));
+    assert!(effects.contains(&SessionEffect::Cue(SessionCue::Stop)));
+
+    let mut pending = Rig::recording(RecordMode::Toggle);
+    pending.after(500).send(SessionInput::Esc);
+    let take = pending.take();
+    let effects = pending.after(200).send(SessionInput::Suspend).to_vec();
+    assert_eq!(pending.status(), SessionStatus::Discarded);
+    assert!(effects.contains(&SessionEffect::DeleteTake { take }));
+
+    let mut arming = Rig::new(RecordMode::Hold);
+    arming.press();
+    arming.after(10).send(SessionInput::Suspend);
+    let effects = arming.after(50).armed().to_vec();
+    assert_eq!(arming.status(), SessionStatus::Finalizing);
+    assert!(effects.contains(&SessionEffect::Toast(SUSPENDED_TOAST)));
+
+    let mut delivering = Rig::delivering(RecordMode::Toggle);
+    assert!(ignored(delivering.send(SessionInput::Suspend)).is_some());
+    assert_eq!(delivering.status(), SessionStatus::Delivering);
+    let mut idle = Rig::new(RecordMode::Toggle);
+    assert!(ignored(idle.send(SessionInput::Suspend)).is_some());
 }

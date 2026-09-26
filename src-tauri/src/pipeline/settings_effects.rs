@@ -1,10 +1,10 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: settings effects, SettingsEffects, apply settings live, after settings write, derived settings state, live settings change, LLM sidecar start stop, polish model download
+ * SOURCE OF TRUTH KEYWORDS: settings effects, SettingsEffects, launch at startup effect, apply settings live, after settings write, derived settings state, live settings change, LLM sidecar start stop, polish model download
  * WHAT:  SettingsEffects: the one place that makes a stored settings change take effect in the running app.
  *        `apply(before, after)` compares the snapshot a write replaced with the new one and runs every consequence:
  *        the appearance (AppearanceChanged), the retention sweep, the speech engine swap, the polish chain (grammar
- *        polish on starts the LLM sidecar, off stops it), the download of a polish model just switched on, and the
- *        dashboard refresh (MetricsChanged).
+ *        polish on starts the LLM sidecar, off stops it), the download of a polish model just switched on, the
+ *        start-at-sign-in entry, and the dashboard refresh (MetricsChanged).
  * WHY:   Every setting works live or says a restart is needed (step 18); most are simply read at the moment they
  *        matter (per take, per delivery, per command) and need nothing here. The rest derive running state, and each
  *        owner decides from `before` and `after` whether it is affected, so no code matches on a setting key
@@ -17,10 +17,10 @@
 
 use crate::{
     pipeline::{
-        appearance, asr, asr::AsrWorker, models::ModelManager, polish::PolishChains, retention,
-        retention::RetentionHandle,
+        appearance, asr, asr::AsrWorker, launch, models::ModelManager, polish::PolishChains,
+        retention, retention::RetentionHandle,
     },
-    ports::{EventSink, SystemAppearance},
+    ports::{EventSink, LaunchAtLogin, SystemAppearance},
     registry,
     types::{AppEvent, AppPaths, AppearanceChanged, MetricsChanged, SettingsSnapshot},
 };
@@ -39,6 +39,8 @@ pub struct SettingsEffects<'a> {
     pub models: &'a ModelManager,
     /// Where engine models live.
     pub paths: &'a AppPaths,
+    /// Echo's start at sign-in, for `general.launch_at_startup`.
+    pub launch: &'a dyn LaunchAtLogin,
     /// Rust → UI events.
     pub events: &'a dyn EventSink<AppEvent>,
 }
@@ -56,6 +58,7 @@ impl SettingsEffects<'_> {
         asr::reload_on_change(self.asr, before, after, self.paths);
         self.polish.refresh_on_change(before, after);
         self.models.fetch_newly_selected(before, after);
+        launch::after_settings_change(self.launch, before, after);
         if registry::metrics::inputs_changed(before, after) {
             self.events.emit(MetricsChanged {}.into());
         }

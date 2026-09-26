@@ -30,8 +30,8 @@
  *        rehearsed hotkey is reported as HotkeyRehearsed instead of routed, and a rehearsed take in an Echo window
  *        is delivered as `Shown` without touching the clipboard or any app. Transcript text is never logged (02 §10).
  * WHERE: Owned by the session actor (actor.rs): `run` for each effect of a transition, `absorb` for each
- *        WorkerReply, `paste_last` on Message::PasteLast, `prepare` on Message::Prepare, `shutdown` on
- *        Message::Shutdown, `abandon` after a caught panic.
+ *        WorkerReply, `paste_last` on Message::PasteLast, `prepare` on Message::Prepare, `warm` on Message::Warm,
+ *        `refresh_hotkeys` on a power event, `shutdown` on Message::Shutdown, `abandon` after a caught panic.
  */
 
 use std::{
@@ -45,7 +45,6 @@ use tokio::task::{JoinError, JoinHandle};
 use super::{
     actor::SessionConfig,
     arm::{self, ArmOutcome, ArmRequest},
-    hotkey_input,
     inbox::{HotkeyForwarder, Outbox, PasteLastReply, WorkerReply},
     notices::{HOTKEY_UNAVAILABLE_TOAST, TAKE_FAILED_TOAST, paste_last_toast},
     rehearsal::Rehearsal,
@@ -56,7 +55,7 @@ use crate::{
         capture::{Capture, CaptureOutcome, journal},
         delivery::{self, CLIPBOARD_RESTORE_DELAY, Delivery},
         history,
-        hotkeys::{self, SessionHotkeys},
+        hotkeys::SessionHotkeys,
         notices::NoticeBoard,
         polish::polish_context,
         retention,
@@ -67,8 +66,8 @@ use crate::{
         AppError, AppTarget, AsrEvent, AudioTransport, CaptureEvent, CaptureSummary,
         ClipboardRestore, DeliveryReport, EngineId, HistoryChangeReason, HistoryChanged,
         HotkeyEvent, Language, PolishOutcome, PortError, PortResult, SessionEffect, SessionInput,
-        SessionRehearsal, SessionStateChanged, SettingsSnapshot, TimerToken, TranscriptChange,
-        TranscriptId, TranscriptStatus,
+        SessionRehearsal, SessionStateChanged, SettingsSnapshot, TargetRule, TimerToken,
+        TranscriptChange, TranscriptId, TranscriptStatus,
     },
 };
 
@@ -176,30 +175,21 @@ impl Runner {
     }
 
     /**
-     * SOURCE OF TRUTH KEYWORDS: runner prepare, listen hotkeys, bind record hotkey, warm detector, warm polish chain
-     * WHAT:  Starts listening to the hotkey port, binds the Always hotkeys the session handles, builds a detector
-     *        ahead of the first take and builds and readies the polish chain.
-     * WHY:   Runs once the windows exist (05 W19: no device or ONNX Runtime before the UI), so the first take is as
-     *        fast as the tenth. A hotkey that cannot be bound (another app owns it, 05 W7) is logged by
-     *        `bind_always_where` and toasted once, and Echo keeps running: the user can rebind it in Settings.
+     * SOURCE OF TRUTH KEYWORDS: runner prepare, listen hotkeys, bind record hotkey, hotkey gate bind
+     * WHAT:  Starts listening to the hotkey port and binds the always-on hotkeys through the gate (unless paused).
+     * WHY:   Runs once the windows exist (05 W19: nothing taken from other apps before the UI). A hotkey that cannot
+     *        be bound (another app owns it, 05 W7) is logged and toasted once by the gate, and Echo keeps running: the
+     *        user can rebind it in Settings. Nothing heavy loads here; `warm` does that a moment later.
      * WHERE: The actor, on Message::Prepare (app::run on RunEvent::Ready).
      */
     pub fn prepare(&mut self) {
-        let settings = self.settings();
         let listened = self
             .config
             .hotkeys
             .listen(Arc::new(HotkeyForwarder(self.outbox.clone())));
         match listened {
             Ok(()) => {
-                let failures = hotkeys::bind_always_where(
-                    self.config.hotkeys.as_ref(),
-                    &settings,
-                    hotkey_input::binds_hotkey,
-                );
-                if !failures.is_empty() {
-                    self.toast(&HOTKEY_UNAVAILABLE_TOAST);
-                }
+                self.config.hotkey_gate.bind();
             }
             Err(error) => {
                 tracing::error!(
@@ -209,6 +199,22 @@ impl Runner {
                 self.toast(&HOTKEY_UNAVAILABLE_TOAST);
             }
         }
+    }
+
+    /// Re-registers the always-on hotkeys after a power or session change (05 W8).
+    pub fn refresh_hotkeys(&self) {
+        self.config.hotkey_gate.refresh();
+    }
+
+    /**
+     * SOURCE OF TRUTH KEYWORDS: runner warm, warm detector, warm polish chain, deferred warm-up
+     * WHAT:  Builds a voice detector ahead of the first take and builds and readies the polish chain.
+     * WHY:   So the first take is as fast as the tenth, without loading ONNX Runtime or starting an LLM sidecar while
+     *        Windows is still starting (05 W19); a take that comes first builds what it needs itself.
+     * WHERE: The actor, on Message::Warm (app/bootstrap, STARTUP_IDLE_DELAY after the windows exist).
+     */
+    pub fn warm(&mut self) {
+        let settings = self.settings();
         if self.detector.is_none() {
             let build = Arc::clone(&self.config.engines.vad);
             spawn_reply(
@@ -239,7 +245,7 @@ impl Runner {
             SessionEffect::Publish(view) => {
                 self.config.events.emit(SessionStateChanged(view).into())
             }
-            SessionEffect::Arm { take } => self.arm(take).await,
+            SessionEffect::Arm { take, target } => self.arm(take, target).await,
             SessionEffect::RegisterEsc => self.register_esc(),
             SessionEffect::UnregisterEsc => self.esc = None,
             SessionEffect::StartTimer {
@@ -346,7 +352,7 @@ impl Runner {
 
     // ---- Arm -------------------------------------------------------------------------------------------------
 
-    async fn arm(&mut self, take: TranscriptId) {
+    async fn arm(&mut self, take: TranscriptId, target: TargetRule) {
         // A new take starts only from a settled phase, so anything still held belongs to an ended take.
         let stale: Vec<_> = self.takes.drain().collect();
         for (old, slot) in stale {
@@ -361,6 +367,7 @@ impl Runner {
         self.takes.insert(take, TakeSlot::default());
         let request = ArmRequest {
             take,
+            target,
             settings: self.settings(),
             detector: self.detector.take(),
             build_detector: Arc::clone(&self.config.engines.vad),
@@ -870,13 +877,13 @@ impl Runner {
 
     /**
      * SOURCE OF TRUTH KEYWORDS: runner paste_last, paste-last delivery, clipboard restore ownership
-     * WHAT:  Delivers the newest completed take to the focused window on the blocking pool (after giving back a
-     *        clipboard restore still pending); the reply schedules its own restore and answers the caller.
+     * WHAT:  Delivers the newest completed take to the window `target` names on the blocking pool (after giving back
+     *        a clipboard restore still pending); the reply schedules its own restore and answers the caller.
      * WHY:   Same restore rules as a take's delivery (05 W6), owned by the one runner; it never touches recording
      *        state, so it is not a machine input.
      * WHERE: The actor, on Message::PasteLast.
      */
-    pub fn paste_last(&mut self, reply: Option<PasteLastReply>) {
+    pub fn paste_last(&mut self, reply: Option<PasteLastReply>, target: TargetRule) {
         let settings = self.settings();
         let pending = self.restore.take().map(|pending| {
             pending.task.abort();
@@ -891,7 +898,7 @@ impl Runner {
                 if let Some(previous) = pending {
                     restore_clipboard(&delivery, &previous);
                 }
-                history::paste_last(&db, &delivery, foreground.as_ref(), &settings)
+                history::paste_last(&db, &delivery, foreground.as_ref(), target, &settings)
             },
             move |result| {
                 Some(WorkerReply::PastedLast {
@@ -922,7 +929,7 @@ impl Runner {
                 // The caller may have given up; the delivery happened either way.
                 let _ = reply.send(answer);
             }
-            // The hotkey has no window to answer in, so a failure is a toast.
+            // The hotkey and the tray have no window to answer in, so a failure is a toast.
             None => {
                 if let Err(error) = &answer {
                     self.toast(&paste_last_toast(error.error()));

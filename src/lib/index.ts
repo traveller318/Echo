@@ -27,6 +27,7 @@ export { applyAppearance, syncAppearance, type SyncAppearanceOptions } from "./a
 export { levelFromRms, smoothLevel } from "./audio-level";
 export { cn, THEME_SCALE } from "./cn";
 export { runCommand, type CommandResult } from "./command";
+export { createCommandQueue, type CommandQueue } from "./command-queue";
 export { adoptCspStyleNonce, CSP_NONCE_SELECTOR } from "./csp-nonce";
 export {
   ECHO_EVENT_NAMES,

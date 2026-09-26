@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: CommandCtx, CommandDeps, command context, managed state, handler dependencies, SharedSettings, AsrWorker, SessionEngines, RetryDeps, Delivery, SessionHandle, PillPresenter, RetentionHandle, ModelManager, Updater, AppPaths, Db, event sink
+ * SOURCE OF TRUTH KEYWORDS: CommandCtx, CommandDeps, command context, managed state, handler dependencies, SharedSettings, AsrWorker, SessionEngines, RetryDeps, Delivery, SessionHandle, PillPresenter, RetentionHandle, ModelManager, Updater, HotkeyGate, LaunchAtLogin, ProcessStats, AppInfo, AppPaths, Db, event sink
  * WHAT:  CommandCtx: everything a command handler and the factory pipeline may use, managed once by Tauri and
  *        passed to every handler as `&CommandCtx`; CommandDeps: the named parts it is built from.
  * WHY:   Handlers take their dependencies from one place instead of Tauri state lookups, so they stay plain async
@@ -24,6 +24,7 @@ use crate::{
     pipeline::{
         asr::AsrWorker,
         delivery::Delivery,
+        hotkey_gate::HotkeyGate,
         models::ModelManager,
         pill::PillPresenter,
         polish::PolishChains,
@@ -32,11 +33,11 @@ use crate::{
         session::{SessionEngines, SessionHandle},
     },
     ports::{
-        AudioCapture, EventSink, ForegroundApp, HotkeyService, MainWindow, Notifier,
-        PrivacyConsent, SystemAppearance, SystemLauncher, Updater, WorkerScheduler,
+        AudioCapture, EventSink, ForegroundApp, HotkeyService, LaunchAtLogin, MainWindow, Notifier,
+        PrivacyConsent, ProcessStats, SystemAppearance, SystemLauncher, Updater, WorkerScheduler,
     },
     services::Db,
-    types::{AppEvent, AppPaths, SettingsSnapshot, SharedSettings},
+    types::{AppEvent, AppInfo, AppPaths, SettingsSnapshot, SharedSettings},
 };
 
 /// The parts a CommandCtx is built from.
@@ -55,8 +56,11 @@ pub struct CommandDeps {
     pub scheduler: Arc<dyn WorkerScheduler>,
     /// The thread that owns the speech engine: startup load, engine switch, takes (the session actor shares it).
     pub asr: AsrWorker,
-    /// System-wide hotkeys: bound by the session actor, rebound when a hotkey setting changes.
+    /// System-wide hotkeys (the port): its caps decide whether hold-to-talk is offered.
     pub hotkeys: Arc<dyn HotkeyService>,
+    /// The switch for the always-on hotkeys (shared with the session actor): rebinds after a hotkey setting
+    /// changes, pauses for the tray, Settings and a capturing hotkey field.
+    pub hotkey_gate: HotkeyGate,
     /// The focused window: the take's paste target and paste-last's.
     pub foreground: Arc<dyn ForegroundApp>,
     /// Native toasts for moments without a pill (recovered takes, device lost).
@@ -77,6 +81,12 @@ pub struct CommandDeps {
     pub models: ModelManager,
     /// App updates: its caps decide whether update settings are offered (this build: no update source).
     pub updater: Arc<dyn Updater>,
+    /// Echo's start at sign-in: its caps decide whether the startup settings are offered.
+    pub launch: Arc<dyn LaunchAtLogin>,
+    /// Echo's own memory use, for About.
+    pub process: Arc<dyn ProcessStats>,
+    /// Echo's version and build kind, for About.
+    pub app_info: AppInfo,
     /// Every data and resource location, resolved once by app/bootstrap.
     pub paths: AppPaths,
     /// The database every service call goes through.
@@ -95,6 +105,7 @@ pub struct CommandCtx {
     scheduler: Arc<dyn WorkerScheduler>,
     asr: AsrWorker,
     hotkeys: Arc<dyn HotkeyService>,
+    hotkey_gate: HotkeyGate,
     foreground: Arc<dyn ForegroundApp>,
     notifier: Arc<dyn Notifier>,
     delivery: Delivery,
@@ -105,6 +116,9 @@ pub struct CommandCtx {
     retention: RetentionHandle,
     models: ModelManager,
     updater: Arc<dyn Updater>,
+    launch: Arc<dyn LaunchAtLogin>,
+    process: Arc<dyn ProcessStats>,
+    app_info: AppInfo,
     paths: AppPaths,
     db: Db,
     events: Arc<dyn EventSink<AppEvent>>,
@@ -122,6 +136,7 @@ impl CommandCtx {
             scheduler,
             asr,
             hotkeys,
+            hotkey_gate,
             foreground,
             notifier,
             delivery,
@@ -132,6 +147,9 @@ impl CommandCtx {
             retention,
             models,
             updater,
+            launch,
+            process,
+            app_info,
             paths,
             db,
             events,
@@ -145,6 +163,7 @@ impl CommandCtx {
             scheduler,
             asr,
             hotkeys,
+            hotkey_gate,
             foreground,
             notifier,
             delivery,
@@ -155,6 +174,9 @@ impl CommandCtx {
             retention,
             models,
             updater,
+            launch,
+            process,
+            app_info,
             paths,
             db,
             events,
@@ -279,6 +301,26 @@ impl CommandCtx {
         self.updater.as_ref()
     }
 
+    /// The switch for the always-on hotkeys.
+    pub fn hotkey_gate(&self) -> &HotkeyGate {
+        &self.hotkey_gate
+    }
+
+    /// Echo's start at sign-in.
+    pub fn launch(&self) -> &dyn LaunchAtLogin {
+        self.launch.as_ref()
+    }
+
+    /// Echo's own process (memory use).
+    pub fn process(&self) -> &dyn ProcessStats {
+        self.process.as_ref()
+    }
+
+    /// Echo's version and build kind.
+    pub fn app_info(&self) -> &AppInfo {
+        &self.app_info
+    }
+
     /// Every data and resource location.
     pub fn paths(&self) -> &AppPaths {
         &self.paths
@@ -308,7 +350,9 @@ impl CommandCtx {
  *        recording notifier, a delivery over a clipboard fake and a pasting inserter fake, a session handle whose
  *        actor (fake detector, registry polishers) is built but not running, a pill presenter over an overlay fake,
  *        a main-window fake, a retention handle whose sweeper is built but not running, a model manager over a
- *        model store fake (nothing installed) and a folder picker fake, a disabled updater fake, AppPaths under the system temp folder
+ *        model store fake (nothing installed) and a folder picker fake, a disabled updater fake, a hotkey gate over
+ *        the hotkey fake (not yet bound), an installed build's start-at-sign-in fake (no entry), a process fake
+ *        using 512 MB, version 0.1.0, AppPaths under the system temp folder
  *        (never touched: services take the in-memory database), a fresh in-memory database with the real migrations
  *        and a RecordingSink for events, plus handles to the sink and the fakes; `ctx()` is the all-defaults one.
  * WHY:   Factory, command and app tests all need the same context without a Tauri app or a disk; keeping the
@@ -324,26 +368,33 @@ pub mod testing {
         pipeline::{
             asr::{AsrWorker, AsrWorkerConfig},
             delivery::{Delivery, DeliveryPorts},
+            hotkey_gate::{CAPTURE_LEASE, HotkeyGate, HotkeyGateDeps},
             models::{ModelDeps, ModelManager, ModelPolicy},
             pill::{PillPresenter, PillTiming},
             retention::{RetentionDeps, RetentionHandle, RetentionSweeper},
-            session::{SessionActor, SessionConfig, SessionEngines, SessionHandle},
+            session::{self, SessionActor, SessionConfig, SessionEngines, SessionHandle},
             sound_cues::SoundCues,
         },
         ports::{
             AsrEngine,
             fakes::{
                 FakeAsrEngine, FakeAudioCapture, FakeClipboard, FakeFolderPicker,
-                FakeForegroundApp, FakeHotkeyService, FakeMainWindow, FakeModelStore, FakeNotifier,
-                FakeOverlayWindow, FakePrivacyConsent, FakeSoundPlayer, FakeSystemAppearance,
-                FakeSystemLauncher, FakeTextInserter, FakeUpdater, FakeVoiceActivity,
-                FakeWorkerScheduler, RecordingSink,
+                FakeForegroundApp, FakeHotkeyService, FakeLaunchAtLogin, FakeMainWindow,
+                FakeModelStore, FakeNotifier, FakeOverlayWindow, FakePrivacyConsent,
+                FakeProcessStats, FakeSoundPlayer, FakeSystemAppearance, FakeSystemLauncher,
+                FakeTextInserter, FakeUpdater, FakeVoiceActivity, FakeWorkerScheduler,
+                RecordingSink,
             },
         },
         registry::{self, engines::BuildCtx},
         services::Db,
-        types::{AppEvent, AppPaths, CaptureFormat, EngineId, SettingsSnapshot, SharedSettings},
+        types::{
+            AppEvent, AppInfo, AppPaths, CaptureFormat, EngineId, SettingsSnapshot, SharedSettings,
+        },
     };
+
+    /// The memory the harness process fake reports: 512 MB in use, 400 MB private.
+    pub const HARNESS_MEMORY: (u64, u64) = (512 * 1024 * 1024, 400 * 1024 * 1024);
 
     /// The format the harness microphone delivers.
     pub const HARNESS_AUDIO_FORMAT: CaptureFormat = CaptureFormat {
@@ -376,6 +427,8 @@ pub mod testing {
         /// The model manager's store (nothing installed) and folder picker (closed without a choice).
         pub model_store: Arc<FakeModelStore>,
         pub folder_picker: Arc<FakeFolderPicker>,
+        /// The start-at-sign-in entry (an installed build with no entry yet).
+        pub launch: Arc<FakeLaunchAtLogin>,
     }
 
     pub fn harness(settings: SettingsSnapshot, consent: FakePrivacyConsent) -> Harness {
@@ -421,6 +474,15 @@ pub mod testing {
         .unwrap();
         let settings = SharedSettings::new(settings);
         let db = Db::open_in_memory().unwrap();
+        let hotkey_gate = HotkeyGate::new(HotkeyGateDeps {
+            service: Arc::clone(&hotkeys) as _,
+            settings: settings.clone(),
+            include: session::binds_hotkey,
+            notifier: Arc::clone(&notifier) as _,
+            events: Arc::clone(&events) as _,
+            capture_lease: CAPTURE_LEASE,
+        });
+        let launch = Arc::new(FakeLaunchAtLogin::new());
         let (session, inbox) = SessionHandle::new();
         let polish_ctx = BuildCtx {
             paths: paths.clone(),
@@ -437,6 +499,7 @@ pub mod testing {
                 scheduler: Arc::new(FakeWorkerScheduler::default()),
                 asr: asr.clone(),
                 hotkeys: Arc::clone(&hotkeys) as _,
+                hotkey_gate: hotkey_gate.clone(),
                 foreground: Arc::clone(&foreground) as _,
                 notifier: Arc::clone(&notifier) as _,
                 delivery: delivery.clone(),
@@ -481,6 +544,7 @@ pub mod testing {
             scheduler: Arc::clone(&scheduler) as _,
             asr,
             hotkeys: Arc::clone(&hotkeys) as _,
+            hotkey_gate,
             foreground: Arc::clone(&foreground) as _,
             notifier: Arc::clone(&notifier) as _,
             delivery,
@@ -491,6 +555,12 @@ pub mod testing {
             retention,
             models,
             updater: Arc::new(FakeUpdater::disabled()),
+            launch: Arc::clone(&launch) as _,
+            process: Arc::new(FakeProcessStats::using(HARNESS_MEMORY.0, HARNESS_MEMORY.1)),
+            app_info: AppInfo {
+                version: String::from("0.1.0"),
+                development: false,
+            },
             paths,
             db,
             events: Arc::clone(&events) as _,
@@ -514,6 +584,7 @@ pub mod testing {
             sounds,
             model_store,
             folder_picker,
+            launch,
         }
     }
 

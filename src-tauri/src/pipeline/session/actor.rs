@@ -1,9 +1,10 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: session actor, SessionActor, SessionHandle, SessionInbox, SessionConfig, SessionEngines, PanicReporter, actor loop, sole owner of recording state, session_get_state, shutdown finalize, panic supervision, session rehearsal
+ * SOURCE OF TRUTH KEYWORDS: session actor, SessionActor, SessionHandle, SessionInbox, SessionConfig, SessionEngines, PanicReporter, actor loop, sole owner of recording state, session_get_state, shutdown finalize, panic supervision, session rehearsal, power events, suspend finalize, deferred warm-up
  * WHAT:  The session actor of 02 §5: one tokio task with an mpsc inbox that owns SessionState, feeds every input
  *        through the pure `transition` and hands the effects to the Runner. SessionHandle is the cloneable way in
- *        (the pill's Stop, the current view, paste-last, the onboarding rehearsal, prepare, shutdown); SessionConfig is what the actor works through
- *        (settings, ports, the ASR worker, delivery, paths, database, event sink, engine builders, sound cues).
+ *        (the pill's and the tray's inputs, the current view, paste-last, the onboarding rehearsal, the power sink,
+ *        prepare, warm-up, shutdown); SessionConfig is what the actor works through (settings, ports, the hotkey
+ *        gate, the ASR worker, delivery, paths, database, event sink, engine builders, sound cues).
  * WHY:   There is exactly one owner of recording state and no copy anywhere else: the view `session_get_state`
  *        returns is computed from the state at the moment of the query, and every change is published as the full
  *        view. Inputs are handled one at a time, in order, and the inputs a transition's effects produce at once
@@ -18,10 +19,14 @@
  *        take is failed with its audio kept and the actor starts over at Idle, so one bug never leaves Echo deaf
  *        to its hotkeys; a panic anywhere else reaches the actor as a PanicReporter message (02 §12). A hotkey is
  *        offered to the rehearsal (runner, rehearsal.rs) only while no take is in progress, so Esc and the stop of a
- *        running take are never swallowed.
+ *        running take are never swallowed. Power events arrive like any other message (02 §9): a suspend becomes the
+ *        machine's Suspend input, and every return (wake, unlock, explorer restart) re-registers the hotkeys through
+ *        the gate (05 W8); audio devices need nothing, since each take opens its microphone afresh. Prepare binds the
+ *        hotkeys at once; Warm, which app/bootstrap sends STARTUP_IDLE_DELAY later, builds the voice detector and
+ *        readies the polish chain (05 W19).
  * WHERE: app/bootstrap builds it from the same ports as CommandCtx and spawns `run`; `prepare` on RunEvent::Ready,
- *        `shutdown` on RunEvent::Exit; ipc/commands/session.rs calls `view` and `ui_input`; the panic hook
- *        (app/panics.rs) holds a PanicReporter.
+ *        `warm` a moment later, `shutdown` on RunEvent::Exit, the power adapter holds `power_sink`; ipc/commands and
+ *        app/tray.rs call `view`, `ui_input` and `paste_last`; the panic hook (app/panics.rs) holds a PanicReporter.
  */
 
 use std::{
@@ -37,14 +42,15 @@ use super::{
     arm::VadBuilder,
     hotkey_input,
     hotkey_input::HotkeyRoute,
-    inbox::{Message, Outbox, Receiver, Sender},
+    inbox::{Message, Outbox, PowerForwarder, Receiver, Sender},
     runner::Runner,
-    transition,
+    transition, ui_input,
 };
 use crate::{
     pipeline::{
         asr::AsrWorker,
         delivery::Delivery,
+        hotkey_gate::HotkeyGate,
         polish::{PolishChains, PolisherBuilder},
         sound_cues::SoundCues,
         unwind::catch_unwind,
@@ -54,8 +60,8 @@ use crate::{
     services::Db,
     types::{
         AppError, AppEvent, AppPaths, DeliveryOutcome, EngineId, MonotonicMs, PortError,
-        PortResult, SessionEffect, SessionInput, SessionPhase, SessionRehearsal, SessionState,
-        SessionUiInput, SessionView, SharedSettings,
+        PortResult, PowerEvent, SessionEffect, SessionInput, SessionPhase, SessionRehearsal,
+        SessionState, SessionUiInput, SessionView, SharedSettings, TargetRule,
     },
 };
 
@@ -103,7 +109,10 @@ pub struct SessionConfig {
     pub scheduler: Arc<dyn WorkerScheduler>,
     /// The speech engine's thread (shared with the commands that load engines).
     pub asr: AsrWorker,
+    /// The hotkey port: listened to, and the Esc binding of a take.
     pub hotkeys: Arc<dyn HotkeyService>,
+    /// The always-on hotkeys' switch (bound on prepare, re-registered after power events).
+    pub hotkey_gate: HotkeyGate,
     pub foreground: Arc<dyn ForegroundApp>,
     pub notifier: Arc<dyn Notifier>,
     pub delivery: Delivery,
@@ -141,7 +150,7 @@ impl SessionHandle {
         )
     }
 
-    /// Sends a pill input; `Internal` when the actor has stopped.
+    /// Sends a pill or tray input; `Internal` when the actor has stopped.
     pub fn ui_input(&self, input: SessionUiInput) -> PortResult<()> {
         self.send(Message::Ui(input))
     }
@@ -161,17 +170,41 @@ impl SessionHandle {
 
     /**
      * SOURCE OF TRUTH KEYWORDS: SessionHandle::paste_last, history_paste_last, re-deliver newest take
-     * WHAT:  Asks the actor to deliver the newest completed take to the focused window again; answers what reached
-     *        the user (pasted or copied) or why nothing did.
+     * WHAT:  Asks the actor to deliver the newest completed take again to the window `target` names; answers what
+     *        reached the user (pasted or copied) or why nothing did.
      * WHY:   Paste-last writes the clipboard like a take's delivery, so it goes through the runner that owns the
      *        pending clipboard restore (05 W6): one owner, so a restore never puts back a transcript as "the user's
      *        clipboard".
-     * WHERE: ipc/commands/history.rs (history_paste_last); the paste-last hotkey posts Message::PasteLast(None).
+     * WHERE: ipc/commands/history.rs (history_paste_last); the paste-last hotkey posts Message::PasteLast without a
+     *        reply, the tray through `request_paste_last`.
      */
-    pub async fn paste_last(&self) -> PortResult<DeliveryOutcome> {
+    pub async fn paste_last(&self, target: TargetRule) -> PortResult<DeliveryOutcome> {
         let (reply, answer) = oneshot::channel();
-        self.send(Message::PasteLast(Some(reply)))?;
+        self.send(Message::PasteLast {
+            reply: Some(reply),
+            target,
+        })?;
         answer.await.map_err(|_| stopped())?
+    }
+
+    /// Delivers the newest completed take again without waiting (the tray); a failure toasts like the hotkey's.
+    pub fn request_paste_last(&self, target: TargetRule) -> PortResult<()> {
+        self.send(Message::PasteLast {
+            reply: None,
+            target,
+        })
+    }
+
+    /// Startup has settled: build the voice detector and ready the polish chain (05 W19).
+    pub fn warm(&self) {
+        if self.send(Message::Warm).is_err() {
+            tracing::error!("the session actor stopped before it could warm up");
+        }
+    }
+
+    /// The sink the power adapter reports to: sleep finalizes the take, every return refreshes the hotkeys.
+    pub fn power_sink(&self) -> PowerForwarder {
+        PowerForwarder(Outbox::new(&self.inbox))
     }
 
     /// The windows exist: start listening to hotkeys and warm up what the first take needs.
@@ -274,18 +307,18 @@ impl SessionActor {
                 if !rehearsed {
                     match hotkey_input::route(&event, &self.runner.settings()) {
                         Some(HotkeyRoute::Input(input)) => self.feed(VecDeque::from([input])).await,
-                        Some(HotkeyRoute::PasteLast) => self.runner.paste_last(None),
+                        Some(HotkeyRoute::PasteLast) => {
+                            self.runner.paste_last(None, TargetRule::Focused);
+                        }
                         None => {}
                     }
                 }
             }
-            Message::Ui(SessionUiInput::Stop) => {
-                self.feed(VecDeque::from([SessionInput::Stop])).await;
+            Message::Ui(input) => {
+                let input = ui_input::route(input, &self.runner.settings());
+                self.feed(VecDeque::from([input])).await;
             }
-            // The pill's ✕ is the Esc hotkey: one input, so the machine's cancel and undo rules apply unchanged.
-            Message::Ui(SessionUiInput::Cancel) => {
-                self.feed(VecDeque::from([SessionInput::Esc])).await;
-            }
+            Message::Power(event) => self.power(event).await,
             Message::Rehearse(rehearsal) => self.runner.rehearse(rehearsal),
             Message::Worker(reply) => {
                 let mut inputs = VecDeque::new();
@@ -296,8 +329,9 @@ impl SessionActor {
                 // The asker may have given up (a closed window); nothing to do then.
                 let _ = reply.send(self.state.phase.view(self.now()));
             }
-            Message::PasteLast(reply) => self.runner.paste_last(reply),
+            Message::PasteLast { reply, target } => self.runner.paste_last(reply, target),
             Message::Prepare => self.runner.prepare(),
+            Message::Warm => self.runner.warm(),
             Message::Panicked => self.fail_live_take().await,
             Message::Shutdown(reply) => {
                 self.runner.shutdown().await;
@@ -306,6 +340,25 @@ impl SessionActor {
             }
         }
         ControlFlow::Continue(())
+    }
+
+    /**
+     * SOURCE OF TRUTH KEYWORDS: power event handling, suspend finalizes take, resume refreshes hotkeys
+     * WHAT:  A power or session transition: sleep feeds the machine's Suspend input (a recording take is finalized,
+     *        a pending cancel carried out), and every return re-registers the always-on hotkeys.
+     * WHY:   02 §9 and 05 W8: Windows may drop the keyboard hook across sleep, a session switch or an explorer
+     *        restart; the gate re-registers only what is bound and not paused. The machine decides what a suspend
+     *        means for the phase it is in, so the actor never branches on the phase here.
+     * WHERE: `handle`, for Message::Power (the PowerForwarder the power adapter holds).
+     */
+    async fn power(&mut self, event: PowerEvent) {
+        tracing::info!(?event, "power event");
+        if event.ends_take() {
+            self.feed(VecDeque::from([SessionInput::Suspend])).await;
+        }
+        if event.refreshes_hotkeys() {
+            self.runner.refresh_hotkeys();
+        }
     }
 
     /**

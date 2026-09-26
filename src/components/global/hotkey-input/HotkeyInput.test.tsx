@@ -2,7 +2,8 @@
  * SOURCE OF TRUTH KEYWORDS: HotkeyInput test, hotkey capture test, accelerator format test, modifier-only capture test, bindable chord test
  * WHAT:  Verifies the accelerator helpers (key tokens in the adapter's spelling, modifier order, splitting, the
  *        bindable-chord rule) and the HotkeyInput capture: chips for the value, a main-key chord, a modifier-only
- *        chord, Escape cancelling, and the hints for keys that cannot be used.
+ *        chord, Escape cancelling, the hints for keys that cannot be used, and the capture start/end report
+ *        (`onCaptureChange`) on every way a capture ends.
  * WHY:   The captured text is what the hotkey adapter parses (adapters/hotkey/low_level_hook/chord.rs); a wrong
  *        spelling would be refused at bind time, and a lone letter would take a key from every app.
  * WHERE: Runs in the `web` Vitest project (jsdom).
@@ -115,5 +116,28 @@ describe("HotkeyInput", () => {
       button.blur();
     });
     expect(button).toHaveAttribute("data-capturing", "false");
+  });
+
+  it("reports when capturing starts and ends, however it ends", () => {
+    const onChange = vi.fn<(accelerator: string) => void>();
+    const onCaptureChange = vi.fn<(capturing: boolean) => void>();
+    const { unmount } = render(
+      <HotkeyInput aria-label="Dictation hotkey" value="Ctrl+Alt" onChange={onChange} onCaptureChange={onCaptureChange} />,
+    );
+    const button = screen.getByRole("button", { name: "Dictation hotkey" });
+    startCapture(button);
+    expect(onCaptureChange).toHaveBeenLastCalledWith(true);
+    fireEvent.keyDown(button, { code: "KeyV", ctrlKey: true, altKey: true });
+    expect(onCaptureChange).toHaveBeenLastCalledWith(false);
+    expect(onChange).toHaveBeenCalledWith("Ctrl+Alt+V");
+    startCapture(button);
+    act(() => {
+      button.blur();
+    });
+    expect(onCaptureChange.mock.calls).toEqual([[true], [false], [true], [false]]);
+    startCapture(button);
+    unmount();
+    expect(onCaptureChange).toHaveBeenLastCalledWith(false);
+    expect(onCaptureChange).toHaveBeenCalledTimes(6);
   });
 });

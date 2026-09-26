@@ -17,7 +17,10 @@ export const commands = {
 	audioTestLevel: (input: AudioTestLevelInput) => typedError<MicCheck, AppError>(__TAURI_INVOKE("audio_test_level", { input })),
 	/**  The current take as the pill renders it; Idle when no take is running. */
 	sessionGetState: () => typedError<SessionView, AppError>(__TAURI_INVOKE("session_get_state")),
-	/**  Sends a pill input (`stop`, or `cancel` which acts as Esc) to the current take. */
+	/**
+	 *  Sends a UI input to the session: `stop`, `cancel` (acts as Esc), or `toggle` (starts a take into the app last in
+	 *  front outside Echo, or stops the one recording).
+	 */
 	sessionInput: (input: SessionUiInput) => typedError<null, AppError>(__TAURI_INVOKE("session_input", { input })),
 	/**  Transcribes a stored take again from its saved audio and returns its updated History row. */
 	sessionRetry: (input: TranscriptInput) => typedError<TranscriptSummary, AppError>(__TAURI_INVOKE("session_retry", { input })),
@@ -36,7 +39,10 @@ export const commands = {
 	historyDelete: (input: TranscriptInput) => typedError<null, AppError>(__TAURI_INVOKE("history_delete", { input })),
 	/**  Clears History: every take's text and audio are erased; the dashboard and streak keep counting them. */
 	historyClear: () => typedError<null, AppError>(__TAURI_INVOKE("history_clear")),
-	/**  Pastes the newest completed take into the focused app again (copies it when pasting is not possible). */
+	/**
+	 *  Pastes the newest completed take again into the app last in front outside Echo (copies it when pasting is not
+	 *  possible).
+	 */
 	historyPasteLast: () => typedError<DeliveryOutcome, AppError>(__TAURI_INVOKE("history_paste_last")),
 	/**
 	 *  Every dashboard summary metric over `range`, in dashboard order; a value is null when there is nothing
@@ -100,6 +106,17 @@ export const commands = {
 	appOpenMicPrivacySettings: () => typedError<null, AppError>(__TAURI_INVOKE("app_open_mic_privacy_settings")),
 	/**  Brings the main window forward on a page (the pill's "Set up" and "Open"). */
 	appOpenPage: (input: OpenPageInput) => typedError<null, AppError>(__TAURI_INVOKE("app_open_page", { input })),
+	/**  Echo's version, whether this is a development build, and how much memory Echo uses right now. */
+	appAbout: () => typedError<AboutView, AppError>(__TAURI_INVOKE("app_about")),
+	/**  Whether Echo's hotkeys are paused by the user, or off while a hotkey field captures a combination. */
+	hotkeysStatus: () => typedError<HotkeyStatus, AppError>(__TAURI_INVOKE("hotkeys_status")),
+	/**  Pauses (`paused: true`) or resumes Echo's hotkeys, like the tray's "Pause hotkeys"; returns the new status. */
+	hotkeysPause: (input: HotkeysPauseInput) => typedError<HotkeyStatus, AppError>(__TAURI_INVOKE("hotkeys_pause", { input })),
+	/**
+	 *  A hotkey field started (`active: true`) or stopped capturing: Echo's hotkeys are off meanwhile (for at most a
+	 *  minute without a new start); returns the new status.
+	 */
+	hotkeysCapture: (input: HotkeyCaptureInput) => typedError<HotkeyStatus, AppError>(__TAURI_INVOKE("hotkeys_capture", { input })),
 	/**
 	 *  Whether onboarding is due now, the steps to walk, the speech engine and its model's state, and the Windows
 	 *  microphone consent.
@@ -118,6 +135,7 @@ export const events = {
 	audioLevel: makeEvent<AudioLevel>("AudioLevel"),
 	historyChanged: makeEvent<HistoryChanged>("HistoryChanged"),
 	hotkeyRehearsed: makeEvent<HotkeyRehearsed>("HotkeyRehearsed"),
+	hotkeyStatusChanged: makeEvent<HotkeyStatusChanged>("HotkeyStatusChanged"),
 	metricsChanged: makeEvent<MetricsChanged>("MetricsChanged"),
 	modelProgress: makeEvent<ModelProgress>("ModelProgress"),
 	modelsChanged: makeEvent<ModelsChanged>("ModelsChanged"),
@@ -129,6 +147,8 @@ export const events = {
 };
 
 /* Constants */
+export const DEBUG_LOG_SETTING = "general.debug_log" as const;
+
 export const HISTORY_PAGE_MAX = 500 as const;
 
 export const HISTORY_SEARCH_MAX_CHARS = 200 as const;
@@ -140,6 +160,13 @@ export const MIC_CHECK_MIN_WINDOW_MS = 1000 as const;
 export const SETTING_TOKEN_MAX_CHARS = 128 as const;
 
 /* Types */
+/**  Settings → About, besides the speech engine (`engine_status`) and the models (`models_list`). */
+export type AboutView = {
+	app: AppInfo,
+	/**  None when Windows could not report it. */
+	memory: ProcessMemory | null,
+};
+
 /**  Where inference runs. `gpu` means any DX12 adapter (DirectML), not one vendor. */
 export type Accelerator = "cpu" | "gpu";
 
@@ -210,6 +237,14 @@ export type AppError = { code: "Validation"; field: string; message: string } | 
 
 /**  The stable code of an AppError variant, without its fields. */
 export type AppErrorCode = "Validation" | "PermissionDenied" | "Busy" | "NotFound" | "ModelMissing" | "ModelCorrupt" | "AudioDevice" | "Asr" | "Polish" | "Storage" | "Offline" | "Network" | "Hotkey" | "Internal";
+
+/**  What this build of Echo is. */
+export type AppInfo = {
+	/**  SemVer from tauri.conf.json, e.g. `0.1.0`. */
+	version: string,
+	/**  A development build (`tauri dev`), which loads its pages from the dev server. */
+	development: boolean,
+};
 
 /**  The theme, transparency or backdrop changed; carries the full view, so windows never merge partial updates. */
 export type AppearanceChanged = AppearanceView;
@@ -340,7 +375,9 @@ export type CapsRequirement =
 /**  The hotkey adapter reports key-up (`HotkeyCaps.supports_release`), needed for hold-to-talk. */
 "hotkey_release" | 
 /**  The updater adapter reports `UpdaterCaps.available`. */
-"updater_available";
+"updater_available" | 
+/**  The start-at-sign-in adapter reports `LaunchAtLoginCaps.available` (not in a development build). */
+"launch_at_login";
 
 /**  How a finished take reached the user. */
 export type DeliveryOutcome = 
@@ -490,6 +527,11 @@ export type HotkeyCaps = {
 	supports_modifier_only: boolean,
 };
 
+/**  `hotkeys_capture` input: a hotkey field started (true) or stopped (false) capturing a combination. */
+export type HotkeyCaptureInput = {
+	active: boolean,
+};
+
 /**  Registry id of a hotkey binding, kebab-case, e.g. `record`, `paste-last`, `cancel`. */
 export type HotkeyId = string;
 
@@ -531,6 +573,35 @@ export type HotkeySpec = {
 	scope: HotkeyScope,
 	/**  What pressing it does. */
 	action: HotkeyAction,
+};
+
+/**
+ * 
+ *  * SOURCE OF TRUTH KEYWORDS: HotkeyStatus, hotkeys paused, hotkeys capturing, hotkeys_status, HotkeyStatusChanged payload
+ *  * WHAT:  Whether Echo's always-on hotkeys are off because the user paused them, and whether a hotkey field is
+ *  *        capturing a combination right now.
+ *  * WHY:   The tray's "Pause hotkeys" check, the Settings notice and a second window all show the same state, which
+ *  *        only the hotkey gate holds; they read it once and follow HotkeyStatusChanged, never polling.
+ *  * WHERE: Built by pipeline/hotkeys.rs HotkeyGate::status; returned by `hotkeys_status`, sent as HotkeyStatusChanged,
+ *  *        read by app/tray.rs and src/hooks/use-hotkey-status.ts.
+ *  
+ */
+export type HotkeyStatus = {
+	/**  The user paused the hotkeys (tray or Settings); they stay off until resumed. */
+	paused: boolean,
+	/**  A hotkey field is capturing a combination, so the hotkeys are off meanwhile. */
+	capturing: boolean,
+};
+
+/**
+ *  Echo's always-on hotkeys were paused or resumed (the tray, Settings, a hotkey field capturing); carries the full
+ *  status.
+ */
+export type HotkeyStatusChanged = HotkeyStatus;
+
+/**  `hotkeys_pause` input: switch the user's pause on or off. */
+export type HotkeysPauseInput = {
+	paused: boolean,
 };
 
 /**  Caps of a `TextInserter` adapter. */
@@ -979,6 +1050,14 @@ export type PolisherCaps = {
 	needs_model: boolean,
 };
 
+/**  Memory the Echo process uses now. */
+export type ProcessMemory = {
+	/**  Physical memory in use (Task Manager's "Memory"). */
+	working_set: ByteCount,
+	/**  Memory only Echo holds (committed private bytes). */
+	private_bytes: ByteCount,
+};
+
 /**  Every registry list the UI renders from. */
 export type RegistryView = {
 	settings: SettingSpec[],
@@ -1051,7 +1130,13 @@ export type SessionUiInput =
  *  The pill's cancel (✕) and undo buttons: same effect as pressing Esc, so the first press starts the cancel
  *  countdown and a second one before it runs out resumes the take.
  */
-"cancel";
+"cancel" | 
+/**
+ *  Start dictating when no take is running, stop the one that is recording otherwise (the tray's Start / Stop
+ *  dictation, or any Echo button). The take toggles and its text goes to the app the user was last in outside
+ *  Echo, since the click itself moved focus away from it (SessionPolicy::from_ui).
+ */
+"toggle";
 
 /**  Everything the UI may know about the current take. */
 export type SessionView = {

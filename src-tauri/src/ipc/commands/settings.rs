@@ -24,9 +24,7 @@
 
 use crate::{
     ipc::{CommandCtx, factory::echo_command},
-    pipeline::{
-        hotkeys as hotkey_bindings, session, settings_effects::SettingsEffects, settings_store,
-    },
+    pipeline::{settings_effects::SettingsEffects, settings_store},
     registry::{engines, hotkeys, metrics, nav, settings},
     types::{
         AdapterCaps, AppError, PortError, PortResult, RegistryView, ResourceKind, SettingEntry,
@@ -184,26 +182,18 @@ fn with_value(
     )
 }
 
-/// Binds the hotkey `key` rebinds to its combination in `candidate`, when the session binds that hotkey; true when
-/// a binding changed. A refused combination is the write's error and leaves the previous binding in place.
+/// Binds the hotkey `key` rebinds to its combination in `candidate` through the hotkey gate (checked but left off
+/// while the hotkeys are paused); true when a binding was checked. A refused combination is the write's error and
+/// leaves the previous binding in place.
 fn rebind(ctx: &CommandCtx, key: &SettingKey, candidate: &SettingsSnapshot) -> PortResult<bool> {
-    hotkey_bindings::rebind_setting(
-        ctx.hotkeys().as_ref(),
-        key,
-        candidate,
-        session::binds_hotkey,
-    )
-    .map_or(Ok(false), |bound| bound.map(|()| true))
+    ctx.hotkey_gate()
+        .rebind(key, candidate)
+        .map_or(Ok(false), |bound| bound.map(|()| true))
 }
 
 /// Puts back the combination `previous` gives after a write that bound a new one could not be stored.
 fn restore_binding(ctx: &CommandCtx, key: &SettingKey, previous: &SettingsSnapshot) {
-    if let Some(Err(error)) = hotkey_bindings::rebind_setting(
-        ctx.hotkeys().as_ref(),
-        key,
-        previous,
-        session::binds_hotkey,
-    ) {
+    if let Some(Err(error)) = ctx.hotkey_gate().rebind(key, previous) {
         tracing::warn!(
             setting = %key,
             detail = error.detail(),
@@ -217,6 +207,7 @@ fn adapter_caps(ctx: &CommandCtx) -> AdapterCaps {
     AdapterCaps {
         hotkeys: ctx.hotkeys().caps(),
         updater: ctx.updater().caps(),
+        launch_at_login: ctx.launch().caps(),
     }
 }
 
@@ -250,6 +241,7 @@ fn announce(
             polish: ctx.polish(),
             models: ctx.models(),
             paths: ctx.paths(),
+            launch: ctx.launch(),
             events: ctx.events(),
         }
         .apply(before, snapshot);

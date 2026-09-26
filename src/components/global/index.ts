@@ -1,5 +1,5 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: components global barrel, reusable components, GlassSurface, EmptyState, InlineNotice, ModelCard, ModelCardActions, ProgressBar, NavIcon, Page, DataList, TranscriptRow, SettingField, SettingRow, HotkeyInput, StatCard, MicCheckPanel, ConfirmDialog, take actions
+ * SOURCE OF TRUTH KEYWORDS: components global barrel, reusable components, GlassSurface, EmptyState, InlineNotice, FactList, ModelCard, ModelCardActions, ProgressBar, NavIcon, Page, DataList, TranscriptRow, SettingField, SettingRow, HotkeyInput, StatCard, MicCheckPanel, ConfirmDialog, take actions
  * WHAT:  Barrel for every reusable app component (one folder each under components/global).
  * WHY:   Routes import `@/components/global` and never reach into a folder, so components can be reorganised
  *        inside their folders freely (03 §3). Components inside global/ import each other by folder, never
@@ -19,6 +19,7 @@ export {
 } from "./data-list";
 export { ConfirmDialog, type ConfirmDialogProps } from "./confirm-dialog";
 export { EmptyState, type EmptyStateProps } from "./empty-state";
+export { FactList, type Fact, type FactListProps } from "./fact-list";
 export { GLASS_SURFACE_VARIANTS, GlassSurface, type GlassSurfaceProps, type GlassSurfaceVariant } from "./glass-surface";
 export {
   acceleratorKeys,
@@ -40,6 +41,7 @@ export {
 export { InlineNotice, type InlineNoticeProps } from "./inline-notice";
 export { MIC_VERDICT_LOOK, MicCheckPanel, type MicCheckPanelProps, type MicVerdictLook } from "./mic-check";
 export {
+  acceleratorLabel,
   ALL_SECONDARY_MODEL_ACTIONS,
   engineKindLabel,
   isDeterminate,

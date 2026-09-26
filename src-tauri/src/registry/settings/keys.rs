@@ -13,6 +13,8 @@ pub const SOUND_CUES: SettingKey = SettingKey::from_static("general.sound_cues")
 pub const THEME: SettingKey = SettingKey::from_static("general.theme");
 /// Hidden: first-run onboarding was completed once.
 pub const ONBOARDED: SettingKey = SettingKey::from_static("general.onboarded");
+/// Hidden from the settings list (offered in About): detailed log lines.
+pub const DEBUG_LOG: SettingKey = SettingKey::from_static("general.debug_log");
 pub const RECORD_HOTKEY: SettingKey = SettingKey::from_static("hotkeys.record");
 pub const HOTKEY_MODE: SettingKey = SettingKey::from_static("hotkeys.mode");
 pub const PASTE_LAST_HOTKEY: SettingKey = SettingKey::from_static("hotkeys.paste_last");

@@ -1,7 +1,7 @@
 /*!
  * SOURCE OF TRUTH KEYWORDS: arm take, ArmRequest, ArmOutcome, OpenTake, row before mic, model check, open microphone, pinned device fallback, speech engine readiness
- * WHAT:  `arm`: the Arm effect of 02 §5, run off the actor on a blocking thread. In order: read the foreground
- *        target, check that the speech engine can transcribe, build the voice detector, insert the take's row as
+ * WHAT:  `arm`: the Arm effect of 02 §5, run off the actor on a blocking thread. In order: read the target window
+ *        under the take's TargetRule (pipeline/delivery.rs `find_target`), check that the speech engine can transcribe, build the voice detector, insert the take's row as
  *        `recording`, open the ASR take, then open the microphone with the journal, levels and segmentation.
  *        Returns what it opened (Armed), that the model is not installed (ModelMissing, nothing touched), or why
  *        it failed and whether the row exists (Failed).
@@ -26,6 +26,7 @@ use crate::{
     pipeline::{
         asr::{self, AsrTake, AsrWorker, EngineCheck},
         capture::{Capture, CaptureConfig, Segmentation},
+        delivery,
     },
     ports::{AudioCapture, EventSink, ForegroundApp, VoiceActivity, WorkerScheduler},
     registry,
@@ -33,7 +34,7 @@ use crate::{
     types::{
         AppError, AppEvent, AppPaths, AppTarget, AudioDeviceId, EngineId, HistoryChangeReason,
         HistoryChanged, ModelId, NewTranscript, PortError, PortResult, ResourceKind, SegmentPolicy,
-        SettingsSnapshot, TranscriptId, TranscriptStatus, UnixMs,
+        SettingsSnapshot, TargetRule, TranscriptId, TranscriptStatus, UnixMs,
     },
 };
 
@@ -43,6 +44,8 @@ pub type VadBuilder = Arc<dyn Fn() -> PortResult<Box<dyn VoiceActivity>> + Send 
 /// Everything one Arm needs, moved onto its blocking thread.
 pub(super) struct ArmRequest {
     pub take: TranscriptId,
+    /// Which window the take's text goes to.
+    pub target: TargetRule,
     pub settings: Arc<SettingsSnapshot>,
     /// A detector left by the previous take or built ahead; None builds one.
     pub detector: Option<Box<dyn VoiceActivity>>,
@@ -101,13 +104,7 @@ pub(super) fn arm(mut request: ArmRequest) -> ArmOutcome {
     let take = request.take;
     let failed = |error: PortError, row: bool| ArmOutcome::Failed { take, error, row };
 
-    let target = request.foreground.current().unwrap_or_else(|error| {
-        tracing::warn!(
-            detail = error.detail(),
-            "the focused window could not be read; the text will be copied"
-        );
-        None
-    });
+    let target = delivery::find_target(request.foreground.as_ref(), request.target);
     let engine = match asr::usable_engine(&request.asr, &request.settings, &request.paths) {
         Ok(EngineCheck::Usable(engine)) => engine,
         Ok(EngineCheck::ModelMissing(model_id)) => {

@@ -1,9 +1,10 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: system commands, appearance_get, app_open_logs_dir, app_open_mic_privacy_settings, app_open_page, NavigationRequested, AppearanceView, logs folder, microphone privacy settings
+ * SOURCE OF TRUTH KEYWORDS: system commands, appearance_get, app_open_logs_dir, app_open_mic_privacy_settings, app_open_page, app_about, AboutView, NavigationRequested, AppearanceView, logs folder, microphone privacy settings, memory use
  * WHAT:  The system command group (02 §4.3). `appearance_get` returns the AppearanceView (theme, transparency,
  *        backdrop) both windows paint from; `app_open_logs_dir` shows the local log folder and
  *        `app_open_mic_privacy_settings` opens the Windows microphone privacy page; `app_open_page` brings the main
- *        window forward and asks it (NavigationRequested) to show a page.
+ *        window forward and asks it (NavigationRequested) to show a page; `app_about` returns what Settings → About
+ *        shows besides the engine and the models: the version, the build kind and Echo's memory use now.
  * WHY:   The UI reads appearance once through this command and then stays fresh from AppearanceChanged, never
  *        polling (02 §4.4); the view is computed on demand from the live settings and the SystemAppearance port,
  *        so there is no cached copy to drift. The two "open" commands are the targets of the `open_logs` and
@@ -11,7 +12,9 @@
  *        through the SystemLauncher port and the resolved AppPaths, so no handler names a Windows URI or a path.
  *        `app_open_page` serves surfaces without the main window's router (the pill's "Set up" and "Open"): the
  *        window is shown first, so the event reaches a live page; the page is a NavId, so only registry pages exist.
- *        The update commands join this group with their step.
+ *        About's memory is read at the call from the ProcessStats port; a failed read is logged and shown as
+ *        unknown, never an error, because About must always open. The update commands join this group with their
+ *        step.
  * WHERE: Registered through `ipc::commands::catalog`; called from the UI as `commands.appearanceGet()` by
  *        src/lib/appearance.ts and as `commands.appOpenLogsDir()` / `commands.appOpenMicPrivacySettings()` by the
  *        app shell's error actions (src/app/shell/use-app-error-action.ts), later by onboarding and About;
@@ -22,7 +25,8 @@ use crate::{
     ipc::{CommandCtx, factory::echo_command},
     pipeline::appearance,
     types::{
-        AppError, AppearanceView, NavigationRequested, OpenPageInput, PortError, SettingsPage,
+        AboutView, AppError, AppearanceView, NavigationRequested, OpenPageInput, PortError,
+        SettingsPage,
     },
 };
 
@@ -63,6 +67,15 @@ echo_command! {
     handler: open_page,
 }
 
+echo_command! {
+    /// Echo's version, whether this is a development build, and how much memory Echo uses right now.
+    name: app_about,
+    output: AboutView,
+    permission: None,
+    reentrancy: Shared,
+    handler: about,
+}
+
 /// The appearance view for the settings in effect and the current Windows switches.
 pub async fn get_appearance(ctx: &CommandCtx, (): ()) -> Result<AppearanceView, AppError> {
     Ok(appearance::current(&ctx.settings(), ctx.appearance()))
@@ -77,6 +90,19 @@ pub async fn open_logs_dir(ctx: &CommandCtx, (): ()) -> Result<(), PortError> {
 pub async fn open_mic_privacy_settings(ctx: &CommandCtx, (): ()) -> Result<(), PortError> {
     ctx.launcher()
         .open_settings_page(SettingsPage::MicrophonePrivacy)
+}
+
+/// The About view: the build Tauri reported at startup and the memory Windows reports now (None when it cannot).
+pub async fn about(ctx: &CommandCtx, (): ()) -> Result<AboutView, AppError> {
+    let memory = ctx
+        .process()
+        .memory()
+        .inspect_err(|error| tracing::warn!(detail = error.detail(), "memory use is unknown"))
+        .ok();
+    Ok(AboutView {
+        app: ctx.app_info().clone(),
+        memory,
+    })
 }
 
 /// Shows the main window, then asks it to navigate to the page.
@@ -96,7 +122,8 @@ mod tests {
         ports::fakes::{FakePrivacyConsent, LaunchCall, poll_once},
         registry,
         types::{
-            AppEvent, Backdrop, CommandSpec, NavId, Reentrancy, ThemePreference, Transparency,
+            AppEvent, AppInfo, Backdrop, ByteCount, CommandSpec, NavId, ProcessMemory, Reentrancy,
+            ThemePreference, Transparency,
         },
     };
 
@@ -233,5 +260,31 @@ mod tests {
         ));
         assert_eq!(result, Poll::Ready(Err(AppError::Internal)));
         assert!(harness.launcher.calls().is_empty());
+    }
+
+    #[test]
+    fn about_reports_the_build_and_the_memory_in_use() {
+        let harness = testing::harness(
+            registry::settings::defaults(),
+            FakePrivacyConsent::granted(),
+        );
+        let Poll::Ready(Ok(view)) =
+            poll_once(factory::run(&harness.ctx, &spec("app_about"), (), about))
+        else {
+            panic!("app_about did not answer");
+        };
+        assert_eq!(
+            view,
+            AboutView {
+                app: AppInfo {
+                    version: String::from("0.1.0"),
+                    development: false,
+                },
+                memory: Some(ProcessMemory {
+                    working_set: ByteCount::new(testing::HARNESS_MEMORY.0),
+                    private_bytes: ByteCount::new(testing::HARNESS_MEMORY.1),
+                }),
+            }
+        );
     }
 }

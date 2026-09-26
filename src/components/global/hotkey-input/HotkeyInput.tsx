@@ -1,5 +1,5 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: HotkeyInput, shortcut field, hotkey capture control, Kbd chips, accelerator input, rebind hotkey
+ * SOURCE OF TRUTH KEYWORDS: HotkeyInput, shortcut field, hotkey capture control, Kbd chips, accelerator input, rebind hotkey, onCaptureChange
  * WHAT:  A field that shows an accelerator (`value`) as Kbd chips and, when pressed, captures a new combination
  *        from the keyboard and reports it through `onChange`. Escape cancels; while capturing it shows the
  *        modifiers held and, when an attempt cannot be used, why.
@@ -8,7 +8,8 @@
  *        started with Enter or Space; `aria-invalid` gives it the --color-record border the other controls use, so a
  *        conflict shows in --color-record at the control (04 §5) while the message keeps readable text colour. The
  *        component is controlled and saves nothing itself: the caller decides (Settings writes the setting,
- *        onboarding may test it first).
+ *        onboarding may test it first), and hears when capturing starts and ends through `onCaptureChange` (Settings
+ *        switches Echo's own hotkeys off meanwhile, so the field can read them).
  * WHERE: SettingField for Hotkey settings (components/global/setting-field); onboarding's hotkey step (step 24).
  */
 import { KeyboardIcon } from "lucide-react";
@@ -23,6 +24,8 @@ export type HotkeyInputProps = Omit<ComponentProps<"button">, "value" | "onChang
   readonly value: string;
   /** Called once with each combination captured. */
   readonly onChange: (accelerator: string) => void;
+  /** Called with true when capturing starts and false when it ends for any reason. */
+  readonly onCaptureChange?: (capturing: boolean) => void;
   readonly invalid?: boolean;
 };
 
@@ -32,8 +35,16 @@ const HINT_COPY: Readonly<Record<HotkeyCaptureHint, string>> = {
   "unsupported-key": "That key can't be used in a shortcut. Try another one.",
 };
 
-export function HotkeyInput({ value, onChange, invalid = false, className, onBlur, ...props }: HotkeyInputProps) {
-  const capture = useHotkeyCapture(onChange);
+export function HotkeyInput({
+  value,
+  onChange,
+  onCaptureChange,
+  invalid = false,
+  className,
+  onBlur,
+  ...props
+}: HotkeyInputProps) {
+  const capture = useHotkeyCapture(onChange, onCaptureChange);
   const hintId = useId();
   const keys = capture.capturing ? capture.held : acceleratorKeys(value);
   const placeholder = capture.capturing ? "Press a shortcut" : "Not set";

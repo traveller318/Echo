@@ -16,6 +16,7 @@ export {
   type SecondaryModelAction,
 } from "./model-actions";
 export {
+  acceleratorLabel,
   engineKindLabel,
   isDeterminate,
   languagesSummary,

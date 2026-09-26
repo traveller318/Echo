@@ -10,6 +10,7 @@
  * WHERE: Imported by every other layer (02 §3.2 matrix).
  */
 
+mod about;
 mod accelerator;
 mod appearance;
 mod asr;
@@ -45,14 +46,17 @@ mod session;
 mod session_machine;
 mod settings;
 mod sound;
+mod startup;
 mod static_data;
 mod target;
 #[cfg(test)]
 pub mod testing;
 mod transcript;
+mod tray;
 mod units;
 mod update;
 
+pub use about::{AboutView, AppInfo, ProcessMemory};
 pub use accelerator::{
     AcceleratorBenchmark, AcceleratorChoice, AcceleratorPolicy, AcceleratorReason,
     AcceleratorRequest, AcceleratorTiming, BringUpOutcome, BringUpTiming, ComputeDevice,
@@ -72,20 +76,20 @@ pub use delivery::{ClipboardRestore, CopyReason, DeliveryPlan, DeliveryPolicy, D
 pub use durability::{RecoveryReport, RetentionPolicy, RetentionReport};
 pub use engine::{
     Accelerator, AppearanceCaps, AsrCaps, AudioCaps, EngineCaps, EngineKind, EngineSpec,
-    HotkeyCaps, InserterCaps, Language, LanguageSupport, LatencyClass, PolisherCaps, UpdaterCaps,
-    VadCaps,
+    HotkeyCaps, InserterCaps, Language, LanguageSupport, LatencyClass, LaunchAtLoginCaps,
+    PolisherCaps, UpdaterCaps, VadCaps,
 };
 pub use error::{AppError, AppErrorCode, HotkeyIssue, ResourceKind};
 pub use events::{
     AppEvent, AppearanceChanged, AudioDevicesChanged, AudioLevel, HistoryChangeReason,
-    HistoryChanged, HotkeyRehearsed, MetricsChanged, ModelProgress, ModelsChanged,
-    NavigationRequested, OnboardingRequested, SessionStateChanged, SettingsChanged,
+    HistoryChanged, HotkeyRehearsed, HotkeyStatusChanged, MetricsChanged, ModelProgress,
+    ModelsChanged, NavigationRequested, OnboardingRequested, SessionStateChanged, SettingsChanged,
     TranscriptSaved,
 };
 pub use future::BoxFuture;
 pub use hotkey::{
-    HotkeyAction, HotkeyBindFailure, HotkeyEvent, HotkeyScope, HotkeySpec, KeyState, RecordMode,
-    Shortcut,
+    HotkeyAction, HotkeyBindFailure, HotkeyCaptureInput, HotkeyEvent, HotkeyPauseReason,
+    HotkeyScope, HotkeySpec, HotkeyStatus, HotkeysPauseInput, KeyState, RecordMode, Shortcut,
 };
 pub use ids::{
     AudioDeviceId, EngineId, HotkeyId, InvalidId, MetricId, ModelId, REGISTRY_ID_MAX_LEN,
@@ -134,11 +138,13 @@ pub use settings::{
     TextPair,
 };
 pub use sound::{CueSound, SoundClip, Tone};
+pub use startup::{LaunchAtLoginState, LaunchOrigin, MainWindowAtLaunch};
 pub use static_data::{StaticList, StaticStr};
-pub use target::{AppTarget, ScreenRect, WindowHandle};
+pub use target::{AppTarget, ScreenRect, TargetRule, WindowHandle};
 pub use transcript::{
     HistoryListInput, NewTranscript, Page, PageCursor, Transcript, TranscriptChange,
     TranscriptInput, TranscriptRef, TranscriptSelector, TranscriptStatus, TranscriptSummary,
 };
+pub use tray::{TrayAction, TrayItemSpec};
 pub use units::{ByteCount, MonotonicMs, UnixMs};
 pub use update::UpdateStatus;

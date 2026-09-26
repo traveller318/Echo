@@ -51,7 +51,8 @@ pub fn resolved(db: &Db) -> PortResult<SettingsSnapshot> {
  * WHY:   A setting the pipeline keeps as internal state (onboarding completion) obeys the same registry rules and
  *        the same one-writer path as a user's change, so a hidden value is never stored unchecked and the cache
  *        always equals the table. Internal settings feed no running state, so no settings effects run.
- * WHERE: pipeline/onboarding.rs (`complete`).
+ * WHERE: pipeline/onboarding.rs (`complete`); pipeline/launch.rs (the startup setting following a Task Manager
+ *        switch-off, which must not re-run the effect that would register it again).
  */
 pub fn store_internal(
     settings: &SharedSettings,

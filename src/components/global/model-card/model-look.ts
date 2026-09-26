@@ -1,14 +1,14 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: modelStatusLook, model status badge, transferSummary, engineKindLabel, languagesSummary, model card copy, ModelStatus label
+ * SOURCE OF TRUTH KEYWORDS: modelStatusLook, model status badge, transferSummary, engineKindLabel, languagesSummary, acceleratorLabel, model card copy, ModelStatus label
  * WHAT:  How a model card reads: its status badge (label, variant, glyph) from the status, selection, runtime and
- *        running transfer; a one-line transfer summary ("312 MB of 670 MB"); the engine kind's name; and a short
- *        language list ("English, German, French and 22 more").
+ *        running transfer; a one-line transfer summary ("312 MB of 670 MB"); the engine kind's name; a short
+ *        language list ("English, German, French and 22 more"); and what an accelerator is called.
  * WHY:   Every surface that shows a model (Models page, onboarding's model step) must say the same thing, so the
  *        mapping lives once here, keyed by the generated unions (a new status, phase or kind fails tsc until it has
  *        copy). A running transfer wins over the stored status (it is what is happening now); an engine that is in
  *        use shows its runtime (loading, or could not load) because that is what a take would get. Status is never
  *        colour alone (04 §7): every look has a glyph and a word. Copy is calm (04 §1).
- * WHERE: ModelCard (this folder); routes/models.
+ * WHERE: ModelCard (this folder); routes/models; routes/settings (About: where the speech engine runs).
  */
 import {
   CircleAlertIcon,
@@ -21,9 +21,19 @@ import {
   WifiOffIcon,
   type LucideIcon,
 } from "lucide-react";
-import type { EngineCaps, EngineKind, ModelEntry, ModelPhase, ModelProgress } from "@/bindings";
+import type { Accelerator, EngineCaps, EngineKind, ModelEntry, ModelPhase, ModelProgress } from "@/bindings";
 import { formatBytes, formatLanguage } from "@/lib/format";
 import type { BadgeVariant } from "../transcript-row";
+
+const ACCELERATOR_LABEL: Readonly<Record<Accelerator, string>> = {
+  cpu: "Processor (CPU)",
+  gpu: "Graphics card (GPU)",
+};
+
+/** What `accelerator` is called wherever Echo says where a model runs. */
+export function acceleratorLabel(accelerator: Accelerator): string {
+  return ACCELERATOR_LABEL[accelerator];
+}
 
 export interface ModelStatusLook {
   readonly label: string;

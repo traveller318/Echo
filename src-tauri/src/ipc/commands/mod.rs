@@ -11,13 +11,14 @@
  *        metrics computes the dashboard's summary and activity; models lists, downloads, cancels, imports,
  *        verifies, removes and activates models; engine reports where the speech engine runs and measures
  *        it again; audio lists devices and runs the
- *        microphone check; system holds appearance, the logs / privacy openers and the page opener; pill takes the
- *        pill page's button areas and exit).
+ *        microphone check; system holds appearance, the logs / privacy openers, the page opener and About; hotkeys
+ *        pauses Echo's hotkeys and reports it; pill takes the pill page's button areas and exit).
  */
 
 pub mod audio;
 pub mod engine;
 pub mod history;
+pub mod hotkeys;
 pub mod metrics;
 pub mod models;
 pub mod onboarding;
@@ -66,6 +67,10 @@ pub fn catalog<R: Runtime>() -> Commands<R> {
         system::app_open_logs_dir,
         system::app_open_mic_privacy_settings,
         system::app_open_page,
+        system::app_about,
+        hotkeys::hotkeys_status,
+        hotkeys::hotkeys_pause,
+        hotkeys::hotkeys_capture,
         onboarding::onboarding_get,
         onboarding::onboarding_complete,
         onboarding::onboarding_open,

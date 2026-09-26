@@ -45,3 +45,22 @@ pub struct AppTarget {
     /// Runs at a higher integrity level than Echo, so Windows blocks synthetic input into it (05 W2).
     pub elevated: bool,
 }
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: TargetRule, paste target rule, focused window target, last external app, tray take target, UI started take
+ * WHAT:  Which window a take or a paste-last delivers to: the one in front at that moment (Focused), or the app the
+ *        user was last in outside Echo and the Windows shell (LastExternal).
+ * WHY:   A hotkey is pressed while the user's app is in front, so Focused is exact (05 W3). A click on the tray icon,
+ *        its menu or an Echo window moves focus to the taskbar or to Echo first, so the window in front is never where
+ *        the text should go; LastExternal is the app the user left to click, which is where they were typing.
+ * WHERE: SessionPolicy::target (types/session_machine.rs) and the Arm effect; Message::PasteLast; resolved through
+ *        `ForegroundApp::current` / `ForegroundApp::last_external` by pipeline/session (arm.rs, history.rs).
+ */
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum TargetRule {
+    /// The window in front when the take starts (hotkeys).
+    #[default]
+    Focused,
+    /// The last app in front that is neither Echo nor the Windows shell (tray, menus, Echo's own windows).
+    LastExternal,
+}

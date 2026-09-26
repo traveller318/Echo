@@ -78,6 +78,12 @@ pub fn builder<R: Runtime>() -> Builder<R> {
             "MIC_CHECK_MAX_WINDOW_MS",
             types::AudioTestLevelInput::MAX_WINDOW_MS,
         )
+        // The hidden detailed-logging setting About offers under Troubleshooting (02 §12); named by the registry key
+        // so the page never spells it.
+        .constant(
+            "DEBUG_LOG_SETTING",
+            registry::settings::keys::DEBUG_LOG.as_str().to_owned(),
+        )
 }
 
 /**

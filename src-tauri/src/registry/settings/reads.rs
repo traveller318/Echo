@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: typed setting reads, sound_cues, notice_shown, onboarded, theme read, transcription reads, polish reads, remove_fillers, dictionary, llm_polisher, trailing_space, delivery_policy, input_device, session_policy, record_mode, retention_policy, typing_wpm
+ * SOURCE OF TRUTH KEYWORDS: typed setting reads, sound_cues, notice_shown, onboarded, launch_at_startup, start_minimized, debug_log, theme read, transcription reads, polish reads, remove_fillers, dictionary, llm_polisher, trailing_space, delivery_policy, input_device, session_policy, record_mode, retention_policy, typing_wpm
  * WHAT:  Typed reads of a SettingsSnapshot for the settings the core acts on.
  * WHY:   Values are stored as tagged SettingValues and enum text; spelling them is the registry's job, so the
  *        pipeline asks here instead of matching kinds or comparing strings. A resolved snapshot always holds a
@@ -123,6 +123,21 @@ pub fn sound_cues(settings: &SettingsSnapshot) -> bool {
 /// `general.onboarded`: first-run onboarding was completed once.
 pub fn onboarded(settings: &SettingsSnapshot) -> bool {
     bool_or_default(settings, &keys::ONBOARDED)
+}
+
+/// `general.launch_at_startup`: Echo registers itself to start at sign-in.
+pub fn launch_at_startup(settings: &SettingsSnapshot) -> bool {
+    bool_or_default(settings, &keys::LAUNCH_AT_STARTUP)
+}
+
+/// `general.start_minimized`: a start at sign-in keeps the main window hidden.
+pub fn start_minimized(settings: &SettingsSnapshot) -> bool {
+    bool_or_default(settings, &keys::START_MINIMIZED)
+}
+
+/// `general.debug_log`: the log files take debug lines too.
+pub fn debug_log(settings: &SettingsSnapshot) -> bool {
+    bool_or_default(settings, &keys::DEBUG_LOG)
 }
 
 /// The one-time `notice` was already shown (its hidden flag is set).

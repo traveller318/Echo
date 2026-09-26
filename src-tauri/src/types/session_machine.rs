@@ -24,19 +24,23 @@ use std::collections::BTreeMap;
 
 use super::{
     AppError, AppTarget, AsrOutput, CaptureSummary, DeliveryOutcome, Language, ModelId,
-    MonotonicMs, PolishOutcome, RecordMode, SessionStatus, SessionView, Toast, TranscriptChange,
-    TranscriptId,
+    MonotonicMs, PolishOutcome, RecordMode, SessionStatus, SessionView, TargetRule, Toast,
+    TranscriptChange, TranscriptId,
 };
 
 /**
- * SOURCE OF TRUTH KEYWORDS: SessionPolicy, record debounce, cancel countdown, max duration, min speech, empty take, result hold, interrupt grace
+ * SOURCE OF TRUTH KEYWORDS: SessionPolicy, record debounce, cancel countdown, max duration, min speech, empty take, result hold, interrupt grace, target rule, from_ui
  * WHAT:  The rules one take runs under: the record mode, the 150 ms record debounce, the Esc countdown, the longest
- *        take, the least speech that is delivered, how long each result stays on the pill, and how young a take
- *        must be to be dropped when its record press turns out to be another app's shortcut.
+ *        take, the least speech that is delivered, how long each result stays on the pill, how young a take
+ *        must be to be dropped when its record press turns out to be another app's shortcut, and which window the
+ *        text goes to (`target`). `from_ui` is the same policy for a take started by a click (tray, a button):
+ *        toggle mode, delivered to the app the user was in before the click.
  * WHY:   Countdown, longest take and mode are settings (02 §3.3); the rest are fixed product rules kept in one
  *        const so tests and the actor agree: the debounce (02 §5), the empty-take threshold (05 A4: under 250 ms of
  *        speech the engine hallucinates a word), the ✓ hold (04 §4: 900 ms) and the error hold (04 §4: 3 s, also
- *        used for "No speech detected" and "Model not installed", which must stay long enough to read). A
+ *        used for "No speech detected" and "Model not installed", which must stay long enough to read). A click has
+ *        no key to release and moves focus away from the user's app, so a take started by one always toggles and
+ *        targets the last app outside Echo (TargetRule::LastExternal); a hotkey targets the window in front. A
  *        discarded take has no pill state of its own (02 §5: "hide pill"), so it holds for 0 ms. A shortcut such
  *        as Ctrl+Alt+T is typed within a second of its modifiers going down, so an interruption inside
  *        `interrupt_grace_ms` of recorded time drops the take; a later one is a slip while dictating.
@@ -62,6 +66,8 @@ pub struct SessionPolicy {
     pub discard_hold_ms: u32,
     /// Recorded time under which an interrupted record press drops its take, in ms.
     pub interrupt_grace_ms: u64,
+    /// Which window the take's text goes to.
+    pub target: TargetRule,
 }
 
 impl SessionPolicy {
@@ -76,7 +82,18 @@ impl SessionPolicy {
         notice_hold_ms: 3_000,
         discard_hold_ms: 0,
         interrupt_grace_ms: 1_000,
+        target: TargetRule::Focused,
     };
+
+    /// This policy for a take started by a click: it toggles (nothing is held) and goes to the app the user left.
+    #[must_use]
+    pub const fn from_ui(self) -> Self {
+        Self {
+            record_mode: RecordMode::Toggle,
+            target: TargetRule::LastExternal,
+            ..self
+        }
+    }
 }
 
 impl Default for SessionPolicy {
@@ -132,6 +149,8 @@ pub enum StopCause {
     MaxDuration,
     /// The microphone disappeared (05 W12): what was captured is still delivered.
     DeviceLost,
+    /// The machine is going to sleep (02 §9): what was captured is delivered.
+    Suspend,
 }
 
 /// A sound cue the actor plays when sound cues are on (`general.sound_cues`); how each sounds is registry/sounds.rs.
@@ -451,9 +470,10 @@ impl SessionState {
 }
 
 /**
- * SOURCE OF TRUTH KEYWORDS: SessionInput, RecordPressed, RecordReleased, RecordInterrupted, Esc, Armed, SegmentDone, AllSegmentsDone, Delivered, DeviceLost, ModelMissing
- * WHAT:  Everything that can happen to a take, stamped by the actor: hotkeys and the pill (RecordPressed,
- *        RecordReleased, RecordInterrupted, Stop, Esc), timers (CountdownElapsed, MaxDurationReached, SettleElapsed) and the replies
+ * SOURCE OF TRUTH KEYWORDS: SessionInput, RecordPressed, RecordReleased, RecordInterrupted, Toggle, Esc, Suspend, Armed, SegmentDone, AllSegmentsDone, Delivered, DeviceLost, ModelMissing
+ * WHAT:  Everything that can happen to a take, stamped by the actor: hotkeys, the pill and the tray (RecordPressed,
+ *        RecordReleased, RecordInterrupted, Toggle, Stop, Esc), the machine going to sleep (Suspend), timers
+ *        (CountdownElapsed, MaxDurationReached, SettleElapsed) and the replies
  *        of the effects the actor runs (Armed, SegmentDone, AllSegmentsDone, Delivered, Error, DeviceLost,
  *        ModelMissing).
  * WHY:   Replies name their take and timers their token, so a late reply from an ended take or a timer that was
@@ -475,8 +495,16 @@ pub enum SessionInput {
     RecordInterrupted,
     /// The pill's stop button.
     Stop,
+    /// A click that starts a take when none is running and stops the one recording otherwise (the tray's
+    /// Start / Stop dictation). Carries what a start needs, like RecordPressed.
+    Toggle {
+        next_take: TranscriptId,
+        policy: SessionPolicy,
+    },
     /// The Esc session hotkey.
     Esc,
+    /// The machine is about to sleep: a recording take is finalized, a pending cancel is carried out.
+    Suspend,
     /// The Arm effect finished: the row exists and the microphone is open.
     Armed {
         take: TranscriptId,
@@ -532,7 +560,9 @@ impl SessionInput {
             Self::RecordReleased => "RecordReleased",
             Self::RecordInterrupted => "RecordInterrupted",
             Self::Stop => "Stop",
+            Self::Toggle { .. } => "Toggle",
             Self::Esc => "Esc",
+            Self::Suspend => "Suspend",
             Self::Armed { .. } => "Armed",
             Self::CountdownElapsed { .. } => "CountdownElapsed",
             Self::MaxDurationReached { .. } => "MaxDurationReached",
@@ -560,7 +590,9 @@ impl SessionInput {
             | Self::RecordReleased
             | Self::RecordInterrupted
             | Self::Stop
+            | Self::Toggle { .. }
             | Self::Esc
+            | Self::Suspend
             | Self::CountdownElapsed { .. }
             | Self::MaxDurationReached { .. }
             | Self::SettleElapsed { .. } => None,
@@ -594,11 +626,12 @@ impl SessionInput {
 pub enum SessionEffect {
     /// Emit SessionStateChanged with this view.
     Publish(SessionView),
-    /// In this order: read the foreground target, check the ASR engine's model (missing → reply ModelMissing and
-    /// touch nothing), insert the take's row as `recording`, open the microphone with the journal and the ASR take;
-    /// reply Armed, or Error after releasing whatever was opened.
+    /// In this order: read the target window under `target`, check the ASR engine's model (missing → reply
+    /// ModelMissing and touch nothing), insert the take's row as `recording`, open the microphone with the journal
+    /// and the ASR take; reply Armed, or Error after releasing whatever was opened.
     Arm {
         take: TranscriptId,
+        target: TargetRule,
     },
     /// Register the session hotkeys (Esc).
     RegisterEsc,

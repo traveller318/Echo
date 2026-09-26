@@ -1,17 +1,20 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: useHotkeyCapture, hotkey capture, record shortcut, modifier-only capture, capture hint, key handlers
+ * SOURCE OF TRUTH KEYWORDS: useHotkeyCapture, hotkey capture, record shortcut, modifier-only capture, capture hint, key handlers, onCaptureChange
  * WHAT:  The capture state of a HotkeyInput: `start` begins listening, `onKeyDown` / `onKeyUp` read keys from the
  *        focused element, and a finished capture is reported once through `onCapture` with the accelerator text.
  *        `held` are the modifiers down right now (shown live), `hint` why the last attempt could not be used, and
- *        `cancel` stops without reporting.
+ *        `cancel` stops without reporting. `onCaptureChange` hears true when capturing starts and false when it ends
+ *        for any reason (a shortcut, Escape, blur, unmount).
  * WHY:   A main-key chord finishes on the main key's keydown, with the modifiers the event says are held (so keys
  *        pressed before focus still count). A modifier-only chord (Ctrl+Alt, the default dictation hotkey) has no
  *        main key, so it finishes when every modifier is up, from the largest set held together. Escape alone
  *        cancels and Tab alone leaves (keyboard users must be able to move on); every other key is swallowed while
- *        capturing, so Enter or Space cannot re-trigger the button. Key repeats are ignored.
+ *        capturing, so Enter or Space cannot re-trigger the button. Key repeats are ignored. The start/end report is an
+ *        effect on the capturing state, so every way a capture ends (including the field unmounting mid-capture) is
+ *        reported exactly once; the caller decides what it means (Settings switches Echo's own hotkeys off meanwhile).
  * WHERE: HotkeyInput.tsx.
  */
-import { useCallback, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import {
   formatAccelerator,
   isBindableChord,
@@ -44,12 +47,28 @@ function heldModifiers(event: KeyboardEvent<HTMLElement>): ModifierToken[] {
   return held;
 }
 
-export function useHotkeyCapture(onCapture: (accelerator: string) => void): HotkeyCapture {
+export function useHotkeyCapture(
+  onCapture: (accelerator: string) => void,
+  onCaptureChange?: (capturing: boolean) => void,
+): HotkeyCapture {
   const [capturing, setCapturing] = useState(false);
   const [held, setHeld] = useState<readonly ModifierToken[]>([]);
   const [hint, setHint] = useState<HotkeyCaptureHint | null>(null);
   // The largest set of modifiers held together since the last key-up that emptied the set.
   const peak = useRef(new Set<ModifierToken>());
+  const reportChange = useRef(onCaptureChange);
+  useEffect(() => {
+    reportChange.current = onCaptureChange;
+  });
+  useEffect(() => {
+    if (!capturing) {
+      return undefined;
+    }
+    reportChange.current?.(true);
+    return () => {
+      reportChange.current?.(false);
+    };
+  }, [capturing]);
 
   const reset = useCallback(() => {
     peak.current = new Set();

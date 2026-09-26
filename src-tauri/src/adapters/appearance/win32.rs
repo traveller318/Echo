@@ -8,7 +8,8 @@
  *        windows, fires for exactly the value that matters, and a stop event ends the thread cleanly when the
  *        adapter drops. A missing value means Windows' default (transparency on). The build number comes from the
  *        registry because it is not version-shimmed; an unreadable build counts as "no Mica", which only makes
- *        the page paint its own background. Handles are wrapped in owners that close them on every path.
+ *        the page paint its own background. Handles are wrapped in owners that close them on every path (the
+ *        watched key is the shared RegistryKey).
  * WHERE: Built by app/bootstrap into CommandCtx; `listen` is called once by app/bootstrap with the
  *        pipeline's AppearanceRelay; `caps` decides whether app/windows.rs applies Mica.
  */
@@ -27,9 +28,9 @@ use windows::{
         },
         System::{
             Registry::{
-                HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_NOTIFY, KEY_QUERY_VALUE,
-                REG_NOTIFY_CHANGE_LAST_SET, RRF_RT_REG_DWORD, RRF_RT_REG_SZ, RegCloseKey,
-                RegGetValueW, RegNotifyChangeKeyValue, RegOpenKeyExW,
+                HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_NOTIFY, KEY_QUERY_VALUE,
+                REG_NOTIFY_CHANGE_LAST_SET, RRF_RT_REG_DWORD, RRF_RT_REG_SZ, RegGetValueW,
+                RegNotifyChangeKeyValue,
             },
             Threading::{CreateEventW, INFINITE, SetEvent, WaitForMultipleObjects},
         },
@@ -38,7 +39,7 @@ use windows::{
 };
 
 use crate::{
-    adapters::win32::OwnedHandle,
+    adapters::win32::{OwnedHandle, RegistryKey},
     ports::{EventSink, SystemAppearance},
     types::{AppError, AppearanceCaps, PortError, PortResult, Transparency},
 };
@@ -156,10 +157,12 @@ impl Watcher {
 
 /// The watcher loop; reports whether it started on `ready`, then runs until `stop` is signalled.
 fn watch(stop: &OwnedEvent, sink: &SinkSlot, ready: &mpsc::Sender<PortResult<()>>) {
-    let setup = OwnedKey::open(HKEY_CURRENT_USER, PERSONALIZE).and_then(|key| {
-        let change = OwnedEvent::new()?;
-        Ok((key, change))
-    });
+    let setup = RegistryKey::open(HKEY_CURRENT_USER, PERSONALIZE, KEY_NOTIFY | KEY_QUERY_VALUE)
+        .and_then(|key| key.ok_or_else(|| internal(format!("{PERSONALIZE} does not exist"))))
+        .and_then(|key| {
+            let change = OwnedEvent::new()?;
+            Ok((key, change))
+        });
     let (key, change) = match setup {
         Ok(parts) => parts,
         Err(error) => {
@@ -173,7 +176,7 @@ fn watch(stop: &OwnedEvent, sink: &SinkSlot, ready: &mpsc::Sender<PortResult<()>
         // SAFETY: `key` and `change` are open handles owned by this thread for the whole loop.
         let armed = unsafe {
             RegNotifyChangeKeyValue(
-                key.0,
+                key.raw(),
                 false,
                 REG_NOTIFY_CHANGE_LAST_SET,
                 Some(change.raw()),
@@ -234,37 +237,6 @@ impl OwnedEvent {
     fn signal(&self) -> windows::core::Result<()> {
         // SAFETY: the handle is open for the lifetime of self.
         unsafe { SetEvent(self.0.raw()) }
-    }
-}
-
-/// An owned open registry key, closed on drop.
-struct OwnedKey(HKEY);
-
-impl OwnedKey {
-    fn open(hive: HKEY, subkey: &str) -> PortResult<Self> {
-        let mut key = HKEY::default();
-        // SAFETY: `key` outlives the call and receives the opened handle; the name is a valid HSTRING.
-        let status = unsafe {
-            RegOpenKeyExW(
-                hive,
-                &HSTRING::from(subkey),
-                None,
-                KEY_NOTIFY | KEY_QUERY_VALUE,
-                &raw mut key,
-            )
-        };
-        if status == ERROR_SUCCESS {
-            Ok(Self(key))
-        } else {
-            Err(win32_failure("open", subkey, status))
-        }
-    }
-}
-
-impl Drop for OwnedKey {
-    fn drop(&mut self) {
-        // SAFETY: the key was opened by RegOpenKeyExW and is closed exactly once here.
-        let _ = unsafe { RegCloseKey(self.0) };
     }
 }
 
@@ -392,11 +364,13 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_key_fails_to_open() {
-        let error = OwnedKey::open(HKEY_CURRENT_USER, r"Software\Echo\NoSuchAppearanceKey")
-            .err()
-            .unwrap();
-        assert_eq!(error.error(), &AppError::Internal);
-        assert!(error.detail().is_some_and(|detail| detail.contains("open")));
+    fn a_missing_key_is_reported_as_absent() {
+        let missing = RegistryKey::open(
+            HKEY_CURRENT_USER,
+            r"Software\Echo\NoSuchAppearanceKey",
+            KEY_NOTIFY | KEY_QUERY_VALUE,
+        )
+        .unwrap();
+        assert!(missing.is_none());
     }
 }

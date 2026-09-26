@@ -2,7 +2,8 @@
  * SOURCE OF TRUTH KEYWORDS: session pipeline, session state machine, session actor, transition, effect runner, session toasts, take lifecycle, sole owner of recording state
  * WHAT:  The session of 02 §5: the pure `transition` (transition.rs) and the toasts it raises (notices.rs), and the
  *        actor that owns the state and runs the machine (actor.rs: SessionActor, SessionHandle, SessionConfig),
- *        with its inbox (inbox.rs), the hotkey → input or paste-last routing (hotkey_input.rs), the onboarding
+ *        with its inbox (inbox.rs), the hotkey → input or paste-last routing (hotkey_input.rs), the pill and tray →
+ *        input routing (ui_input.rs), the onboarding
  *        rehearsal (rehearsal.rs), the Arm effect (arm.rs) and the
  *        effect runner (runner.rs); the row writes that end a take (rows.rs, shared with retry). The machine's state, inputs, effects and policy are data in
  *        types/session_machine.rs.
@@ -23,6 +24,7 @@ mod rehearsal;
 pub mod rows;
 mod runner;
 mod transition;
+mod ui_input;
 
 #[cfg(test)]
 mod actor_tests;
@@ -34,8 +36,10 @@ pub use actor::{
 };
 pub use arm::VadBuilder;
 pub use hotkey_input::binds_hotkey;
+pub use inbox::PowerForwarder;
 pub use notices::{
     DEVICE_LOST_TOAST, HOTKEY_UNAVAILABLE_TOAST, MAX_DURATION_TOAST, NOTHING_TO_PASTE_TOAST,
-    PASTE_LAST_FAILED_TOAST, START_FAILED_TOAST, TAKE_FAILED_TOAST, paste_last_toast, stop_toast,
+    PASTE_LAST_FAILED_TOAST, START_FAILED_TOAST, SUSPENDED_TOAST, TAKE_FAILED_TOAST,
+    paste_last_toast, stop_toast,
 };
 pub use transition::transition;

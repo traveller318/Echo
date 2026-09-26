@@ -3,7 +3,7 @@
  * WHAT:  The history command group (02 §4.3): `history_list` (one page of takes, newest first, optionally matching
  *        a full-text search), `history_get` (one take in full), `history_copy` (its text to the clipboard),
  *        `history_delete` (its row and WAV), `history_clear` (every take leaves History, the dashboard numbers
- *        stay) and `history_paste_last` (the newest completed take into the focused app).
+ *        stay) and `history_paste_last` (the newest completed take into the app the user was last in outside Echo).
  * WHY:   The History page reads through these and stays fresh from HistoryChanged / TranscriptSaved, never by
  *        polling (02 §4.4). Handlers are thin: the factory already validated the input schema (search length,
  *        page size, cursor shape) and maps errors, services own the SQL, and pipeline/history.rs owns the rules
@@ -26,8 +26,8 @@ use crate::{
     pipeline::{blocking::run_blocking, history},
     services,
     types::{
-        AppError, DeliveryOutcome, HistoryListInput, Page, PortError, Transcript, TranscriptInput,
-        TranscriptSelector, TranscriptStatus, TranscriptSummary, UnixMs,
+        AppError, DeliveryOutcome, HistoryListInput, Page, PortError, TargetRule, Transcript,
+        TranscriptInput, TranscriptSelector, TranscriptStatus, TranscriptSummary, UnixMs,
     },
 };
 
@@ -81,7 +81,8 @@ echo_command! {
 }
 
 echo_command! {
-    /// Pastes the newest completed take into the focused app again (copies it when pasting is not possible).
+    /// Pastes the newest completed take again into the app last in front outside Echo (copies it when pasting is not
+    /// possible).
     name: history_paste_last,
     output: DeliveryOutcome,
     permission: None,
@@ -158,7 +159,8 @@ pub async fn clear(ctx: &CommandCtx, (): ()) -> Result<(), PortError> {
 
 /// Pastes the newest completed take again.
 pub async fn paste_last(ctx: &CommandCtx, (): ()) -> Result<DeliveryOutcome, PortError> {
-    ctx.session().paste_last().await
+    // The caller is an Echo window, so the text goes to the app the user was in before it.
+    ctx.session().paste_last(TargetRule::LastExternal).await
 }
 
 #[cfg(test)]

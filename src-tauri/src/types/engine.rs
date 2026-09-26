@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: caps structs, AsrCaps, AudioCaps, VadCaps, PolisherCaps, HotkeyCaps, InserterCaps, UpdaterCaps, AppearanceCaps, EngineCaps, EngineSpec
+ * SOURCE OF TRUTH KEYWORDS: caps structs, AsrCaps, AudioCaps, VadCaps, PolisherCaps, HotkeyCaps, InserterCaps, UpdaterCaps, LaunchAtLoginCaps, AppearanceCaps, EngineCaps, EngineSpec
  * WHAT:  The capability struct of every port that declares caps (02 §3.4), plus the vocabulary they use:
  *        Accelerator, Language, LanguageSupport, LatencyClass and EngineKind. EngineCaps / EngineSpec are the
  *        IPC view of a registry engine entry (id, label, model, caps tagged by kind).
@@ -146,6 +146,14 @@ pub struct InserterCaps {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct UpdaterCaps {
     /// Updates can be checked and installed; false hides every update control (02 §11).
+    pub available: bool,
+}
+
+/// Caps of a `LaunchAtLogin` adapter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct LaunchAtLoginCaps {
+    /// Echo can register itself to start at sign-in; false hides the startup settings (a development build, which
+    /// would register an executable that needs the dev server).
     pub available: bool,
 }
 

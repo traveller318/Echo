@@ -1,8 +1,9 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: Win32ForegroundApp, GetForegroundWindow, QueryFullProcessImageNameW, MonitorFromWindow, rcWork, TokenIntegrityLevel, integrity level, UIPI, elevated target
+ * SOURCE OF TRUTH KEYWORDS: Win32ForegroundApp, last_external, GetForegroundWindow, QueryFullProcessImageNameW, MonitorFromWindow, rcWork, TokenIntegrityLevel, integrity level, UIPI, elevated target
  * WHAT:  Win32ForegroundApp: ForegroundApp on the Win32 window manager. Reports the focused top-level window, its
  *        process id and executable name, the work area of the monitor showing it, and whether its process runs at
- *        a higher integrity level than Echo.
+ *        a higher integrity level than Echo; `last_external` reports the same facts for the last app the user was in
+ *        outside Echo and the shell, which its ForegroundTracker (tracker.rs) keeps current.
  * WHY:   The target is captured once when a take starts (05 W3) and all three facts ride with it: the exe name
  *        becomes `transcripts.app_name`, the work area places the pill in physical pixels above the taskbar on
  *        mixed-DPI setups (05 W15; Tauri makes the process per-monitor DPI aware v2, so rcWork is physical), and
@@ -13,8 +14,9 @@
  *        reports success even when UIPI drops it. The executable name is best effort (a protected process may
  *        refuse the query) and is None then. Only PROCESS_QUERY_LIMITED_INFORMATION is requested, the right that
  *        works across integrity levels.
- * WHERE: Built by app/bootstrap into CommandCtx; `current` is called by the session actor on RecordPressed and by
- *        paste-last, through `dyn ForegroundApp`.
+ *        A tracker that cannot start is logged and `last_external` answers None (the text is then copied).
+ * WHERE: Built by app/bootstrap into CommandCtx; `current` / `last_external` are called by the session actor's Arm
+ *        and by paste-last under the take's TargetRule, through `dyn ForegroundApp`.
  */
 
 use std::{ffi::OsString, os::windows::ffi::OsStringExt, path::Path};
@@ -38,6 +40,7 @@ use windows::{
     core::PWSTR,
 };
 
+use super::tracker::ForegroundTracker;
 use crate::{
     adapters::win32::{OwnedHandle, window_handle},
     ports::ForegroundApp,
@@ -52,10 +55,11 @@ const MEDIUM_INTEGRITY: u32 = 0x2000;
 const MAX_IMAGE_PATH: usize = 32_768;
 
 /// The focused window through the Win32 window manager.
-#[derive(Debug)]
 pub struct Win32ForegroundApp {
     /// Echo's own integrity level, read once: it never changes while the process runs.
     own_integrity: u32,
+    /// The last app in front outside Echo and the shell; None when its hook could not start.
+    tracker: Option<ForegroundTracker>,
 }
 
 impl Default for Win32ForegroundApp {
@@ -71,23 +75,27 @@ impl Win32ForegroundApp {
             tracing::warn!(%detail, "Echo's own integrity level is unreadable; assuming medium");
             MEDIUM_INTEGRITY
         });
-        Self { own_integrity }
-    }
-}
-
-impl ForegroundApp for Win32ForegroundApp {
-    fn current(&self) -> PortResult<Option<AppTarget>> {
-        // SAFETY: GetForegroundWindow takes no arguments and returns a null handle when no window has focus.
-        let window = unsafe { GetForegroundWindow() };
-        if window.is_invalid() {
-            return Ok(None);
+        let tracker = ForegroundTracker::start()
+            .inspect_err(|error| {
+                tracing::warn!(
+                    detail = error.detail(),
+                    "the last app in front cannot be followed; tray actions will copy instead of paste"
+                );
+            })
+            .ok();
+        Self {
+            own_integrity,
+            tracker,
         }
+    }
+
+    /// The AppTarget for `window`; None when it closed meanwhile.
+    fn target(&self, window: HWND) -> Option<AppTarget> {
         let mut process_id = 0u32;
         // SAFETY: `process_id` outlives the call and receives the owning process id.
         let thread = unsafe { GetWindowThreadProcessId(window, Some(&raw mut process_id)) };
         if thread == 0 || process_id == 0 {
-            // The window closed between the two calls: nothing has focus any more.
-            return Ok(None);
+            return None;
         }
         let (exe_name, integrity) = match open_process(process_id) {
             Ok(process) => (
@@ -103,13 +111,33 @@ impl ForegroundApp for Win32ForegroundApp {
                 (None, None)
             }
         };
-        Ok(Some(AppTarget {
+        Some(AppTarget {
             window: window_handle(window),
             process_id,
             exe_name,
             work_area: work_area(window),
             elevated: integrity.is_none_or(|level| level > self.own_integrity),
-        }))
+        })
+    }
+}
+
+impl ForegroundApp for Win32ForegroundApp {
+    fn current(&self) -> PortResult<Option<AppTarget>> {
+        // SAFETY: GetForegroundWindow takes no arguments and returns a null handle when no window has focus.
+        let window = unsafe { GetForegroundWindow() };
+        if window.is_invalid() {
+            return Ok(None);
+        }
+        // A window that closed between the two calls means nothing has focus any more.
+        Ok(self.target(window))
+    }
+
+    fn last_external(&self) -> PortResult<Option<AppTarget>> {
+        Ok(self
+            .tracker
+            .as_ref()
+            .and_then(ForegroundTracker::last)
+            .and_then(|window| self.target(window)))
     }
 }
 

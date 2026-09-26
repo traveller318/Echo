@@ -1,9 +1,10 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: session inbox, Message, WorkerReply, Outbox, HotkeyForwarder, TakeEvents, actor mailbox, weak sender
- * WHAT:  The session actor's mailbox: every message it can receive (Message: hotkeys, the pill, rehearsals, queries, paste-last,
- *        lifecycle, panic reports and WorkerReply, the replies of the work its effects started), the Outbox the actor's own tasks and sinks
- *        post through, and the port sinks that forward into it (HotkeyForwarder for the hotkey port, TakeEvents for
- *        one take's capture and ASR events).
+ * SOURCE OF TRUTH KEYWORDS: session inbox, Message, WorkerReply, Outbox, HotkeyForwarder, PowerForwarder, TakeEvents, actor mailbox, weak sender
+ * WHAT:  The session actor's mailbox: every message it can receive (Message: hotkeys, the pill and the tray, rehearsals,
+ *        queries, paste-last, power events, lifecycle, panic reports and WorkerReply, the replies of the work its
+ *        effects started), the Outbox the actor's own tasks and sinks post through, and the port sinks that forward
+ *        into it (HotkeyForwarder for the hotkey port, PowerForwarder for the power port, TakeEvents for one take's
+ *        capture and ASR events).
  * WHY:   All inputs go through one inbox, so the actor handles them one at a time in arrival order and is the only
  *        owner of recording state (02 §5). Ports push from their own threads (a hotkey hook, the capture worker, the
  *        ASR thread) and must never wait (ports/event_sink.rs), so the inbox is an unbounded channel: every input
@@ -26,7 +27,8 @@ use crate::{
     ports::{EventSink, VoiceActivity},
     types::{
         AsrEvent, CaptureEvent, DeliveryOutcome, DeliveryReport, HotkeyEvent, PolishOutcome,
-        PortResult, SessionInput, SessionRehearsal, SessionUiInput, SessionView, TranscriptId,
+        PortResult, PowerEvent, SessionInput, SessionRehearsal, SessionUiInput, SessionView,
+        TargetRule, TranscriptId,
     },
 };
 
@@ -70,17 +72,25 @@ pub(super) type PasteLastReply = oneshot::Sender<PortResult<DeliveryOutcome>>;
 pub(super) enum Message {
     /// A bound hotkey went down or up.
     Hotkey(HotkeyEvent),
-    /// An input from the pill (`session_input`).
+    /// An input from the pill or the tray (`session_input`, app/tray.rs).
     Ui(SessionUiInput),
     /// What the session rehearses from now on (`session_rehearse`, onboarding).
     Rehearse(SessionRehearsal),
     Worker(WorkerReply),
     /// `session_get_state`: the view at this moment.
     View(oneshot::Sender<SessionView>),
-    /// Deliver the newest completed take again (`history_paste_last`; the paste-last hotkey sends no reply).
-    PasteLast(Option<PasteLastReply>),
-    /// The windows exist: listen to hotkeys, bind them, warm the detector and the polish chain.
+    /// Deliver the newest completed take again to the window `target` names (`history_paste_last` and the tray
+    /// answer through `reply`; the paste-last hotkey and the tray send none and a failure toasts).
+    PasteLast {
+        reply: Option<PasteLastReply>,
+        target: TargetRule,
+    },
+    /// The machine or the session around Echo changed (sleep, wake, unlock, explorer restart).
+    Power(PowerEvent),
+    /// The windows exist: listen to hotkeys and bind them.
     Prepare,
+    /// Startup has settled: build the voice detector and ready the polish chain ahead of the first take.
+    Warm,
     /// The app is exiting: finalize every open journal, then answer and stop.
     Shutdown(std::sync::mpsc::Sender<()>),
     /// Code panicked somewhere in the process (the panic hook, through PanicReporter): fail the live take.
@@ -121,6 +131,15 @@ pub(super) struct HotkeyForwarder(pub Outbox);
 impl EventSink<HotkeyEvent> for HotkeyForwarder {
     fn emit(&self, event: HotkeyEvent) {
         self.0.post(Message::Hotkey(event));
+    }
+}
+
+/// The PowerEvents sink: every sleep, wake and session change becomes an inbox message.
+pub struct PowerForwarder(pub(super) Outbox);
+
+impl EventSink<PowerEvent> for PowerForwarder {
+    fn emit(&self, event: PowerEvent) {
+        self.0.post(Message::Power(event));
     }
 }
 

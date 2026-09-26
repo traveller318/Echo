@@ -13,14 +13,22 @@
  * WHERE: routes/models (every entry); onboarding's model step (step 24). Exported through components/global.
  */
 import { useId, type ReactNode } from "react";
-import type { Accelerator, ModelEntry, ModelProgress } from "@/bindings";
+import type { ModelEntry, ModelProgress } from "@/bindings";
 import { Badge } from "@/components/ui";
 import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/cn";
 import { formatBytes, NUMERIC_CLASS } from "@/lib/format";
+import { FactList, type Fact } from "../fact-list";
 import { GlassSurface } from "../glass-surface";
 import { ProgressBar } from "../progress-bar";
-import { engineKindLabel, isDeterminate, languagesSummary, modelStatusLook, transferSummary } from "./model-look";
+import {
+  acceleratorLabel,
+  engineKindLabel,
+  isDeterminate,
+  languagesSummary,
+  modelStatusLook,
+  transferSummary,
+} from "./model-look";
 
 export interface ModelCardProps {
   readonly entry: ModelEntry;
@@ -31,11 +39,6 @@ export interface ModelCardProps {
   readonly className?: string;
 }
 
-const ACCELERATOR_LABEL: Readonly<Record<Accelerator, string>> = {
-  cpu: "Processor (CPU)",
-  gpu: "Graphics card (GPU)",
-};
-
 export function ModelCard({ entry, transfer, actions, className }: ModelCardProps) {
   const headingId = useId();
   const look = modelStatusLook(entry, transfer);
@@ -45,6 +48,15 @@ export function ModelCard({ entry, transfer, actions, className }: ModelCardProp
   const credits = [entry.model, ...entry.requires].flatMap((manifest) =>
     manifest.attribution === null ? [] : [manifest.attribution],
   );
+  const facts: Fact[] = [
+    { label: "Size", value: formatBytes(entry.download_bytes), numeric: true },
+    { label: "License", value: entry.model.license },
+    ...(languages === null ? [] : [{ label: "Languages", value: languages }]),
+    ...(runsOn === null ? [] : [{ label: "Runs on", value: acceleratorLabel(runsOn) }]),
+    ...(entry.requires.length === 0
+      ? []
+      : [{ label: "Includes", value: entry.requires.map((required) => required.label).join(", ") }]),
+  ];
   const Icon = look.icon;
   return (
     <GlassSurface asChild className={cn("flex flex-col gap-4 p-5", className)}>
@@ -61,30 +73,7 @@ export function ModelCard({ entry, transfer, actions, className }: ModelCardProp
             {look.label}
           </Badge>
         </header>
-        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-callout">
-          <dt className="text-fg-secondary">Size</dt>
-          <dd className={cn("text-fg", NUMERIC_CLASS)}>{formatBytes(entry.download_bytes)}</dd>
-          <dt className="text-fg-secondary">License</dt>
-          <dd className="text-fg">{entry.model.license}</dd>
-          {languages === null ? null : (
-            <>
-              <dt className="text-fg-secondary">Languages</dt>
-              <dd className="text-fg">{languages}</dd>
-            </>
-          )}
-          {runsOn === null ? null : (
-            <>
-              <dt className="text-fg-secondary">Runs on</dt>
-              <dd className="text-fg">{ACCELERATOR_LABEL[runsOn]}</dd>
-            </>
-          )}
-          {entry.requires.length === 0 ? null : (
-            <>
-              <dt className="text-fg-secondary">Includes</dt>
-              <dd className="text-fg">{entry.requires.map((required) => required.label).join(", ")}</dd>
-            </>
-          )}
-        </dl>
+        <FactList facts={facts} />
         {credits.map((credit) => (
           <p key={credit} className="text-caption text-fg-secondary">
             {credit}

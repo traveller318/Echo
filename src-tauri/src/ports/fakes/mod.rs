@@ -30,8 +30,10 @@ mod notifier;
 mod overlay;
 mod polish;
 mod power;
+mod process_stats;
 mod scheduler;
 mod sound;
+mod startup;
 mod updater;
 mod vad;
 
@@ -63,8 +65,10 @@ pub use notifier::FakeNotifier;
 pub use overlay::{FakeOverlayWindow, OverlayCall};
 pub use polish::{FakePolish, FakeTextPolisher};
 pub use power::FakePowerEvents;
+pub use process_stats::FakeProcessStats;
 pub use scheduler::FakeWorkerScheduler;
 pub use sound::FakeSoundPlayer;
+pub use startup::{FakeLaunchAtLogin, LaunchAtLoginCall};
 pub use updater::FakeUpdater;
 pub use vad::FakeVoiceActivity;
 

@@ -18,9 +18,10 @@ use crate::{
     registry::{engines, engines::tests::SAMPLE_ENGINES, hotkeys},
     types::{
         Accelerator, AdapterCaps, AppError, CapsRequirement, DeliveryPolicy, EnumOption,
-        EnumOptions, HotkeyCaps, HotkeyIssue, Language, OptionSource, RecordMode, ResourceKind,
-        RetentionPolicy, SessionPolicy, SettingKey, SettingKind, SettingValue, SettingsSnapshot,
-        StaticList, StaticStr, TextPair, ThemePreference, UpdaterCaps,
+        EnumOptions, HotkeyCaps, HotkeyIssue, Language, LaunchAtLoginCaps, OptionSource,
+        RecordMode, ResourceKind, RetentionPolicy, SessionPolicy, SettingKey, SettingKind,
+        SettingValue, SettingsSnapshot, StaticList, StaticStr, TextPair, ThemePreference,
+        UpdaterCaps,
     },
 };
 
@@ -114,6 +115,7 @@ fn every_documented_setting_is_registered() {
             "general.sound_cues",
             "general.theme",
             "general.onboarded",
+            "general.debug_log",
             "hotkeys.record",
             "hotkeys.mode",
             "hotkeys.paste_last",
@@ -488,15 +490,17 @@ const SHIPPED: AdapterCaps = AdapterCaps {
         supports_modifier_only: true,
     },
     updater: UpdaterCaps { available: false },
+    launch_at_login: LaunchAtLoginCaps { available: true },
 };
 
-/// Adapters without key-up but with an update source.
+/// Adapters without key-up but with an update source, in a development build (no start at sign-in).
 const PRESS_ONLY_UPDATABLE: AdapterCaps = AdapterCaps {
     hotkeys: HotkeyCaps {
         supports_release: false,
         supports_modifier_only: false,
     },
     updater: UpdaterCaps { available: true },
+    launch_at_login: LaunchAtLoginCaps { available: false },
 };
 
 #[test]
@@ -538,6 +542,15 @@ fn requirements_follow_the_selected_engine_and_the_adapters() {
         &sample,
         &PRESS_ONLY_UPDATABLE
     ));
+    assert!(holds(CapsRequirement::LaunchAtLogin, &sample, &SHIPPED));
+    assert!(
+        !holds(
+            CapsRequirement::LaunchAtLogin,
+            &sample,
+            &PRESS_ONLY_UPDATABLE
+        ),
+        "a development build offers no start at sign-in"
+    );
 
     let unknown = selecting("not-registered");
     assert!(!holds(CapsRequirement::GpuAccelerator, &unknown, &SHIPPED));
@@ -583,6 +596,7 @@ fn availability_filters_options_by_caps_and_resolves_runtime_sources() {
             CapsRequirement::GpuAccelerator,
             CapsRequirement::MultipleLanguages,
             CapsRequirement::HotkeyRelease,
+            CapsRequirement::LaunchAtLogin,
         ]
     );
     assert_eq!(offered(&shipped, &keys::HOTKEY_MODE), ["toggle", "hold"]);

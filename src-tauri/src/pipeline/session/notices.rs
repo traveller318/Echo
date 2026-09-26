@@ -1,6 +1,7 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: session toasts, DEVICE_LOST_TOAST, MAX_DURATION_TOAST, TAKE_FAILED_TOAST, START_FAILED_TOAST, HOTKEY_UNAVAILABLE_TOAST, NOTHING_TO_PASTE_TOAST, PASTE_LAST_FAILED_TOAST, paste_last_toast, stop_toast, failure toast
- * WHAT:  The native toasts a take can raise: the microphone went away (05 W12), the longest take was reached, the
+ * SOURCE OF TRUTH KEYWORDS: session toasts, DEVICE_LOST_TOAST, MAX_DURATION_TOAST, SUSPENDED_TOAST, TAKE_FAILED_TOAST, START_FAILED_TOAST, HOTKEY_UNAVAILABLE_TOAST, NOTHING_TO_PASTE_TOAST, PASTE_LAST_FAILED_TOAST, paste_last_toast, stop_toast, failure toast
+ * WHAT:  The native toasts a take can raise: the microphone went away (05 W12), the longest take was reached, the PC
+ *        went to sleep mid-take, the
  *        take failed after recording, it could not start, or the dictation hotkey could not be bound; and the ones
  *        the paste-last hotkey raises when nothing could be pasted (no finished take yet, or a failure).
  * WHY:   The pill disappears after a few seconds and may be on another monitor, so a stop the user did not ask for
@@ -27,6 +28,13 @@ pub const MAX_DURATION_TOAST: Toast = Toast {
     kind: ToastKind::Info,
     title: StaticStr::new("Recording limit reached"),
     body: StaticStr::new("Echo stopped recording and is transcribing what you said."),
+};
+
+/// The PC went to sleep while recording; what was said is still delivered (seen once the PC is awake).
+pub const SUSPENDED_TOAST: Toast = Toast {
+    kind: ToastKind::Info,
+    title: StaticStr::new("Recording stopped for sleep"),
+    body: StaticStr::new("Your PC went to sleep, so Echo stopped and kept what you said."),
 };
 
 /// The take failed after audio was captured; the audio is kept for a retry.
@@ -82,6 +90,7 @@ pub fn stop_toast(cause: StopCause) -> Option<Toast> {
     match cause {
         StopCause::DeviceLost => Some(DEVICE_LOST_TOAST),
         StopCause::MaxDuration => Some(MAX_DURATION_TOAST),
+        StopCause::Suspend => Some(SUSPENDED_TOAST),
         StopCause::Hotkey | StopCause::Released | StopCause::Ui => None,
     }
 }
@@ -94,6 +103,7 @@ mod tests {
     fn only_unrequested_stops_toast() {
         assert_eq!(stop_toast(StopCause::DeviceLost), Some(DEVICE_LOST_TOAST));
         assert_eq!(stop_toast(StopCause::MaxDuration), Some(MAX_DURATION_TOAST));
+        assert_eq!(stop_toast(StopCause::Suspend), Some(SUSPENDED_TOAST));
         for cause in [StopCause::Hotkey, StopCause::Released, StopCause::Ui] {
             assert_eq!(stop_toast(cause), None);
         }

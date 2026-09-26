@@ -14,6 +14,13 @@
  *          mode only the release stops; repeated presses while held are ignored.
  *        - A stop that arrives while the microphone is still opening is remembered and applied the moment it is
  *          open, so a quick tap is a (probably empty) take instead of a take that never stops.
+ *        - A Toggle (the tray's Start / Stop dictation) starts a take like a record press when none is running,
+ *          under the policy it carries (SessionPolicy::from_ui: toggle mode, the last external app as target), and
+ *          stops the take like the pill's Stop while it is arming or recording; during the Esc countdown it means
+ *          nothing, so the countdown's undo stays the one way back.
+ *        - The machine going to sleep (Suspend) finalizes a recording take (what was said is delivered, with a
+ *          toast), is remembered while it is arming, and carries out a running Esc countdown; later phases finish
+ *          on their own.
  *        - A record press that turns out to be another shortcut (RecordInterrupted: Ctrl+Alt, then T) drops its
  *          take silently, row and audio included, while it is arming or has recorded under `interrupt_grace_ms`;
  *          later, in hold mode, it is a slip while dictating and stops the take like a release; in toggle mode the
@@ -223,7 +230,8 @@ impl Step {
     fn idle(&mut self, input: SessionInput) -> SessionPhase {
         let name = input.name();
         match input {
-            SessionInput::RecordPressed { next_take, policy } => {
+            SessionInput::RecordPressed { next_take, policy }
+            | SessionInput::Toggle { next_take, policy } => {
                 if self.debounced(&policy) {
                     return self.reject(SessionPhase::Idle, name, IgnoreReason::Debounced);
                 }
@@ -237,7 +245,8 @@ impl Step {
     fn settled(&mut self, phase: SessionPhase, input: SessionInput) -> SessionPhase {
         let name = input.name();
         match input {
-            SessionInput::RecordPressed { next_take, policy } => {
+            SessionInput::RecordPressed { next_take, policy }
+            | SessionInput::Toggle { next_take, policy } => {
                 if self.debounced(&policy) {
                     return self.reject(phase, name, IgnoreReason::Debounced);
                 }
@@ -265,7 +274,10 @@ impl Step {
             interrupted: false,
         });
         self.publish(&phase);
-        self.push(SessionEffect::Arm { take: id });
+        self.push(SessionEffect::Arm {
+            take: id,
+            target: policy.target,
+        });
         phase
     }
 
@@ -330,8 +342,12 @@ impl Step {
                 arming.interrupted = true;
                 SessionPhase::Arming(arming)
             }
-            SessionInput::Stop => {
+            SessionInput::Stop | SessionInput::Toggle { .. } => {
                 arming.stop.get_or_insert(StopCause::Ui);
+                SessionPhase::Arming(arming)
+            }
+            SessionInput::Suspend => {
+                arming.stop.get_or_insert(StopCause::Suspend);
                 SessionPhase::Arming(arming)
             }
             SessionInput::DeviceLost { .. } => {
@@ -402,7 +418,10 @@ impl Step {
                 self.stop_recording(recording, StopCause::Released)
             }
             SessionInput::RecordInterrupted => self.interrupted(recording, name),
-            SessionInput::Stop => self.stop_recording(recording, StopCause::Ui),
+            SessionInput::Stop | SessionInput::Toggle { .. } => {
+                self.stop_recording(recording, StopCause::Ui)
+            }
+            SessionInput::Suspend => self.stop_recording(recording, StopCause::Suspend),
             SessionInput::MaxDurationReached { .. } => {
                 self.stop_recording(recording, StopCause::MaxDuration)
             }
@@ -510,6 +529,13 @@ impl Step {
         match input {
             SessionInput::Esc => self.undo(pending),
             SessionInput::CountdownElapsed { .. } => self.discard(pending),
+            // Sleep ends the countdown the way running out does: the user asked for the take to go.
+            SessionInput::Suspend => {
+                self.push(SessionEffect::CancelTimer {
+                    timer: pending.timer,
+                });
+                self.discard(pending)
+            }
             SessionInput::RecordReleased | SessionInput::RecordInterrupted
                 if mode == RecordMode::Hold =>
             {

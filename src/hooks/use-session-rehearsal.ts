@@ -4,34 +4,23 @@
  *        (`hotkey`: presses are reported as HotkeyRehearsed, `take`: a take's text stays in Echo) and turns it off
  *        when the component unmounts or asks for another one.
  * WHY:   The rehearsal lives in the session actor (pipeline/session/rehearsal.rs); a step only declares the one it
- *        needs. Every call goes through one ordered queue, because Tauri may run two quick invokes concurrently and a
- *        StrictMode remount (on, off, on) must never end with "off" landing last. A failed call is logged, never
- *        thrown: Rust applies a rehearsal only while an Echo window has focus, so a lost "off" cannot break
- *        dictation elsewhere.
+ *        needs. Every call goes through one ordered queue (lib/command-queue.ts), because Tauri may run two quick
+ *        invokes concurrently and a StrictMode remount (on, off, on) must never end with "off" landing last. A failed
+ *        call is logged, never thrown: Rust applies a rehearsal only while an Echo window has focus, so a lost "off"
+ *        cannot break dictation elsewhere.
  * WHERE: routes/onboarding (the hotkey and practice steps).
  */
 import { useEffect } from "react";
 import { commands, type SessionRehearsal } from "@/bindings";
-import { runCommand } from "@/lib/command";
+import { createCommandQueue } from "@/lib/command-queue";
 
-let pending: Promise<void> = Promise.resolve();
-
-function send(rehearsal: SessionRehearsal): void {
-  pending = pending
-    .then(() => runCommand(() => commands.sessionRehearse(rehearsal)))
-    .then(
-      () => undefined,
-      (error: unknown) => {
-        console.error("Echo could not set the session rehearsal", error);
-      },
-    );
-}
+const send = createCommandQueue("set the session rehearsal");
 
 export function useSessionRehearsal(rehearsal: SessionRehearsal): void {
   useEffect(() => {
-    send(rehearsal);
+    send(() => commands.sessionRehearse(rehearsal));
     return () => {
-      send("off");
+      send(() => commands.sessionRehearse("off"));
     };
   }, [rehearsal]);
 }

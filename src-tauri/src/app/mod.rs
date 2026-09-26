@@ -13,12 +13,15 @@ mod events;
 mod logging;
 mod panics;
 mod plugins;
+mod tray;
 mod windows;
 
 use std::process::ExitCode;
 
+use crate::pipeline::launch;
+
 /**
- * SOURCE OF TRUTH KEYWORDS: run, app entry, exit code, startup failure, invoke handler, mount events, run_return, RunEvent Ready, RunEvent Exit
+ * SOURCE OF TRUTH KEYWORDS: run, app entry, exit code, startup failure, invoke handler, mount events, run_return, RunEvent Ready, RunEvent Exit, launch origin, tray on ready
  * WHAT:  Builds the Tauri app, mounts the event catalog, runs the bootstrap sequence, then runs the event loop
  *        until exit; returns the loop's exit code, or failure if Echo could not start.
  * WHY:   Returns an ExitCode instead of panicking (denied) or calling process::exit, and uses `run_return`, so
@@ -27,9 +30,12 @@ use std::process::ExitCode;
  *        before the event loop creates the windows, so no command or emit can run without them. A failure before
  *        logging exists goes to stderr; after that bootstrap has also written it to the log.
  *        Native window appearance (Mica, theme) is applied on RunEvent::Ready, the first moment the config
- *        windows exist, then the startup recovery toast is shown (once), and the speech engine starts loading and
- *        the session binds its hotkeys right after, so the UI is never held up by them; on RunEvent::Exit the
- *        session finalizes an open recording before the process ends (02 §5); window events (close → hide) go to app/windows.rs.
+ *        windows exist; then the tray icon is built, the main window is shown unless Echo started at sign-in in the
+ *        tray (always shown when the tray could not be built, so Echo is never unreachable), the startup recovery
+ *        toast is shown (once), the session binds its hotkeys, and the speech engine and warm-up are scheduled a
+ *        moment later (05 W19), so the UI is never held up by them; on RunEvent::Exit the session finalizes an
+ *        open recording before the process ends (02 §5); window events (close → hide) go to app/windows.rs. How
+ *        Echo was started (the `--minimized` sign-in argument) is read once from the command line.
  * WHERE: Called once by main.rs.
  */
 pub fn run() -> ExitCode {
@@ -53,14 +59,21 @@ pub fn run() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    let origin = launch::origin_from_args(std::env::args());
     let code = app.run_return(move |handle, event| match event {
         tauri::RunEvent::Ready => {
             windows::setup(handle);
+            let tray_ready = tray::create(handle)
+                .inspect_err(|error| {
+                    tracing::error!(%error, "the tray icon could not be created; the window stays open");
+                })
+                .is_ok();
+            windows::show_at_launch(handle, origin, tray_ready);
             if let Some(report) = recovered.take() {
                 bootstrap::announce_recovery(handle, report);
             }
-            bootstrap::start_speech_engine(handle);
             bootstrap::prepare_session(handle);
+            bootstrap::schedule_warm_up(handle);
         }
         tauri::RunEvent::Exit => bootstrap::stop_session(handle),
         _ => {}
@@ -132,7 +145,10 @@ mod tests {
             main.transparent,
             "Mica shows only through a transparent window (04 §2)"
         );
-        assert!(main.visible);
+        assert!(
+            !main.visible,
+            "app/windows.rs shows it at launch unless Echo starts in the tray"
+        );
     }
 
     #[test]

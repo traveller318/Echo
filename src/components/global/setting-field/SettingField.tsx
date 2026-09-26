@@ -52,6 +52,8 @@ export interface SettingFieldProps {
   readonly pending?: boolean;
   /** The option list was opened (a Device list reads the microphones again). */
   readonly onOptionsOpen?: () => void;
+  /** A Hotkey control started (true) or stopped (false) capturing a combination. */
+  readonly onCaptureChange?: (capturing: boolean) => void;
   readonly className?: string;
 }
 
@@ -70,6 +72,7 @@ interface ControlBase {
   readonly invalid: boolean;
   readonly onCommit: (value: SettingValue) => void;
   readonly onOptionsOpen?: () => void;
+  readonly onCaptureChange?: (capturing: boolean) => void;
 }
 
 /** The kind-narrowed props for a control of kind `name`, falling back to the spec default on a kind mismatch. */
@@ -148,6 +151,7 @@ export function SettingField({
   error = null,
   pending = false,
   onOptionsOpen,
+  onCaptureChange,
   className,
 }: SettingFieldProps) {
   const id = useId();
@@ -161,6 +165,7 @@ export function SettingField({
     invalid,
     onCommit,
     onOptionsOpen,
+    onCaptureChange,
   });
   const canReset = onReset !== undefined && !sameValue(value, spec.default);
 

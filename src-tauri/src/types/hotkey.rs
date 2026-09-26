@@ -1,9 +1,10 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: Shortcut, HotkeyEvent, KeyState, HotkeySpec, HotkeyScope, HotkeyAction, HotkeyBindFailure, RecordMode, accelerator string, hold-to-talk
+ * SOURCE OF TRUTH KEYWORDS: Shortcut, HotkeyEvent, KeyState, HotkeySpec, HotkeyScope, HotkeyAction, HotkeyBindFailure, RecordMode, HotkeyStatus, HotkeyPauseReason, accelerator string, hold-to-talk
  * WHAT:  Shortcut (a key combination in accelerator syntax, e.g. `Ctrl+Alt+Space`), HotkeyEvent (a bound
  *        hotkey was pressed or released), HotkeySpec / HotkeyScope / HotkeyAction (a registry hotkey entry, when
  *        it is registered and what pressing it does), HotkeyBindFailure (a hotkey that could not be bound, e.g.
- *        another app owns it) and RecordMode (whether the record hotkey toggles a take or holds it).
+ *        another app owns it), RecordMode (whether the record hotkey toggles a take or holds it), and the pause state
+ *        of the always-on hotkeys (HotkeyPauseReason, HotkeyStatus, the `hotkeys_pause` / `hotkeys_capture` inputs).
  * WHY:   The combination stays text end to end (setting value, registry default, UI input) and only the hotkey
  *        adapter parses it, so a different hotkey backend (a `WH_KEYBOARD_LL` hook, 05 W9) can accept a different
  *        syntax without touching the core; an unparsable combination is `AppError::Hotkey { reason: invalid }`.
@@ -128,6 +129,63 @@ pub struct HotkeyBindFailure {
     pub shortcut: Shortcut,
     /// `Hotkey { conflict | invalid }` from the adapter, with its log-only detail.
     pub error: PortError,
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: HotkeyPauseReason, pause hotkeys, capture lease, tray pause, hotkey input capture
+ * WHAT:  Why Echo's always-on hotkeys are switched off: the user paused them (the tray, Settings), or a hotkey
+ *        field is capturing a new combination.
+ * WHY:   Two independent holders can pause at once, and the hotkeys come back only when neither does, so a capture
+ *        ending never resumes hotkeys the user paused. The capture reason is also why a hotkey field can read the
+ *        chord Echo itself is bound to (05 decision log, step 25).
+ * WHERE: pipeline/hotkeys.rs HotkeyGate (`pause`, `resume`); the tray (User) and `hotkeys_capture` (Capture).
+ */
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum HotkeyPauseReason {
+    User,
+    Capture,
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: HotkeyStatus, hotkeys paused, hotkeys capturing, hotkeys_status, HotkeyStatusChanged payload
+ * WHAT:  Whether Echo's always-on hotkeys are off because the user paused them, and whether a hotkey field is
+ *        capturing a combination right now.
+ * WHY:   The tray's "Pause hotkeys" check, the Settings notice and a second window all show the same state, which
+ *        only the hotkey gate holds; they read it once and follow HotkeyStatusChanged, never polling.
+ * WHERE: Built by pipeline/hotkeys.rs HotkeyGate::status; returned by `hotkeys_status`, sent as HotkeyStatusChanged,
+ *        read by app/tray.rs and src/hooks/use-hotkey-status.ts.
+ */
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+pub struct HotkeyStatus {
+    /// The user paused the hotkeys (tray or Settings); they stay off until resumed.
+    pub paused: bool,
+    /// A hotkey field is capturing a combination, so the hotkeys are off meanwhile.
+    pub capturing: bool,
+}
+
+impl HotkeyStatus {
+    /// The always-on hotkeys are off for any reason.
+    pub const fn is_off(self) -> bool {
+        self.paused || self.capturing
+    }
+}
+
+/// `hotkeys_pause` input: switch the user's pause on or off.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type, garde::Validate,
+)]
+pub struct HotkeysPauseInput {
+    #[garde(skip)]
+    pub paused: bool,
+}
+
+/// `hotkeys_capture` input: a hotkey field started (true) or stopped (false) capturing a combination.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type, garde::Validate,
+)]
+pub struct HotkeyCaptureInput {
+    #[garde(skip)]
+    pub active: bool,
 }
 
 #[cfg(test)]

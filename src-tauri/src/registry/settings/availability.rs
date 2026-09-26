@@ -5,7 +5,8 @@
  *        asks for something the running adapters cannot do (`check_available`).
  * WHY:   A setting or option is shown only when the active adapters declare the capability it needs (02 §3.4:
  *        the language picker only with more than one language, the accelerator only with a GPU, hold mode only
- *        with key-up, update controls only with an update source). The rule is evaluated here, from the selected
+ *        with key-up, update controls only with an update source, the startup settings only where Echo can register
+ *        itself to start at sign-in). The rule is evaluated here, from the selected
  *        engine's registry caps and the AdapterCaps the command layer passes in, never from an adapter name, and
  *        the UI and the write check read the same answer. Everything branches on caps; the one `match` over
  *        CapsRequirement lives in the registry, where feature branches belong (root CLAUDE.md §3).
@@ -71,6 +72,7 @@ pub(super) fn requirement_holds_in(
         }
         CapsRequirement::HotkeyRelease => adapters.hotkeys.supports_release,
         CapsRequirement::UpdaterAvailable => adapters.updater.available,
+        CapsRequirement::LaunchAtLogin => adapters.launch_at_login.available,
     }
 }
 

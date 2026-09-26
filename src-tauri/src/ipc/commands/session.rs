@@ -2,7 +2,7 @@
  * SOURCE OF TRUTH KEYWORDS: session commands, session_get_state, session_input, session_retry, session_rehearse, SessionView read, pill stop, retry take, rehearsal
  * WHAT:  The session command group (02 §4.3): `session_get_state` returns the SessionView of the current take;
  *        `session_input` sends a UI input (`stop`, the pill's stop button; `cancel`, its ✕ and
- *        undo buttons, which act as Esc) to the session actor;
+ *        undo buttons, which act as Esc; `toggle`, start or stop dictating from a button) to the session actor;
  *        `session_retry` re-runs a stored take from its saved audio and returns its updated History row;
  *        `session_rehearse` sets what the session rehearses while an Echo window has focus (onboarding).
  * WHY:   The UI reads the session once through this command and then stays fresh from SessionStateChanged (02 §4.4);
@@ -39,7 +39,8 @@ echo_command! {
 }
 
 echo_command! {
-    /// Sends a pill input (`stop`, or `cancel` which acts as Esc) to the current take.
+    /// Sends a UI input to the session: `stop`, `cancel` (acts as Esc), or `toggle` (starts a take into the app last in
+    /// front outside Echo, or stops the one recording).
     name: session_input,
     input: SessionUiInput,
     output: (),

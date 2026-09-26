@@ -29,7 +29,9 @@ use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use super::{AppError, HotkeyCaps, SettingKey, StaticList, StaticStr, UpdaterCaps};
+use super::{
+    AppError, HotkeyCaps, LaunchAtLoginCaps, SettingKey, StaticList, StaticStr, UpdaterCaps,
+};
 
 /// The Settings page group a setting belongs to; equals the prefix of its key (`general.theme` → `general`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
@@ -92,15 +94,18 @@ pub enum CapsRequirement {
     HotkeyRelease,
     /// The updater adapter reports `UpdaterCaps.available`.
     UpdaterAvailable,
+    /// The start-at-sign-in adapter reports `LaunchAtLoginCaps.available` (not in a development build).
+    LaunchAtLogin,
 }
 
 impl CapsRequirement {
     /// Every requirement, so the registry can report which of them hold right now.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::GpuAccelerator,
         Self::MultipleLanguages,
         Self::HotkeyRelease,
         Self::UpdaterAvailable,
+        Self::LaunchAtLogin,
     ];
 }
 
@@ -108,8 +113,8 @@ impl CapsRequirement {
  * SOURCE OF TRUTH KEYWORDS: AdapterCaps, settings caps input, hotkey caps, updater caps, caps requirement evaluation
  * WHAT:  The caps of the running adapters that decide whether a CapsRequirement holds, besides the ASR engine's,
  *        which the registry reads from the engine the settings select.
- * WHY:   Whether hold-to-talk or update controls are offered depends on what the constructed hotkey and updater
- *        adapters declare (02 §3.4), which only the command layer holds (as ports); the registry evaluates the
+ * WHY:   Whether hold-to-talk, update controls or the startup settings are offered depends on what the constructed
+ *        hotkey, updater and start-at-sign-in adapters declare (02 §3.4), which only the command layer holds (as ports); the registry evaluates the
  *        requirements from this plain snapshot, so it never needs a port object and tests pass any combination.
  * WHERE: Built by ipc/commands/settings.rs from `CommandCtx` ports; read by registry::settings availability checks.
  */
@@ -117,6 +122,7 @@ impl CapsRequirement {
 pub struct AdapterCaps {
     pub hotkeys: HotkeyCaps,
     pub updater: UpdaterCaps,
+    pub launch_at_login: LaunchAtLoginCaps,
 }
 
 /// The choices an `Enum` setting offers right now.
@@ -588,6 +594,19 @@ impl SharedSettings {
         *RwLockUpgradableReadGuard::upgrade(slot) = Arc::clone(&revised);
         Ok(revised)
     }
+
+    /**
+     * SOURCE OF TRUTH KEYWORDS: SharedSettings::with_writes_held, act on settings without a racing write, serialized settings read
+     * WHAT:  Runs `act` with the snapshot in effect while no `update` can run, and returns its result.
+     * WHY:   Applying settings to the outside world (binding the hotkeys a snapshot names) must not interleave with a
+     *        write that is between its own apply and its publish, or the older value would win. Holding the same
+     *        upgradable lock as `update` serializes the two; plain readers are never blocked.
+     * WHERE: pipeline/hotkey_gate.rs (binding and resuming the hotkeys).
+     */
+    pub fn with_writes_held<T>(&self, act: impl FnOnce(&SettingsSnapshot) -> T) -> T {
+        let slot = self.slot.upgradable_read();
+        act(&slot)
+    }
 }
 
 #[cfg(test)]
@@ -901,6 +920,11 @@ mod tests {
             "clones share one slot"
         );
         assert_eq!(SharedSettings::default().current().iter().count(), 0);
+        assert_eq!(
+            shared.with_writes_held(|held| held.bool(&flag)),
+            Some(true),
+            "acting under the write lock sees the snapshot in effect"
+        );
     }
 
     #[test]

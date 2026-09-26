@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: bootstrap, composition root, startup sequence, ASR worker, session actor, pill presenter, event fan-out, start_speech_engine, prepare_session, stop_session, command context, startup recovery, retention sweeper, panic hook, sound player, audio device watch, day watch, model manager, HTTP client
+ * SOURCE OF TRUTH KEYWORDS: bootstrap, composition root, startup sequence, ASR worker, session actor, pill presenter, event fan-out, start_speech_engine, prepare_session, schedule_warm_up, stop_session, command context, startup recovery, retention sweeper, panic hook, sound player, audio device watch, day watch, model manager, HTTP client, hotkey gate, power events, launch at startup, process stats
  * WHAT:  `start`: the startup sequence that runs before any window exists: resolve AppPaths from the Tauri path
  *        API, start local logging, open and migrate the database, settle the takes a crash left unfinished
  *        (pipeline/recovery.rs), resolve the stored settings over the registry defaults, start the appearance
@@ -8,17 +8,21 @@
  *        GPU list and the database), build the allowlisted HTTP client
  *        (network gate from the registry permission) and the model manager over HttpModelStore and the dialog
  *        plugin's folder picker, start the sound
- *        player, spawn the (idle) session actor over the same ports (with the sound cues) and point the
- *        panic hook at it (app/panics.rs), spawn the retention sweeper (first sweep now, then daily) and the
+ *        player, build the hotkey gate, spawn the (idle) session actor over the same ports (with the sound cues and
+ *        the gate) and point the panic hook at it (app/panics.rs), start the power watch (sleep, wake, unlock,
+ *        explorer restart → the session), bring the start-at-sign-in entry in line with the setting
+ *        (pipeline/launch.rs; a development build gets the disabled adapter), spawn the retention sweeper (first sweep now, then daily) and the
  *        dashboard's day watch (MetricsChanged when the local day changes), start the
  *        pill presenter over the overlay adapter, and manage the CommandCtx (settings;
  *        consent, appearance, launcher, microphone, thread-priority, hotkey, foreground-window, toast and
  *        main-window adapters; the ASR worker; the Delivery over the clipboard, paste and toast adapters; the
- *        session handle; the pill presenter; the retention handle; the disabled updater (02 §11); AppPaths,
- *        database, event sink) plus the overlay
+ *        session handle; the hotkey gate; the pill presenter; the retention handle; the disabled updater (02 §11);
+ *        the start-at-sign-in and process-stats adapters; the version; AppPaths, database, event sink) plus the
+ *        overlay
  *        adapter itself, which app/windows.rs attaches to the pill window once it exists; returns the recovery report.
- *        `announce_recovery`, `start_speech_engine` and `prepare_session`: once the windows exist, toast what recovery
- *        found, load and warm the selected speech engine in the background and let the session bind its hotkeys.
+ *        `announce_recovery`, `prepare_session` and `schedule_warm_up`: once the windows exist, toast what recovery
+ *        found, let the session bind its hotkeys, and STARTUP_IDLE_DELAY later load and warm the selected speech
+ *        engine, the voice detector and the polish chain in the background (05 W19).
  *        `stop_session`: at exit, finalize an open recording.
  * WHY:   The composition root is the only place that names a concrete adapter or resolves a path (02 §3.2,
  *        05 W23); every other layer receives ports, AppPaths and the Db handle. Logging starts first so every
@@ -41,7 +45,7 @@
  *        are in front (05 W35). Recovery runs right after the database opens, before the session, the sweeper or
  *        any command exists, so no take can be live while stuck rows are settled; a recovery failure is logged and
  *        startup goes on (the next start retries), since the takes' audio stays on disk either way (02 §7.3).
- * WHERE: `start` is called once by app::run before the event loop, `start_speech_engine` and `prepare_session` on
+ * WHERE: `start` is called once by app::run before the event loop, `prepare_session` and `schedule_warm_up` on
  *        RunEvent::Ready, `stop_session` on RunEvent::Exit; its parts (TauriEventSink, logging) live next to it in
  *        app/.
  */
@@ -65,8 +69,11 @@ use crate::{
         launcher::Win32ShellLauncher,
         net::{HttpClient, HttpModelStore},
         notifier::TauriToastNotifier,
+        power::Win32PowerEvents,
+        process::Win32ProcessStats,
         scheduler::Win32WorkerScheduler,
         sound::Win32SoundPlayer,
+        startup::{DisabledLaunchAtLogin, RunKeyLocation, Win32RunKey},
         updater::DisabledUpdater,
         window::{TauriMainWindow, Win32OverlayWindow},
     },
@@ -77,22 +84,24 @@ use crate::{
         audio_devices::{DEVICE_SETTLE, DeviceListRelay},
         delivery::{Delivery, DeliveryPorts},
         fan_out::FanOut,
+        hotkey_gate::{CAPTURE_LEASE, HotkeyGate, HotkeyGateDeps},
+        launch,
         metrics::DayWatch,
         models::{ModelDeps, ModelManager, ModelPolicy, ModelWatch, ReadinessRelay},
         pill::{PillPresenter, PillTiming},
         recovery,
         retention::{RetentionDeps, RetentionHandle},
-        session::{SessionActor, SessionConfig, SessionEngines, SessionHandle},
+        session::{self, SessionActor, SessionConfig, SessionEngines, SessionHandle},
         sound_cues::SoundCues,
     },
     ports::{
-        AudioCapture, EventSink, ForegroundApp, HotkeyService, Notifier, PrivacyConsent,
-        SystemAppearance, WorkerScheduler,
+        AudioCapture, EventSink, ForegroundApp, HotkeyService, LaunchAtLogin, Notifier,
+        PowerEvents, PrivacyConsent, SystemAppearance, WorkerScheduler,
     },
     registry::{self, engines::BuildCtx},
     services::{self, Db},
     types::{
-        AcceleratorPolicy, AppEvent, AppPaths, Permission, PortError, RecoveryReport,
+        AcceleratorPolicy, AppEvent, AppInfo, AppPaths, Permission, PortError, RecoveryReport,
         SharedSettings,
     },
 };
@@ -193,8 +202,20 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<RecoveryReport, Box<dyn Error>>
     watch_audio_devices(&audio, &events);
     let sounds = SoundCues::new(Arc::new(Win32SoundPlayer::new().map_err(startup_failure)?));
     let hotkeys: Arc<dyn HotkeyService> = Arc::new(LowLevelKeyboardHotkeys::new());
+    // The always-on hotkeys' one switch: the session binds through it, the tray and Settings pause it.
+    let hotkey_gate = HotkeyGate::new(HotkeyGateDeps {
+        service: Arc::clone(&hotkeys),
+        settings: settings.clone(),
+        include: session::binds_hotkey,
+        notifier: Arc::clone(&notifier),
+        events: Arc::clone(&events),
+        capture_lease: CAPTURE_LEASE,
+    });
     let (session, inbox) = SessionHandle::new();
     panics::report_to_session(session.panic_reporter());
+    watch_power(app, &session);
+    let launch_at_login = launch_at_login(app);
+    launch::sync_at_startup(launch_at_login.as_ref(), &settings, &db, events.as_ref());
     let actor = SessionActor::new(
         SessionConfig {
             settings: settings.clone(),
@@ -202,6 +223,7 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<RecoveryReport, Box<dyn Error>>
             scheduler: Arc::clone(&scheduler),
             asr: asr.clone(),
             hotkeys: Arc::clone(&hotkeys),
+            hotkey_gate: hotkey_gate.clone(),
             foreground: Arc::clone(&foreground),
             notifier: Arc::clone(&notifier),
             delivery: delivery.clone(),
@@ -236,6 +258,7 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<RecoveryReport, Box<dyn Error>>
         scheduler,
         asr,
         hotkeys,
+        hotkey_gate,
         foreground,
         notifier,
         delivery,
@@ -246,21 +269,29 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<RecoveryReport, Box<dyn Error>>
         retention,
         models,
         updater: Arc::new(DisabledUpdater::new()),
+        launch: launch_at_login,
+        process: Arc::new(Win32ProcessStats::new()),
+        app_info: AppInfo {
+            version: app.package_info().version.to_string(),
+            development: tauri::is_dev(),
+        },
         paths,
         db,
         events,
     }));
+    // Detailed logging follows its hidden setting from here on (02 §12).
+    logging::follow_settings(app.handle());
     tracing::info!("startup finished");
     Ok(recovered)
 }
 
 /**
- * SOURCE OF TRUTH KEYWORDS: prepare_session, bind record hotkey, warm voice detector, session ready
- * WHAT:  Tells the session actor the windows exist: it starts listening to hotkeys, binds the record hotkey and
- *        warms the voice detector and the polish chain.
+ * SOURCE OF TRUTH KEYWORDS: prepare_session, bind record hotkey, session ready
+ * WHAT:  Tells the session actor the windows exist: it starts listening to hotkeys and binds them.
  * WHY:   No hotkey is taken from other apps and no device or ONNX Runtime is touched before the UI is up (05 W19);
  *        the keyboard hook is installed with the first binding, so no key is watched before Echo can act on it.
- * WHERE: app::run on RunEvent::Ready, after start_speech_engine.
+ *        The heavy warm-up waits for `schedule_warm_up`.
+ * WHERE: app::run on RunEvent::Ready.
  */
 pub fn prepare_session<R: Runtime>(app: &AppHandle<R>) {
     match app.try_state::<CommandCtx>() {
@@ -303,15 +334,36 @@ pub fn stop_session<R: Runtime>(app: &AppHandle<R>) {
 }
 
 /**
+ * SOURCE OF TRUTH KEYWORDS: schedule_warm_up, lazy model load, STARTUP_IDLE_DELAY, deferred warm-up, 05 W19
+ * WHAT:  STARTUP_IDLE_DELAY after the windows exist, starts loading the speech engine and asks the session to build
+ *        its voice detector and ready the polish chain; returns at once.
+ * WHY:   A start at sign-in runs while Windows is still bringing up the shell and audio (05 W19), and a first paint
+ *        should never compete with a 1 GB model load; a take pressed before then loads what it needs itself (the
+ *        Arm asks the ASR worker, which is safe to ask twice).
+ * WHERE: app::run on RunEvent::Ready, after prepare_session.
+ */
+pub fn schedule_warm_up<R: Runtime>(app: &AppHandle<R>) {
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(registry::launch::STARTUP_IDLE_DELAY).await;
+        start_speech_engine(&handle);
+        match handle.try_state::<CommandCtx>() {
+            Some(ctx) => ctx.session().warm(),
+            None => tracing::error!("the warm-up ran before the command context was managed"),
+        }
+    });
+}
+
+/**
  * SOURCE OF TRUTH KEYWORDS: start_speech_engine, startup engine load, background warm-up, load_request
  * WHAT:  Resolves the engine the settings select into a load request and hands it to the ASR worker, which loads
  *        and warms it on its own thread; returns at once.
  * WHY:   Called when the windows exist, so model loading never delays the first paint. The outcome is logged by the
  *        worker and visible through its readiness; nothing waits on it here. A settings value that names no ASR
  *        engine is logged, and takes then fail with that error instead of Echo refusing to start.
- * WHERE: app::run on RunEvent::Ready, after windows::setup.
+ * WHERE: `schedule_warm_up`, STARTUP_IDLE_DELAY after RunEvent::Ready.
  */
-pub fn start_speech_engine<R: Runtime>(app: &AppHandle<R>) {
+fn start_speech_engine<R: Runtime>(app: &AppHandle<R>) {
     let Some(ctx) = app.try_state::<CommandCtx>() else {
         tracing::error!("the speech engine was started before the command context was managed");
         return;
@@ -363,6 +415,56 @@ fn watch_audio_devices(audio: &Arc<dyn AudioCapture>, events: &Arc<dyn EventSink
             detail = error.detail(),
             "microphone changes will show when the Settings list is opened"
         );
+    }
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: watch_power, power events wiring, Win32PowerEvents listen, keep power watch alive
+ * WHAT:  Starts the sleep, wake, session and explorer-restart watch and sends it to the session actor; the adapter
+ *        is managed on the app so its window lives as long as Echo.
+ * WHY:   Suspend must finalize a take and every return must re-register the hotkeys (02 §9, 05 W8). Without the
+ *        watch Echo still works; the hotkeys may only need the user to press them after a wake that dropped them,
+ *        so a failure is logged, never fatal.
+ * WHERE: `start`, right after the session handle exists.
+ */
+fn watch_power<R: Runtime>(app: &App<R>, session: &SessionHandle) {
+    let power = Win32PowerEvents::new();
+    match power.listen(Arc::new(session.power_sink())) {
+        Ok(()) => {
+            app.manage(power);
+        }
+        Err(error) => tracing::warn!(
+            detail = error.detail(),
+            "sleep and wake cannot be followed; hotkeys may need a restart after sleep"
+        ),
+    }
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: launch_at_login adapter choice, development build startup, Run key entry name, current executable
+ * WHAT:  The start-at-sign-in adapter for this build: the user's Run key (named after the app identifier, starting
+ *        this executable with Echo's launch arguments), or the disabled one in a development build or when the
+ *        executable's path cannot be read.
+ * WHY:   A development executable loads its pages from the dev server, so registering it would start a blank Echo
+ *        at every sign-in; the disabled adapter's caps hide the startup settings instead (05 decision log, step
+ *        25). The path comes from the running process, never a literal (05 W23).
+ * WHERE: `start`.
+ */
+fn launch_at_login<R: Runtime>(app: &App<R>) -> Arc<dyn LaunchAtLogin> {
+    if tauri::is_dev() {
+        return Arc::new(DisabledLaunchAtLogin::new());
+    }
+    match std::env::current_exe() {
+        Ok(executable) => Arc::new(Win32RunKey::new(
+            RunKeyLocation::current_user(),
+            &app.config().identifier,
+            &executable,
+            registry::launch::LAUNCH_AT_LOGIN_ARGS,
+        )),
+        Err(error) => {
+            tracing::warn!(%error, "Echo's executable path is unknown; start at sign-in is off");
+            Arc::new(DisabledLaunchAtLogin::new())
+        }
     }
 }
 

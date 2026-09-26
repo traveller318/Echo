@@ -40,6 +40,8 @@ export interface SettingControlProps<K extends SettingKindName> {
   readonly onCommit: (value: SettingValueOf<K>) => void;
   /** The option list was opened (a Device list reads the microphones again). */
   readonly onOptionsOpen?: () => void;
+  /** A Hotkey control started (true) or stopped (false) capturing a combination. */
+  readonly onCaptureChange?: (capturing: boolean) => void;
 }
 
 export interface SettingForm<K extends SettingKindName> {

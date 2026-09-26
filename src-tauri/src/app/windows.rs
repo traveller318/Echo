@@ -1,9 +1,10 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: window setup, Mica backdrop, native theme, close to hide, CloseRequested, prevent_close, on_window_event, main window, pill window attach, PILL_WINDOW
+ * SOURCE OF TRUTH KEYWORDS: window setup, Mica backdrop, native theme, close to hide, CloseRequested, prevent_close, on_window_event, main window, pill window attach, PILL_WINDOW, show_at_launch, start in tray
  * WHAT:  Native behaviour of the config windows: puts the Mica material behind the main window when the OS has
  *        it, applies the `general.theme` choice to every window now and whenever AppearanceChanged fires, hands
- *        the pill window to the overlay adapter, and turns a close of the main window (titlebar close, Alt+F4,
- *        taskbar "Close window") into a hide.
+ *        the pill window to the overlay adapter, turns a close of the main window (titlebar close, Alt+F4,
+ *        taskbar "Close window") into a hide, and shows the main window at launch unless Echo starts in the tray
+ *        (`show_at_launch`).
  * WHY:   CSS cannot blur the desktop, so Mica comes from Rust (04 §2); the page then stops painting --color-bg
  *        (`data-backdrop="mica"`). Mica is applied only when SystemAppearance caps say the OS supports it, so
  *        Windows 10 never gets a half-applied effect (Tauri swallows that error). The native theme is applied too
@@ -12,13 +13,16 @@
  *        there is one source of appearance changes. Runs on RunEvent::Ready, after Tauri created the windows;
  *        every failure is logged, never fatal, because a missing effect only costs looks.
  *        Closing the main window hides it (04 §5, 02 §9): Echo keeps running for the global hotkey, and the
- *        window is shown again from the tray (step 25). The rule lives here, on the native CloseRequested event,
+ *        window is shown again from the tray (app/tray.rs) or by launching Echo again (single instance). The main
+ *        window is created hidden (tauri.conf.json) so its page paints before it appears; `show_at_launch` asks
+ *        pipeline/launch.rs whether to show it, with onboarding's own rule for whether setup is due (a first run is
+ *        never hidden in the tray). The rule lives here, on the native CloseRequested event,
  *        so every way of closing behaves the same and the UI only asks to close.
  *        The pill window is created by Tauri (tauri.conf.json: transparent, undecorated, always on top, hidden,
  *        not focusable) but from here on only the overlay adapter touches its visibility and styles (05 W3, W16): it
  *        is attached as soon as the window exists, and Tauri's show/hide are never called on it.
- * WHERE: `setup` is called once by app::run on RunEvent::Ready and `on_window_event` is the builder's window
- *        event handler; reads the managed CommandCtx, the managed Win32OverlayWindow and pipeline/appearance.
+ * WHERE: `setup` and `show_at_launch` are called once by app::run on RunEvent::Ready and `on_window_event` is the
+ *        builder's window event handler; reads the managed CommandCtx, the managed Win32OverlayWindow and pipeline/appearance.
  */
 
 use tauri::{
@@ -32,8 +36,8 @@ use std::sync::Arc;
 use crate::{
     adapters::{win32::window_handle, window::Win32OverlayWindow},
     ipc::CommandCtx,
-    pipeline::appearance,
-    types::{AppearanceChanged, ThemePreference},
+    pipeline::{appearance, launch, onboarding},
+    types::{AppearanceChanged, LaunchOrigin, MainWindowAtLaunch, ThemePreference},
 };
 
 /// Label of the main window in tauri.conf.json.
@@ -59,6 +63,48 @@ pub fn setup<R: Runtime>(app: &AppHandle<R>) {
     AppearanceChanged::listen_any(app, move |event| {
         apply_theme(&handle, event.payload.0.theme);
     });
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: show_at_launch, start in the tray, first run shows onboarding, main window at launch
+ * WHAT:  Shows the main window at launch unless Windows started Echo at sign-in with "Start in the tray" on and no
+ *        setup is due; always shows it when the tray could not be built.
+ * WHY:   The decision is pipeline/launch.rs's; setup being due uses onboarding's own rule over the Models view, and a
+ *        view that cannot be read counts as due, so a broken read never hides a first run. Without a tray icon a
+ *        hidden window could not be reached at all.
+ * WHERE: app::run on RunEvent::Ready, after the tray is built.
+ */
+pub fn show_at_launch<R: Runtime>(app: &AppHandle<R>, origin: LaunchOrigin, tray_ready: bool) {
+    let Some(ctx) = app.try_state::<CommandCtx>() else {
+        tracing::error!("the launch window rule ran before the command context was managed");
+        return;
+    };
+    let settings = ctx.settings();
+    let onboarding_due = ctx
+        .models()
+        .list()
+        .map(|models| onboarding::needs(&settings, &models).required())
+        .unwrap_or_else(|error| {
+            tracing::warn!(
+                detail = error.detail(),
+                "models unreadable at launch; showing the window"
+            );
+            true
+        });
+    let decision = if tray_ready {
+        launch::main_window_at_launch(&settings, origin, onboarding_due)
+    } else {
+        MainWindowAtLaunch::Show
+    };
+    tracing::info!(?origin, ?decision, onboarding_due, "main window at launch");
+    if decision == MainWindowAtLaunch::Show
+        && let Err(error) = ctx.main_window().show()
+    {
+        tracing::warn!(
+            detail = error.detail(),
+            "the main window could not be shown at launch"
+        );
+    }
 }
 
 /**

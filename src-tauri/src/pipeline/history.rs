@@ -21,14 +21,17 @@
  */
 
 use crate::{
-    pipeline::{capture::journal, delivery::Delivery},
+    pipeline::{
+        capture::journal,
+        delivery::{Delivery, find_target},
+    },
     ports::{EventSink, ForegroundApp},
     registry, services,
     services::Db,
     types::{
         AppError, AppEvent, AppPaths, AppTarget, DeliveryReport, HistoryChangeReason,
         HistoryChanged, MetricsChanged, PortError, PortResult, ResourceKind, SessionView,
-        SettingsSnapshot, Transcript, TranscriptChange, TranscriptId, TranscriptSaved,
+        SettingsSnapshot, TargetRule, Transcript, TranscriptChange, TranscriptId, TranscriptSaved,
         TranscriptSelector, TranscriptStatus, UnixMs,
     },
 };
@@ -120,8 +123,9 @@ pub fn copy_take(db: &Db, delivery: &Delivery, id: TranscriptId) -> PortResult<(
 }
 
 /**
- * SOURCE OF TRUTH KEYWORDS: paste last transcript, paste-last, newest done take, re-paste, own window target
- * WHAT:  Delivers the newest `done` take's text to the focused window under the delivery settings in effect
+ * SOURCE OF TRUTH KEYWORDS: paste last transcript, paste-last, newest done take, re-paste, own window target, paste-last target rule
+ * WHAT:  Delivers the newest `done` take's text to the window `rule` names (the focused one for the hotkey, the last
+ *        app outside Echo for the tray and History) under the delivery settings in effect
  *        (paste, or copy with the usual reason and toast); `NotFound { transcript_text }` when no take is done.
  * WHY:   The same Delivery a take uses, so elevated targets, auto-paste off and keep-on-clipboard behave exactly
  *        as they do after dictation. A paste into Echo's own window would type into Echo (e.g. its search field),
@@ -132,6 +136,7 @@ pub fn paste_last(
     db: &Db,
     delivery: &Delivery,
     foreground: &dyn ForegroundApp,
+    rule: TargetRule,
     settings: &SettingsSnapshot,
 ) -> PortResult<DeliveryReport> {
     let take =
@@ -142,16 +147,7 @@ pub fn paste_last(
     } else {
         text.to_owned()
     };
-    let target = foreground
-        .current()
-        .unwrap_or_else(|error| {
-            tracing::warn!(
-                detail = error.detail(),
-                "the focused window could not be read; the text will be copied"
-            );
-            None
-        })
-        .filter(|target| !is_own_window(target));
+    let target = find_target(foreground, rule).filter(|target| !is_own_window(target));
     delivery.deliver(
         &pasted,
         target.as_ref(),
@@ -445,9 +441,15 @@ mod tests {
         let foreground =
             FakeForegroundApp::focused(FakeForegroundApp::target("notepad.exe", false));
         assert_eq!(
-            paste_last(&fixture.db, &fixture.delivery, &foreground, &defaults())
-                .unwrap_err()
-                .error(),
+            paste_last(
+                &fixture.db,
+                &fixture.delivery,
+                &foreground,
+                TargetRule::Focused,
+                &defaults()
+            )
+            .unwrap_err()
+            .error(),
             &AppError::NotFound {
                 resource: ResourceKind::TranscriptText
             }
@@ -474,13 +476,27 @@ mod tests {
             Some("Failed."),
             None,
         );
-        let report = paste_last(&fixture.db, &fixture.delivery, &foreground, &defaults()).unwrap();
+        let report = paste_last(
+            &fixture.db,
+            &fixture.delivery,
+            &foreground,
+            TargetRule::Focused,
+            &defaults(),
+        )
+        .unwrap();
         assert_eq!(report.outcome, DeliveryOutcome::Pasted);
         assert_eq!(fixture.inserter.insertions().len(), 1);
         assert_eq!(fixture.clipboard.text().as_deref(), Some("Newest. "));
 
         let no_space = resolve([(keys::TRAILING_SPACE, SettingValue::Bool(false))]);
-        paste_last(&fixture.db, &fixture.delivery, &foreground, &no_space).unwrap();
+        paste_last(
+            &fixture.db,
+            &fixture.delivery,
+            &foreground,
+            TargetRule::Focused,
+            &no_space,
+        )
+        .unwrap();
         assert_eq!(fixture.clipboard.text().as_deref(), Some("Newest."));
     }
 
@@ -491,9 +507,35 @@ mod tests {
         let mut own = FakeForegroundApp::target("echo.exe", false);
         own.process_id = std::process::id();
         let foreground = FakeForegroundApp::focused(own);
-        let report = paste_last(&fixture.db, &fixture.delivery, &foreground, &defaults()).unwrap();
+        let report = paste_last(
+            &fixture.db,
+            &fixture.delivery,
+            &foreground,
+            TargetRule::Focused,
+            &defaults(),
+        )
+        .unwrap();
         assert_eq!(report.outcome, DeliveryOutcome::Copied);
         assert!(fixture.inserter.insertions().is_empty());
+    }
+
+    #[test]
+    fn a_click_in_echo_pastes_into_the_app_the_user_left() {
+        let fixture = fixture();
+        take(&fixture, 1_000, TranscriptStatus::Done, None, Some("Tray."));
+        let notepad = FakeForegroundApp::target("notepad.exe", false);
+        let foreground = FakeForegroundApp::focused(notepad.clone());
+        foreground.focus_echo();
+        let report = paste_last(
+            &fixture.db,
+            &fixture.delivery,
+            &foreground,
+            TargetRule::LastExternal,
+            &defaults(),
+        )
+        .unwrap();
+        assert_eq!(report.outcome, DeliveryOutcome::Pasted);
+        assert_eq!(fixture.inserter.insertions()[0].0, notepad);
     }
 
     #[test]

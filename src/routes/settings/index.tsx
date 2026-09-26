@@ -1,9 +1,9 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: SettingsPage, settings route, settings page, registry-generated settings, settings sections, settings availability
- * WHAT:  The Settings screen (04 §5): a notice for each selected engine whose model is not ready (grammar polish
- *        downloading after it was switched on), then one card per registry section, each holding a SettingField row
- *        per setting the page may show (visible, and its caps requirement holds). Every row saves on its own and
- *        takes effect at once (or says it needs a restart).
+ * SOURCE OF TRUTH KEYWORDS: SettingsPage, settings route, settings page, registry-generated settings, settings sections, settings availability, About, hotkeys paused notice
+ * WHAT:  The Settings screen (04 §5): a notice while Echo's hotkeys are paused, a notice for each selected engine
+ *        whose model is not ready (grammar polish downloading after it was switched on), then one card per registry
+ *        section, each holding a SettingField row per setting the page may show (visible, and its caps requirement
+ *        holds), then About. Every row saves on its own and takes effect at once (or says it needs a restart).
  * WHY:   The page is generated from the registry (root CLAUDE.md §7): specs and section headings come from
  *        RegistryView, values from `settings_get_all`, choices and caps from `settings_availability`; the page
  *        keeps no copy of any of them and stays fresh from SettingsChanged (a change in another window, or a new
@@ -16,6 +16,8 @@ import { EmptyState, NavIcon, Page, ProgressBar, SettingRow } from "@/components
 import { Button } from "@/components/ui";
 import { useRegistryView, useSettingsAvailability, useSettingValues } from "@/hooks";
 import { describeAppError, toAppError } from "@/lib/app-error";
+import { AboutSection } from "./_components/AboutSection";
+import { HotkeyPauseNotice } from "./_components/HotkeyPauseNotice";
 import { ModelSetupNotices } from "./_components/ModelSetupNotices";
 import { SettingsSection } from "./_components/SettingsSection";
 import { settingsBySection } from "./_components/settings-layout";
@@ -60,6 +62,7 @@ export default function SettingsPage({ nav }: NavPageProps) {
   const offered = availability.data;
   return (
     <Page title={nav.label}>
+      <HotkeyPauseNotice />
       <ModelSetupNotices />
       {settingsBySection(sections, settings, offered.caps).map(({ section, settings: shown }) => (
         <SettingsSection key={section.section} label={section.label}>
@@ -68,6 +71,7 @@ export default function SettingsPage({ nav }: NavPageProps) {
           ))}
         </SettingsSection>
       ))}
+      <AboutSection />
     </Page>
   );
 }

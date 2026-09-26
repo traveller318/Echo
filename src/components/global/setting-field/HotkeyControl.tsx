@@ -1,9 +1,11 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: HotkeyControl, Hotkey setting, rebind shortcut, capture and save hotkey
+ * SOURCE OF TRUTH KEYWORDS: HotkeyControl, Hotkey setting, rebind shortcut, capture and save hotkey, capture lease
  * WHAT:  The control of a `Hotkey` setting: a HotkeyInput that saves each combination it captures.
  * WHY:   Rust binds the new combination before storing it and refuses a conflict while the old binding stays
  *        (05 W7); the form then resets to the combination still in effect, so the chips never show a hotkey that
- *        is not bound, and the row shows why in --color-record.
+ *        is not bound, and the row shows why in --color-record. Its capturing state goes to `onCaptureChange`; the
+ *        connected row (SettingRow) turns Echo's own hotkeys off meanwhile (the capture lease), so the field can read
+ *        the chord Echo is bound to and holding the current dictation chord starts no take.
  * WHERE: SettingField, for SettingKind `hotkey`.
  */
 import { Controller } from "react-hook-form";
@@ -26,6 +28,7 @@ export function HotkeyControl(props: SettingControlProps<"hotkey">) {
             invalid={fieldState.invalid || props.invalid}
             value={field.value}
             onBlur={field.onBlur}
+            onCaptureChange={props.onCaptureChange}
             onChange={(accelerator) => {
               field.onChange(accelerator);
               if (accelerator !== props.value) {

@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: session actor tests, pipeline tests, full take test, Esc undo test, Esc discard test, device loss test, ASR error test, exit mid-take test, panic recovery test, audio retention after success test, sound cue test, paste-last hotkey test, hold mode test, Bluetooth hint test, rehearsal test
+ * SOURCE OF TRUTH KEYWORDS: session actor tests, pipeline tests, full take test, Esc undo test, Esc discard test, device loss test, ASR error test, exit mid-take test, panic recovery test, audio retention after success test, sound cue test, paste-last hotkey test, hold mode test, Bluetooth hint test, rehearsal test, tray toggle test, suspend test, resume refresh test
  * WHAT:  End-to-end tests of the session actor over port fakes: a real capture worker, ASR worker, polish chain,
  *        delivery and in-memory database, driven by fake hotkeys and a fake microphone, observed through the
  *        events, the database, the journal on disk and the fakes.
@@ -23,13 +23,14 @@ use std::{
 use hound::WavReader;
 
 use super::{
-    DEVICE_LOST_TOAST, NOTHING_TO_PASTE_TOAST, START_FAILED_TOAST, SessionActor, SessionConfig,
-    SessionEngines, SessionHandle, TAKE_FAILED_TOAST,
+    DEVICE_LOST_TOAST, NOTHING_TO_PASTE_TOAST, START_FAILED_TOAST, SUSPENDED_TOAST, SessionActor,
+    SessionConfig, SessionEngines, SessionHandle, TAKE_FAILED_TOAST, binds_hotkey,
 };
 use crate::{
     pipeline::{
         asr::{AsrWorker, AsrWorkerConfig},
         delivery::{Delivery, DeliveryPorts},
+        hotkey_gate::{CAPTURE_LEASE, HotkeyGate, HotkeyGateDeps},
         sound_cues::{SoundCues, render},
     },
     ports::{
@@ -53,9 +54,9 @@ use crate::{
         Accelerator, AcceleratorRequest, AppError, AppEvent, AppPaths, AppTarget, AsrLoadRequest,
         AudioTransport, CaptureFormat, DeliveryOutcome, EngineId, HistoryChangeReason,
         HistoryChanged, HotkeyAction, HotkeyCaps, HotkeyRehearsed, KeyState, Permission, PortError,
-        ResourceKind, SessionCue, SessionRehearsal, SessionStatus, SessionUiInput, SessionView,
-        SettingKey, SettingValue, SettingsSnapshot, SharedSettings, StaticStr, TranscriptId,
-        TranscriptStatus, testing::TempDir,
+        PowerEvent, ResourceKind, SessionCue, SessionRehearsal, SessionStatus, SessionUiInput,
+        SessionView, SettingKey, SettingValue, SettingsSnapshot, SharedSettings, StaticStr,
+        TargetRule, TranscriptId, TranscriptStatus, testing::TempDir,
     },
 };
 
@@ -85,6 +86,8 @@ fn silence(ms: usize) -> Vec<f32> {
 /// An actor over fakes, running on its own runtime thread.
 struct Rig {
     handle: SessionHandle,
+    /// The always-on hotkeys' switch the actor binds through.
+    gate: HotkeyGate,
     events: Arc<ChannelSink<AppEvent>>,
     audio: Arc<FakeAudioCapture>,
     hotkeys: Arc<FakeHotkeyService>,
@@ -180,13 +183,23 @@ impl Rig {
             paths: paths.clone(),
         };
         let (handle, inbox) = SessionHandle::new();
+        let shared = SharedSettings::new(settings);
+        let gate = HotkeyGate::new(HotkeyGateDeps {
+            service: Arc::clone(&hotkeys) as _,
+            settings: shared.clone(),
+            include: binds_hotkey,
+            notifier: Arc::clone(&notifier) as _,
+            events: Arc::clone(&events) as _,
+            capture_lease: CAPTURE_LEASE,
+        });
         let actor = SessionActor::new(
             SessionConfig {
-                settings: SharedSettings::new(settings),
+                settings: shared,
                 audio: Arc::clone(&audio) as _,
                 scheduler: Arc::new(FakeWorkerScheduler::default()),
                 asr,
                 hotkeys: Arc::clone(&hotkeys) as _,
+                hotkey_gate: gate.clone(),
                 foreground: Arc::clone(&foreground) as _,
                 notifier: Arc::clone(&notifier) as _,
                 delivery: Delivery::new(DeliveryPorts {
@@ -220,6 +233,7 @@ impl Rig {
         });
         let rig = Self {
             handle,
+            gate,
             events,
             audio,
             hotkeys,
@@ -1037,4 +1051,83 @@ fn a_take_rehearsal_in_echo_shows_the_text_instead_of_pasting_it() {
         rig.inserter.insertions(),
         [(notepad(), String::from("Back to work. "))]
     );
+}
+
+/// The tray's Start dictation clicked while Echo's tray menu has focus: the take toggles (even in hold mode) and its
+/// text goes to the app the user left; the tray's Stop ends it like the pill.
+#[test]
+fn a_tray_toggle_dictates_into_the_app_the_user_left() {
+    let rig = Rig::with(registry::settings::defaults(), None);
+    rig.engine.push_text("From the tray.");
+    rig.foreground.focus_echo();
+    rig.handle.ui_input(SessionUiInput::Toggle).unwrap();
+    rig.wait_for(SessionStatus::Recording);
+    rig.feed(&speech(400));
+    rig.feed(&silence(700));
+    thread::sleep(PAST_DEBOUNCE);
+    rig.handle.ui_input(SessionUiInput::Toggle).unwrap();
+    let (done, _) = rig.wait_for(SessionStatus::Done);
+    assert_eq!(done.outcome, Some(DeliveryOutcome::Pasted));
+    let insertions = rig.inserter.insertions();
+    assert_eq!(insertions.len(), 1);
+    assert_eq!(
+        insertions[0].0,
+        notepad(),
+        "pasted where the user was, not into Echo"
+    );
+}
+
+/// The machine goes to sleep mid-take: what was said is delivered with a toast; waking re-registers the hotkeys.
+#[test]
+fn sleep_finalizes_the_take_and_waking_refreshes_the_hotkeys() {
+    let rig = Rig::start();
+    rig.engine.push_text("Before the lid closed.");
+    rig.record();
+    rig.feed(&speech(400));
+    rig.feed(&silence(700));
+    let power = rig.handle.power_sink();
+    power.emit(PowerEvent::Suspend);
+    let (done, _) = rig.wait_for(SessionStatus::Done);
+    assert_eq!(done.outcome, Some(DeliveryOutcome::Pasted));
+    assert!(eventually(|| rig
+        .notifier
+        .toasts()
+        .contains(&SUSPENDED_TOAST)));
+
+    let before = rig.hotkeys.refreshes();
+    power.emit(PowerEvent::Resume);
+    assert!(eventually(|| rig.hotkeys.refreshes() == before + 1));
+    power.emit(PowerEvent::ShellRestarted);
+    assert!(eventually(|| rig.hotkeys.refreshes() == before + 2));
+
+    // Paused hotkeys stay off across a wake.
+    rig.gate.set_paused(true);
+    power.emit(PowerEvent::SessionResumed);
+    // A query answered after the event proves the actor handled it.
+    let _ = rig.view();
+    assert_eq!(rig.hotkeys.refreshes(), before + 2);
+    assert_eq!(rig.hotkeys.binding(&RECORD), None);
+}
+
+/// The tray's Paste last transcript goes to the app the user left and toasts when there is nothing to paste.
+#[test]
+fn a_tray_paste_last_targets_the_app_the_user_left() {
+    let rig = Rig::start();
+    rig.foreground.focus_echo();
+    rig.handle
+        .request_paste_last(TargetRule::LastExternal)
+        .unwrap();
+    assert!(eventually(|| rig
+        .notifier
+        .toasts()
+        .contains(&NOTHING_TO_PASTE_TOAST)));
+
+    rig.foreground.set(Some(notepad()));
+    rig.dictate("Paste me again.");
+    rig.foreground.focus_echo();
+    rig.handle
+        .request_paste_last(TargetRule::LastExternal)
+        .unwrap();
+    assert!(eventually(|| rig.inserter.insertions().len() == 2));
+    assert_eq!(rig.inserter.insertions()[1].0, notepad());
 }

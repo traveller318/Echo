@@ -1,5 +1,5 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: SettingRow, SettingRowFor, connected setting field, setting write row, settings page row, setting by key
+ * SOURCE OF TRUTH KEYWORDS: SettingRow, SettingRowFor, connected setting field, setting write row, settings page row, setting by key, hotkey capture lease
  * WHAT:  One setting row wired to Rust: a SettingField for `spec` with the value in effect, the choices it offers
  *        now, and writes through `settings_set` / `settings_reset` whose failure shows inline on the row.
  *        `SettingRowFor` finds the spec, its value and availability itself from a setting key.
@@ -8,10 +8,18 @@
  *        clears the previous failure first, so an old error never sits under a value that was since saved. A surface
  *        that shows a single setting names it by its registry key and never copies its spec or value
  *        (root CLAUDE.md §7: settings controls come from the registry); it renders nothing until the reads answer.
+ *        A hotkey row holds the capture lease while its field captures, so Echo's own hotkeys stay out of the way.
  * WHERE: routes/settings/index.tsx (one SettingRow per shown setting); routes/onboarding steps (SettingRowFor).
  */
 import type { SettingKey, SettingSpec, SettingValue, SettingsAvailability } from "@/bindings";
-import { useRegistryView, useSettingOptions, useSettingsAvailability, useSettingValues, useSettingWrite } from "@/hooks";
+import {
+  useHotkeyCaptureLease,
+  useRegistryView,
+  useSettingOptions,
+  useSettingsAvailability,
+  useSettingValues,
+  useSettingWrite,
+} from "@/hooks";
 import { SettingField } from "../setting-field";
 
 export interface SettingRowProps {
@@ -24,6 +32,7 @@ export interface SettingRowProps {
 export function SettingRow({ spec, value, availability, className }: SettingRowProps) {
   const write = useSettingWrite(spec.key);
   const { options, refresh } = useSettingOptions(spec, availability);
+  const captureLease = useHotkeyCaptureLease();
   return (
     <SettingField
       spec={spec}
@@ -32,6 +41,7 @@ export function SettingRow({ spec, value, availability, className }: SettingRowP
       error={write.error}
       pending={write.pending}
       onOptionsOpen={refresh}
+      onCaptureChange={captureLease}
       className={className}
       onCommit={(next) => {
         write.clearError();

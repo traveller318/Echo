@@ -1,9 +1,10 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: pipeline layer, session state machine, session actor, capture, ASR worker, polish chain, delivery, history actions, retry, pill presenter, crash recovery, retention sweep, sound cues, device hot-plug, one-time notices, dashboard metrics, onboarding
+ * SOURCE OF TRUTH KEYWORDS: pipeline layer, session state machine, session actor, capture, ASR worker, polish chain, delivery, history actions, retry, pill presenter, crash recovery, retention sweep, sound cues, device hot-plug, one-time notices, dashboard metrics, onboarding, hotkey gate, startup behaviour
  * WHAT:  Layer 5: business orchestration of a take (session state machine, capture, ASR, polish, delivery,
  *        model management), of History (delete, copy, paste-last, retry from the saved audio), of durability
  *        (startup recovery of takes a crash cut off, retention sweeps of old audio and rows), of the global
- *        hotkey bindings, of app-wide derived state (appearance) and what a settings change sets in motion
+ *        hotkey bindings and their pause switch (hotkeys, hotkey_gate), of startup behaviour (launch: start at
+ *        sign-in, the main window at launch), of app-wide derived state (appearance) and what a settings change sets in motion
  *        (settings_effects, settings_store), of feedback (sound_cues, one-time notices), of first-run onboarding (onboarding), of microphone hot-plug
  *        (audio_devices), of the dashboard's metric formulas and day rollover (metrics), and of
  *        the pill window that follows the session (pill, fed through the event fan-out).
@@ -21,7 +22,9 @@ pub mod capture;
 pub mod delivery;
 pub mod fan_out;
 pub mod history;
+pub mod hotkey_gate;
 pub mod hotkeys;
+pub mod launch;
 pub mod metrics;
 pub mod models;
 pub mod notices;

@@ -61,20 +61,20 @@ pub const SETTINGS: &[SettingSpec] = &[
         default: SettingValue::Bool(true),
         restart_required: false,
         visible: true,
-        requires: None,
+        requires: Some(CapsRequirement::LaunchAtLogin),
     },
     SettingSpec {
         key: keys::START_MINIMIZED,
         section: SettingSection::General,
         label: StaticStr::new("Start in the tray"),
         help: StaticStr::new(
-            "Keep this window hidden when Echo launches. Open it from the tray icon.",
+            "When Echo starts with Windows, keep this window hidden. Open it from the tray icon.",
         ),
         kind: SettingKind::Bool,
         default: SettingValue::Bool(true),
         restart_required: false,
         visible: true,
-        requires: None,
+        requires: Some(CapsRequirement::LaunchAtLogin),
     },
     SettingSpec {
         key: keys::SOUND_CUES,
@@ -108,6 +108,20 @@ pub const SETTINGS: &[SettingSpec] = &[
         label: StaticStr::new("Onboarding done"),
         help: StaticStr::new(
             "Internal: first-run setup was finished once. Setup still returns while the speech model is missing.",
+        ),
+        kind: SettingKind::Bool,
+        default: SettingValue::Bool(false),
+        restart_required: false,
+        visible: false,
+        requires: None,
+    },
+    // Not in the settings list: About offers it under Troubleshooting (02 §12).
+    SettingSpec {
+        key: keys::DEBUG_LOG,
+        section: SettingSection::General,
+        label: StaticStr::new("Detailed logging"),
+        help: StaticStr::new(
+            "Write step-by-step timings to the log files for troubleshooting. They never include what you say.",
         ),
         kind: SettingKind::Bool,
         default: SettingValue::Bool(false),

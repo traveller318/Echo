@@ -51,11 +51,14 @@ serde_json = "=1.0.151"
 sha2 = "=0.10.9"
 specta = { version = "=2.0.0-rc.25", features = ["derive"] }
 specta-typescript = "=0.0.12"
-tauri = { version = "=2.11.6", features = [] }
+# `tray-icon`: the notification-area icon and its menu (app/tray.rs).
+tauri = { version = "=2.11.6", features = ["tray-icon"] }
 # The folder picker behind "Import from folder"; wired only in app/plugins.rs, used only by its adapter.
 tauri-plugin-dialog = "=2.7.3"
 # WinRT toasts; wired only in app/plugins.rs, used only by its adapter.
 tauri-plugin-notification = "=2.4.0"
+# A second launch hands its arguments to the running Echo and exits (05 W20); wired only in app/plugins.rs.
+tauri-plugin-single-instance = "=2.4.5"
 tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
 thiserror = "=2.0.20"
 # Tauri's runtime (same version it links); `time` gives async waits, `rt` lets tests build a runtime, `sync` gives
@@ -80,10 +83,15 @@ windows = { version = "=0.61.3", features = [
     "Win32_System_DataExchange",
     "Win32_System_JobObjects",
     "Win32_System_LibraryLoader",
+    "Win32_System_Power",
+    "Win32_System_ProcessStatus",
     "Win32_System_Registry",
+    "Win32_System_RemoteDesktop",
     "Win32_System_SystemInformation",
+    "Win32_System_SystemServices",
     "Win32_System_Threading",
     "Win32_System_Variant",
+    "Win32_UI_Accessibility",
     "Win32_UI_HiDpi",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",

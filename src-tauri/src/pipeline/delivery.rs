@@ -1,10 +1,11 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: Delivery, deliver take, delivery plan, auto paste, keep on clipboard, copy-only fallback, elevated target toast, clipboard restore, CLIPBOARD_RESTORE_DELAY, keep_in_app
+ * SOURCE OF TRUTH KEYWORDS: Delivery, deliver take, find_target, TargetRule resolve, delivery plan, auto paste, keep on clipboard, copy-only fallback, elevated target toast, clipboard restore, CLIPBOARD_RESTORE_DELAY, keep_in_app
  * WHAT:  Delivery: puts a finished take's text where the user wants it. `plan` decides (nothing, paste, or copy
  *        and why) from the text, the take's target, the `output.*` policy and the inserter's caps; `deliver`
  *        carries the plan out through the Clipboard, TextInserter and Notifier ports and reports what happened;
  *        `copy` is a plain excluded clipboard write; `restore_clipboard` gives the user's previous clipboard back;
- *        `keep_in_app` is a rehearsed take's delivery (the text stays in Echo, no port is touched).
+ *        `keep_in_app` is a rehearsed take's delivery (the text stays in Echo, no port is touched); `find_target`
+ *        reads the window a take or a paste-last goes to under its TargetRule.
  * WHY:   One owner for 02 §9's paste rules. Every transcript write is excluded from Win+V history and cloud sync
  *        (05 W5). The clipboard is written first only when the inserter pastes from it (`uses_clipboard`, 05
  *        decision log). An elevated target that the inserter cannot reach is copied instead of pasted, with the
@@ -26,10 +27,11 @@
 use std::{sync::Arc, time::Duration};
 
 use crate::{
-    ports::{Clipboard, Notifier, TextInserter},
+    ports::{Clipboard, ForegroundApp, Notifier, TextInserter},
     types::{
         AppTarget, ClipboardHistory, ClipboardRestore, CopyReason, DeliveryOutcome, DeliveryPlan,
-        DeliveryPolicy, DeliveryReport, InserterCaps, PortResult, StaticStr, Toast, ToastKind,
+        DeliveryPolicy, DeliveryReport, InserterCaps, PortResult, StaticStr, TargetRule, Toast,
+        ToastKind,
     },
 };
 
@@ -49,6 +51,29 @@ pub const NO_TARGET_TOAST: Toast = Toast {
     title: StaticStr::new("No window to paste into"),
     body: StaticStr::new("Copied instead. Press Ctrl+V."),
 };
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: find_target, paste target under rule, focused or last external window, unreadable foreground
+ * WHAT:  The window `rule` names: the one in front now (Focused) or the last app outside Echo and the shell
+ *        (LastExternal); None when there is none or it cannot be read (logged).
+ * WHY:   The Arm and paste-last read the target the same way, so a hotkey and a tray click differ only in the rule
+ *        they carry; an unreadable window only means the text is copied (NO_TARGET_TOAST), never a failed take.
+ * WHERE: pipeline/session/arm.rs (a take's target), pipeline/history.rs `paste_last`.
+ */
+pub fn find_target(foreground: &dyn ForegroundApp, rule: TargetRule) -> Option<AppTarget> {
+    let found = match rule {
+        TargetRule::Focused => foreground.current(),
+        TargetRule::LastExternal => foreground.last_external(),
+    };
+    found.unwrap_or_else(|error| {
+        tracing::warn!(
+            ?rule,
+            detail = error.detail(),
+            "the target window could not be read; the text will be copied"
+        );
+        None
+    })
+}
 
 /// The ports delivery works through.
 pub struct DeliveryPorts {

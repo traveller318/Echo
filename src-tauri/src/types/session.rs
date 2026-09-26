@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: SessionView, SessionStatus, SessionUiInput, DeliveryOutcome, SessionRehearsal, take state, pill state, session_input, session_rehearse
+ * SOURCE OF TRUTH KEYWORDS: SessionView, SessionStatus, SessionUiInput, DeliveryOutcome, SessionRehearsal, take state, pill state, session_input, session_rehearse, tray toggle
  * WHAT:  The read-only projection of the session state machine that the UI renders (SessionView), the UI-only
  *        input enum of `session_input` (SessionUiInput), how a finished take was delivered (DeliveryOutcome) and
  *        what the session rehearses for onboarding (SessionRehearsal, `session_rehearse`).
@@ -117,6 +117,10 @@ pub enum SessionUiInput {
     /// The pill's cancel (✕) and undo buttons: same effect as pressing Esc, so the first press starts the cancel
     /// countdown and a second one before it runs out resumes the take.
     Cancel,
+    /// Start dictating when no take is running, stop the one that is recording otherwise (the tray's Start / Stop
+    /// dictation, or any Echo button). The take toggles and its text goes to the app the user was last in outside
+    /// Echo, since the click itself moved focus away from it (SessionPolicy::from_ui).
+    Toggle,
 }
 
 /**
