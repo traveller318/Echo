@@ -33,7 +33,8 @@ use crate::pipeline::launch;
  *        windows exist; then the tray icon is built, the main window is shown unless Echo started at sign-in in the
  *        tray (always shown when the tray could not be built, so Echo is never unreachable), the startup recovery
  *        toast is shown (once), the session binds its hotkeys, and the speech engine and warm-up are scheduled a
- *        moment later (05 W19), so the UI is never held up by them; on RunEvent::Exit the session finalizes an
+ *        moment later (05 W19), so the UI is never held up by them, and the automatic update check later still (a no-op
+ *        without an update source, 02 §11); on RunEvent::Exit the session finalizes an
  *        open recording before the process ends (02 §5); window events (close → hide) go to app/windows.rs. How
  *        Echo was started (the `--minimized` sign-in argument) is read once from the command line.
  * WHERE: Called once by main.rs.
@@ -74,6 +75,7 @@ pub fn run() -> ExitCode {
             }
             bootstrap::prepare_session(handle);
             bootstrap::schedule_warm_up(handle);
+            bootstrap::schedule_update_check(handle);
         }
         tauri::RunEvent::Exit => bootstrap::stop_session(handle),
         _ => {}
@@ -82,12 +84,17 @@ pub fn run() -> ExitCode {
 }
 
 /**
- * SOURCE OF TRUTH KEYWORDS: window config test, pill window contract, main window contract, CSP test, NSIS per-user test
+ * SOURCE OF TRUTH KEYWORDS: window config test, pill window contract, main window contract, CSP test, NSIS per-user test, version sync test, installer icon test, no updater artifacts
  * WHAT:  Checks the compiled tauri.conf.json against the specs the docs own: window sizes and flags (04 §4–5),
- *        the pill's hidden non-activating setup (05 W3), the no-remote CSP (02 §10), identifier and installer (02 §2.1).
+ *        the pill's hidden non-activating setup (05 W3), the no-remote CSP (02 §10), identifier and installer (02 §2.1,
+ *        §11: per-user NSIS, embedded WebView2 bootstrapper, the app icon on installer and uninstaller, a stable
+ *        publisher, no updater plugin or updater artifacts), and one version across tauri.conf.json, Cargo.toml and
+ *        package.json (02 §11).
  * WHY:   The P0 exit gate is "a main window and a hidden pill"; a config edit that breaks it (a focusable pill
  *        steals the paste target) would otherwise only show up by hand. Window and CSP checks read the context
- *        `run` compiles in; bundle checks parse the file, because bundler settings are not compiled in.
+ *        `run` compiles in; bundle checks parse the file, because bundler settings are not compiled in. The
+ *        publisher names the registry keys the installer upgrades in place, so changing it would orphan an install
+ *        (05 W21). Versions are kept in sync by hand at each release, so the gate catches a missed file.
  * WHERE: `cargo test` (local gate).
  */
 #[cfg(test)]
@@ -96,7 +103,7 @@ mod tests {
 
     use tauri::utils::config::{
         BundleResources, BundleTarget, BundleType, Csp, CspDirectiveSources, NSISInstallerMode,
-        WebviewInstallMode, WindowConfig,
+        Updater, WebviewInstallMode, WindowConfig,
     };
 
     fn config() -> tauri::Config {
@@ -123,6 +130,11 @@ mod tests {
                     .map(move |source| (directive.clone(), source))
             })
             .collect()
+    }
+
+    fn file() -> tauri::Config {
+        serde_json::from_str(include_str!("../../tauri.conf.json"))
+            .expect("tauri.conf.json parses as a Tauri config")
     }
 
     #[test]
@@ -192,9 +204,7 @@ mod tests {
     /// Bundle settings are read by the Tauri CLI, not compiled into the context, so they are parsed from the file.
     #[test]
     fn installer_is_per_user_nsis_with_embedded_webview_bootstrapper() {
-        let file: tauri::Config = serde_json::from_str(include_str!("../../tauri.conf.json"))
-            .expect("tauri.conf.json parses as a Tauri config");
-        let bundle = file.bundle;
+        let bundle = file().bundle;
         assert_eq!(bundle.targets, BundleTarget::List(vec![BundleType::Nsis]));
         let nsis = bundle.windows.nsis.expect("NSIS settings are configured");
         assert_eq!(nsis.install_mode, NSISInstallerMode::CurrentUser);
@@ -204,13 +214,51 @@ mod tests {
         ));
     }
 
+    /// The installer, the uninstaller and the executable all carry the app icon, and the publisher never changes.
+    #[test]
+    fn installer_carries_the_app_icon_and_a_stable_publisher() {
+        let bundle = file().bundle;
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let app_icon = std::path::PathBuf::from("icons/icon.ico");
+        assert!(bundle.icon.iter().any(|icon| *icon == "icons/icon.ico"));
+        let nsis = bundle.windows.nsis.expect("NSIS settings are configured");
+        for icon in [nsis.installer_icon, nsis.uninstaller_icon] {
+            assert_eq!(icon.as_ref(), Some(&app_icon));
+        }
+        assert!(
+            manifest_dir.join(&app_icon).is_file(),
+            "icons/icon.ico exists"
+        );
+        assert_eq!(bundle.publisher.as_deref(), Some("Echo"));
+    }
+
+    /// Updates are disabled (02 §11): no updater plugin, endpoint or signed update artifacts.
+    #[test]
+    fn no_updater_is_configured() {
+        let file = file();
+        assert!(!file.plugins.0.contains_key("updater"));
+        assert!(matches!(
+            file.bundle.create_updater_artifacts,
+            Updater::Bool(false)
+        ));
+    }
+
+    #[test]
+    fn versions_agree_across_tauri_cargo_and_package_json() {
+        let package: serde_json::Value =
+            serde_json::from_str(include_str!("../../../package.json"))
+                .expect("package.json parses");
+        let cargo = env!("CARGO_PKG_VERSION");
+        assert_eq!(config().version.as_deref(), Some(cargo));
+        assert_eq!(package["version"].as_str(), Some(cargo));
+    }
+
     /// AppPaths reads bundled files at the same relative path they have under src-tauri/resources (ONNX Runtime,
-    /// bundled models), so every resource folder must map onto a folder of the same name.
+    /// bundled models), so every resource folder must map onto a folder of the same name. The typefaces' OFL texts
+    /// live beside the fonts in src/styles/fonts and are installed into `licenses/` one by one (registry/credits.rs).
     #[test]
     fn bundled_resources_keep_their_folder_layout() {
-        let file: tauri::Config = serde_json::from_str(include_str!("../../tauri.conf.json"))
-            .expect("tauri.conf.json parses as a Tauri config");
-        let Some(BundleResources::Map(resources)) = file.bundle.resources else {
+        let Some(BundleResources::Map(resources)) = file().bundle.resources else {
             panic!("bundle.resources must map resource folders to install folders");
         };
         let mut folders: Vec<_> = resources.into_iter().collect();
@@ -218,6 +266,14 @@ mod tests {
         assert_eq!(
             folders,
             [
+                (
+                    "../src/styles/fonts/Inter-OFL.txt",
+                    "licenses/Inter-OFL.txt"
+                ),
+                (
+                    "../src/styles/fonts/Poppins-OFL.txt",
+                    "licenses/Poppins-OFL.txt"
+                ),
                 ("resources/licenses/*", "licenses/"),
                 ("resources/models/*", "models/"),
                 ("resources/onnxruntime/*", "onnxruntime/"),

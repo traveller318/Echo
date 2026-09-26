@@ -1,3 +1,10 @@
+/**
+ * SOURCE OF TRUTH KEYWORDS: tsconfig, TypeScript strict, noUncheckedIndexedAccess, path alias @, type check, tsc --noEmit
+ * WHAT:  TypeScript settings for the UI, the tools and the build configs: strict, no emit, `@/` → `src/`.
+ * WHY:   Root CLAUDE.md §4: TypeScript is strict and `pnpm tsc --noEmit` is part of the local gate; Vite bundles, so tsc
+ *        only checks. JS files (tools, eslint config) are checked too, so the lint rules are typed like the app.
+ * WHERE: `pnpm tsc --noEmit`, the editor, typescript-eslint and Vite's `@/` alias.
+ */
 {
   "compilerOptions": {
     "target": "ES2023",

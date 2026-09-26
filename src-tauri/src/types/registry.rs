@@ -1,7 +1,7 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: RegistryView, registry_get, registry snapshot, settings specs, nav items, engine specs, metric specs, hotkey specs
+ * SOURCE OF TRUTH KEYWORDS: RegistryView, registry_get, registry snapshot, settings specs, nav items, engine specs, metric specs, hotkey specs, third-party credits
  * WHAT:  RegistryView: every registry list the UI renders from (settings and their sections, hotkeys, nav, engines,
- *        metrics), as returned by the `registry_get` command.
+ *        metrics, the bundled components' credits), as returned by the `registry_get` command.
  * WHY:   The UI builds its sidebar, router, Settings form, Models page and dashboard layout from the registry
  *        (02 §3.3), so it asks once at startup and never hardcodes a list. The registry is compiled in and does
  *        not change while the app runs, so one read is enough; values that do change (settings, engine status)
@@ -15,7 +15,9 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use super::{EngineSpec, HotkeySpec, MetricSpec, NavItem, SettingSectionSpec, SettingSpec};
+use super::{
+    EngineSpec, HotkeySpec, MetricSpec, NavItem, SettingSectionSpec, SettingSpec, ThirdPartyCredit,
+};
 
 /// Every registry list the UI renders from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -27,4 +29,6 @@ pub struct RegistryView {
     pub nav: Vec<NavItem>,
     pub engines: Vec<EngineSpec>,
     pub metrics: Vec<MetricSpec>,
+    /// Third-party components the installer ships, with their licenses (About).
+    pub credits: Vec<ThirdPartyCredit>,
 }

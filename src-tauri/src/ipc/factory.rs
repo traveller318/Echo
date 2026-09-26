@@ -186,7 +186,8 @@ fn validation_error(report: &garde::Report) -> AppError {
 /**
  * SOURCE OF TRUTH KEYWORDS: permission preflight, PermissionDenied, registry permissions check, offline network denied
  * WHAT:  Asks the registry whether the command's permission holds with the current settings and consent; fails
- *        with `PermissionDenied { permission }` when it does not.
+ *        with the permission's registry denial error when it does not (`Offline` for Network,
+ *        `PermissionDenied { permission }` otherwise).
  * WHY:   Step 3: offline mode makes Network fail here, before any handler could open a socket. A check that could
  *        not be answered (the consent store unreadable) returns the port's safe error, with its detail logged,
  *        rather than guessing either way.
@@ -208,7 +209,7 @@ fn preflight(ctx: &CommandCtx, permission: Option<Permission>) -> Result<(), App
     if state.is_granted() {
         Ok(())
     } else {
-        Err(AppError::PermissionDenied { permission })
+        Err(permissions::denial(permission))
     }
 }
 
@@ -366,12 +367,7 @@ mod tests {
             ran.store(true, Ordering::SeqCst);
             Ok::<_, AppError>(())
         }));
-        assert_eq!(
-            result,
-            Err(AppError::PermissionDenied {
-                permission: Permission::Network
-            })
-        );
+        assert_eq!(result, Err(AppError::Offline));
         assert!(!ran.load(Ordering::SeqCst));
 
         let online = ctx();
@@ -391,12 +387,12 @@ mod tests {
             keys::OFFLINE_MODE,
             SettingValue::Bool(true),
         )]));
-        assert!(matches!(
+        assert_eq!(
             finish(run(&ctx, &network, (), |_, ()| async {
                 Ok::<_, AppError>(())
             })),
-            Err(AppError::PermissionDenied { .. })
-        ));
+            Err(AppError::Offline)
+        );
     }
 
     #[test]

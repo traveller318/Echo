@@ -8,7 +8,7 @@
  *        copy). A running transfer wins over the stored status (it is what is happening now); an engine that is in
  *        use shows its runtime (loading, or could not load) because that is what a take would get. Status is never
  *        colour alone (04 §7): every look has a glyph and a word. Copy is calm (04 §1).
- * WHERE: ModelCard (this folder); routes/models; routes/settings (About: where the speech engine runs).
+ * WHERE: ModelCard (this folder); routes/models.
  */
 import {
   CircleAlertIcon,

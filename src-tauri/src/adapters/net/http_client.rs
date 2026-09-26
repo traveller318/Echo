@@ -7,7 +7,7 @@
  *        redirect hop (a CDN answering for Hugging Face must itself be allowed; anything else is an error, not a
  *        silent follow). The network PermissionGate is asked before each request and before each chunk, so
  *        switching offline mode on stops a running download within one chunk with the factory's own error
- *        (`PermissionDenied { network }`). TLS is rustls on the `ring` provider (no cmake or NASM, 05 W24),
+ *        (its denial error, `Offline`). TLS is rustls on the `ring` provider (no cmake or NASM, 05 W24),
  *        installed as the process default before the client is built because reqwest panics without one
  *        (05 W41); certificates are checked by Windows through rustls-platform-verifier. A read timeout, not a total
  *        one, ends a stalled transfer (HttpPolicy), and every failure is `Network` with the cause chain as log
@@ -168,7 +168,7 @@ impl HttpBody {
         self.start
     }
 
-    /// The next bytes, or None at the end of the body; `PermissionDenied { network }` once offline mode is on.
+    /// The next bytes, or None at the end of the body; the gate's denial error (`Offline`) once offline mode is on.
     pub async fn chunk(&mut self) -> PortResult<Option<impl AsRef<[u8]> + use<>>> {
         self.gate.require()?;
         self.response

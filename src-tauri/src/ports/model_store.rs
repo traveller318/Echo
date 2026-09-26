@@ -29,7 +29,7 @@ pub trait ModelStore: Send + Sync {
 
     /// Downloads every file, resuming a partial download, verifies each hash and installs atomically (replacing a
     /// damaged install). Fails with `Network` when a host cannot be reached or the connection drops (what arrived is
-    /// kept for the next call), `PermissionDenied { network }` when offline mode is switched on, and `ModelCorrupt`
+    /// kept for the next call), `Offline` when offline mode is switched on, and `ModelCorrupt`
     /// when a hash does not match (that file is discarded).
     fn download<'a>(
         &'a self,

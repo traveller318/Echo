@@ -1,0 +1,11 @@
+Microsoft Visual C++ Runtime 14.51.36247
+
+Files: msvcp140.dll, msvcp140_1.dll, vcruntime140.dll, vcruntime140_1.dll (in the onnxruntime folder)
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+These files are Distributable Code of Microsoft Visual Studio Build Tools, redistributed unmodified
+as part of this application under the Microsoft Visual Studio license terms:
+https://visualstudio.microsoft.com/license-terms/
+
+The list of redistributable files and the conditions for redistributing them:
+https://aka.ms/vs/18/redistribution

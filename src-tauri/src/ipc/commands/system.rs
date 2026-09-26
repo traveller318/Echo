@@ -13,8 +13,8 @@
  *        `app_open_page` serves surfaces without the main window's router (the pill's "Set up" and "Open"): the
  *        window is shown first, so the event reaches a live page; the page is a NavId, so only registry pages exist.
  *        About's memory is read at the call from the ProcessStats port; a failed read is logged and shown as
- *        unknown, never an error, because About must always open. The update commands join this group with their
- *        step.
+ *        unknown, never an error, because About must always open. The update commands are their own group
+ *        (ipc/commands/updates.rs).
  * WHERE: Registered through `ipc::commands::catalog`; called from the UI as `commands.appearanceGet()` by
  *        src/lib/appearance.ts and as `commands.appOpenLogsDir()` / `commands.appOpenMicPrivacySettings()` by the
  *        app shell's error actions (src/app/shell/use-app-error-action.ts), later by onboarding and About;

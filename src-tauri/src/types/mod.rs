@@ -18,6 +18,7 @@ mod audio;
 mod calendar;
 mod clipboard;
 mod command;
+mod credits;
 mod delivery;
 mod durability;
 mod engine;
@@ -72,6 +73,7 @@ pub use audio::{
 pub use calendar::{InvalidDate, LocalDate};
 pub use clipboard::ClipboardHistory;
 pub use command::{CommandSpec, Reentrancy};
+pub use credits::ThirdPartyCredit;
 pub use delivery::{ClipboardRestore, CopyReason, DeliveryPlan, DeliveryPolicy, DeliveryReport};
 pub use durability::{RecoveryReport, RetentionPolicy, RetentionReport};
 pub use engine::{
@@ -147,4 +149,4 @@ pub use transcript::{
 };
 pub use tray::{TrayAction, TrayItemSpec};
 pub use units::{ByteCount, MonotonicMs, UnixMs};
-pub use update::UpdateStatus;
+pub use update::{StartupCheck, UpdateStatus};

@@ -22,7 +22,7 @@ import { useModelActions, useModels, useModelTransfers } from "@/hooks";
 import { describeAppError, toAppError } from "@/lib/app-error";
 import type { OnboardingStepProps } from "./step-props";
 
-const OFFLINE = describeAppError({ code: "PermissionDenied", permission: "network" });
+const OFFLINE = describeAppError({ code: "Offline" });
 
 const OFFERED: readonly SecondaryModelAction[] = ["import"];
 

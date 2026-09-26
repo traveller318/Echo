@@ -203,9 +203,7 @@ mod tests {
         );
         assert_eq!(
             block_on(factory::run(&harness.ctx, &DOWNLOAD, parakeet(), download)),
-            Err(AppError::PermissionDenied {
-                permission: Permission::Network
-            })
+            Err(AppError::Offline)
         );
         assert_eq!(
             block_on(factory::run(&harness.ctx, &SHARED, (), list))

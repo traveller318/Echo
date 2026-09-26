@@ -1,9 +1,11 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: FakeUpdater, fake update check, disabled updater test, update available test
- * WHAT:  FakeUpdater: an Updater that is either disabled (the shipped behaviour) or offers a given version.
- * WHY:   The update commands and caps-driven UI hiding (02 §11) need both paths tested even though this build has
- *        no update source. `install` follows the port contract: nothing to install is `NotFound { update }`.
- * WHERE: `updates_check` / `updates_install` command tests; registry caps tests.
+ * SOURCE OF TRUTH KEYWORDS: FakeUpdater, fake update check, disabled updater test, update available test, check count, failed update check
+ * WHAT:  FakeUpdater: an Updater that is either disabled (the shipped behaviour) or offers a given version; it counts
+ *        the checks and installs it was asked for and can fail the next check.
+ * WHY:   The update commands, the automatic check and caps-driven UI hiding (02 §11) need both paths tested even
+ *        though this build has no update source; the check count proves nothing asks an unavailable updater (no
+ *        update network call). `install` follows the port contract: nothing to install is `NotFound { update }`.
+ * WHERE: `updates_check` / `updates_install` command tests; pipeline/updates.rs tests; registry caps tests.
  */
 
 use std::sync::Mutex;
@@ -11,14 +13,16 @@ use std::sync::Mutex;
 use super::lock;
 use crate::{
     ports::Updater,
-    types::{AppError, BoxFuture, PortResult, ResourceKind, UpdateStatus, UpdaterCaps},
+    types::{AppError, BoxFuture, PortError, PortResult, ResourceKind, UpdateStatus, UpdaterCaps},
 };
 
 /// A scripted updater.
 pub struct FakeUpdater {
     caps: UpdaterCaps,
     status: Mutex<UpdateStatus>,
+    checks: Mutex<usize>,
     installs: Mutex<usize>,
+    next_check_error: Mutex<Option<PortError>>,
 }
 
 impl FakeUpdater {
@@ -27,7 +31,9 @@ impl FakeUpdater {
         Self {
             caps: UpdaterCaps { available: false },
             status: Mutex::new(UpdateStatus::NotConfigured),
+            checks: Mutex::new(0),
             installs: Mutex::new(0),
+            next_check_error: Mutex::new(None),
         }
     }
 
@@ -39,12 +45,24 @@ impl FakeUpdater {
                 version: version.to_owned(),
                 notes: None,
             }),
+            checks: Mutex::new(0),
             installs: Mutex::new(0),
+            next_check_error: Mutex::new(None),
         }
+    }
+
+    /// How many times `check` was called.
+    pub fn checks(&self) -> usize {
+        *lock(&self.checks)
     }
 
     pub fn installs(&self) -> usize {
         *lock(&self.installs)
+    }
+
+    /// The next `check` fails with `error` (a source that cannot be reached).
+    pub fn fail_next_check(&self, error: PortError) {
+        *lock(&self.next_check_error) = Some(error);
     }
 }
 
@@ -54,7 +72,14 @@ impl Updater for FakeUpdater {
     }
 
     fn check(&self) -> BoxFuture<'_, PortResult<UpdateStatus>> {
-        Box::pin(async move { Ok(lock(&self.status).clone()) })
+        Box::pin(async move {
+            *lock(&self.checks) += 1;
+            let failure = lock(&self.next_check_error).take();
+            match failure {
+                Some(error) => Err(error),
+                None => Ok(lock(&self.status).clone()),
+            }
+        })
     }
 
     fn install(&self) -> BoxFuture<'_, PortResult<()>> {
@@ -108,5 +133,17 @@ mod tests {
         );
         assert!(matches!(poll_once(updater.install()), Poll::Ready(Err(_))));
         assert_eq!(updater.installs(), 1);
+        assert_eq!(updater.checks(), 2);
+    }
+
+    #[test]
+    fn a_failed_check_fails_once() {
+        let updater = FakeUpdater::offering("0.2.0");
+        updater.fail_next_check(PortError::new(AppError::Network).with_detail("unreachable"));
+        assert!(matches!(poll_once(updater.check()), Poll::Ready(Err(_))));
+        assert!(matches!(
+            poll_once(updater.check()),
+            Poll::Ready(Ok(UpdateStatus::Available { .. }))
+        ));
     }
 }

@@ -24,6 +24,7 @@ const REGISTRY: RegistryView = {
   ],
   engines: [],
   metrics: [],
+  credits: [],
 };
 
 const registryGet = vi.fn<() => Promise<RegistryView>>();

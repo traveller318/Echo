@@ -85,7 +85,10 @@ describe("transferSummary", () => {
 });
 
 describe("languagesSummary", () => {
-  const asr = (languages: string[]): EngineCaps => ({ ...ENTRY.engine.caps, languages }) as EngineCaps;
+  const asr = (languages: string[]): EngineCaps => {
+    const caps = ENTRY.engine.caps;
+    return caps.kind === "asr" ? { ...caps, languages } : caps;
+  };
 
   it("names a few languages and counts the rest", () => {
     expect(languagesSummary(asr(["en", "de"]), "en")).toBe("English, German");

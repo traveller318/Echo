@@ -9,7 +9,9 @@
  *        factory records the command name and request id, never its input. The file writer is blocking rather
  *        than a background worker, so the lines just before a crash or exit are never lost; at `info` Echo writes
  *        a few lines per command or take, so the cost is negligible. The panic hook logs the message and location,
- *        then runs the previous hook, so a panic is on disk even when no console is attached. Failing the live take
+ *        then runs the previous hook, so a panic is on disk even when no console is attached. The message is
+ *        logged with every quoted span blanked (`redact_quoted`): a panic message can quote the value it failed on
+ *        (a dependency's `assert_eq!` or `{:?}` of a string), and that value may be a transcript. Failing the live take
  *        is chained on later by app/panics.rs, once the session exists (02 §12). The level is a switch the filter
  *        reads per event (one relaxed atomic load), not a rebuilt subscriber, so it changes live without a restart;
  *        debug lines carry the same ids and timings, never text. The switch follows the same SettingsChanged event
@@ -132,13 +134,48 @@ fn install_panic_hook() {
         let location = info
             .location()
             .map(|location| format!("{}:{}", location.file(), location.line()));
-        tracing::error!(
-            message = info.payload_as_str().unwrap_or("non-text panic payload"),
-            location,
-            "panic"
-        );
+        let message = info
+            .payload_as_str()
+            .map_or_else(|| "non-text panic payload".to_owned(), redact_quoted);
+        tracing::error!(message, location, "panic");
         previous(info);
     }));
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: redact_quoted, panic message redaction, transcript never logged, quoted span, privacy
+ * WHAT:  `message` with the contents of every backtick- or double-quoted span replaced by `…` (the quotes stay, so
+ *        the shape of the message still reads); inside a span a backslash hides the next character, so a `\"`
+ *        that Debug printed inside a string never ends it; an unclosed quote blanks the rest.
+ * WHY:   A panic message can quote the value it failed on (`assert_eq!` and `{:?}` print strings in double
+ *        quotes; older std quoted a mis-sliced string in backticks), and logs must never hold transcript text
+ *        (02 §12). Single quotes are left alone: they are apostrophes in ordinary wording, and std uses them only
+ *        around one character.
+ * WHERE: install_panic_hook.
+ */
+fn redact_quoted(message: &str) -> String {
+    let mut redacted = String::with_capacity(message.len());
+    let mut open: Option<char> = None;
+    let mut escaped = false;
+    for ch in message.chars() {
+        match open {
+            Some(_) if escaped => escaped = false,
+            Some(_) if ch == '\\' => escaped = true,
+            Some(quote) if ch == quote => {
+                redacted.push(ch);
+                open = None;
+            }
+            Some(_) => {}
+            None => {
+                redacted.push(ch);
+                if matches!(ch, '`' | '"') {
+                    redacted.push('…');
+                    open = Some(ch);
+                }
+            }
+        }
+    }
+    redacted
 }
 
 #[cfg(test)]
@@ -201,5 +238,29 @@ mod tests {
         for hidden in ["before the switch", "never written", "after the switch"] {
             assert!(!text.contains(hidden), "{hidden} leaked into {text}");
         }
+    }
+
+    #[test]
+    fn panic_messages_lose_the_text_they_quote() {
+        let spoken = "meet me at noon";
+        let asserted =
+            format!("assertion `left == right` failed\n  left: {spoken:?}\n right: \"\"");
+        let redacted = redact_quoted(&asserted);
+        assert!(!redacted.contains("noon"), "{redacted}");
+        assert!(redacted.contains("assertion `…` failed"), "{redacted}");
+        assert_eq!(
+            redact_quoted("byte index 5 is not a char boundary; it is inside 'é' of `privé words`"),
+            "byte index 5 is not a char boundary; it is inside 'é' of `…`"
+        );
+        assert_eq!(
+            redact_quoted(r#"bad value "secret" at `x`"#),
+            r#"bad value "…" at `…`"#
+        );
+        assert_eq!(redact_quoted("can't open \"half"), "can't open \"…");
+        assert_eq!(redact_quoted("no quotes"), "no quotes");
+
+        let quoted_speech = format!("{:?}", "he said \"meet at noon\" ok");
+        let redacted = redact_quoted(&format!("left: {quoted_speech} right: \"\""));
+        assert_eq!(redacted, "left: \"…\" right: \"…\"");
     }
 }

@@ -25,7 +25,7 @@
 use crate::{
     ipc::{CommandCtx, factory::echo_command},
     pipeline::{settings_effects::SettingsEffects, settings_store},
-    registry::{engines, hotkeys, metrics, nav, settings},
+    registry::{credits, engines, hotkeys, metrics, nav, settings},
     types::{
         AdapterCaps, AppError, PortError, PortResult, RegistryView, ResourceKind, SettingEntry,
         SettingKey, SettingValue, SettingsAvailability, SettingsChanged, SettingsResetInput,
@@ -90,6 +90,7 @@ pub async fn get_registry(_: &CommandCtx, (): ()) -> Result<RegistryView, AppErr
         nav: nav::items().into_iter().cloned().collect(),
         engines: engines::specs(),
         metrics: metrics::METRICS.to_vec(),
+        credits: credits::CREDITS.to_vec(),
     })
 }
 
@@ -506,12 +507,7 @@ mod tests {
             set_input(&keys::OFFLINE_MODE, SettingValue::Bool(true)),
         )
         .unwrap();
-        assert_eq!(
-            download(ctx),
-            Err(AppError::PermissionDenied {
-                permission: Permission::Network
-            })
-        );
+        assert_eq!(download(ctx), Err(AppError::Offline));
     }
 
     #[test]

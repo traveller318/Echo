@@ -293,16 +293,11 @@ fn when_the_waits_run_out_the_download_fails_and_keeps_its_partial() {
 #[test]
 fn a_download_refused_by_offline_mode_is_not_retried() {
     let rig = Rig::new();
-    rig.store.fail_next(
-        AppError::PermissionDenied {
-            permission: crate::types::Permission::Network,
-        }
-        .into(),
-    );
-    assert!(matches!(
+    rig.store.fail_next(AppError::Offline.into());
+    assert_eq!(
         app_error(block_on(rig.manager.download(&PARAKEET_TDT_V3))),
-        AppError::PermissionDenied { .. }
-    ));
+        AppError::Offline
+    );
     assert!(!rig.phases(&PARAKEET_TDT_V3).contains(&ModelPhase::Waiting));
 }
 

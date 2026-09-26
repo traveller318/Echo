@@ -34,6 +34,7 @@ const REGISTRY: RegistryView = {
   nav: [NAV, { id: "settings", label: "Settings", icon: "settings", route: "/settings", order: 3 }],
   engines: [],
   metrics: [],
+  credits: [],
 };
 
 const PARAKEET_ENGINE: EngineSpec = {

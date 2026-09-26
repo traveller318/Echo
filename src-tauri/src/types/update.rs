@@ -1,11 +1,12 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: UpdateStatus, update check, NotConfigured, UpToDate, update available, DisabledUpdater
+ * SOURCE OF TRUTH KEYWORDS: UpdateStatus, update check, NotConfigured, UpToDate, update available, DisabledUpdater, StartupCheck, automatic update check outcome
  * WHAT:  UpdateStatus: the answer to "is there a newer Echo?": no update source is configured, already current,
- *        or a newer version is available.
+ *        or a newer version is available. StartupCheck: what the automatic check did (never crosses IPC).
  * WHY:   Updates ship disabled (02 §11): the `DisabledUpdater` answers `not_configured` without any network call,
  *        and the UI hides update controls from `UpdaterCaps.available`. A future update source is a new adapter
  *        returning the other variants; nothing else changes.
- * WHERE: `Updater::check` (ports/updater.rs); returned to the UI by `updates_check`.
+ * WHERE: `Updater::check` (ports/updater.rs); returned to the UI by `updates_check`. StartupCheck is returned by
+ *        pipeline/updates.rs `check_at_startup` and logged by app/bootstrap.
  */
 
 use serde::{Deserialize, Serialize};
@@ -24,6 +25,21 @@ pub enum UpdateStatus {
         /// Release notes, when the source provides them.
         notes: Option<String>,
     },
+}
+
+/// What the automatic update check did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StartupCheck {
+    /// This build has no update source; nothing was asked.
+    Unavailable,
+    /// `updates.auto_check` is off.
+    Off,
+    /// Offline mode is on, or the network permission could not be read (logged).
+    Offline,
+    /// The source answered (a found update was toasted).
+    Checked(UpdateStatus),
+    /// The source could not be asked (logged).
+    Failed,
 }
 
 #[cfg(test)]

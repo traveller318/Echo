@@ -10,9 +10,10 @@
  * WHERE: Imported through `@/lib` by any UI that shows an AppError (toasts, the pill error state, form and query
  *        errors); types come from the generated `@/bindings`.
  */
-import type { AppError, Permission, ResourceKind } from "@/bindings";
+import type { AppError, AppErrorCode, Permission, ResourceKind } from "@/bindings";
 
-export type AppErrorCode = AppError["code"];
+/** The fieldless code (generated from Rust `AppErrorCode`, equal to `AppError["code"]`), re-exported for `@/lib` callers. */
+export type { AppErrorCode };
 
 /** The AppError variant with the given code. */
 export type AppErrorOf<C extends AppErrorCode> = Extract<AppError, { code: C }>;

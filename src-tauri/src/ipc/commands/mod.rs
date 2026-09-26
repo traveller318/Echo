@@ -11,8 +11,9 @@
  *        metrics computes the dashboard's summary and activity; models lists, downloads, cancels, imports,
  *        verifies, removes and activates models; engine reports where the speech engine runs and measures
  *        it again; audio lists devices and runs the
- *        microphone check; system holds appearance, the logs / privacy openers, the page opener and About; hotkeys
- *        pauses Echo's hotkeys and reports it; pill takes the pill page's button areas and exit).
+ *        microphone check; system holds appearance, the logs / privacy openers, the page opener and About; updates
+ *        checks for and installs a newer Echo; hotkeys pauses Echo's hotkeys and reports it; pill takes the pill
+ *        page's button areas and exit).
  */
 
 pub mod audio;
@@ -26,6 +27,7 @@ pub mod pill;
 pub mod session;
 pub mod settings;
 pub mod system;
+pub mod updates;
 
 use tauri::Runtime;
 use tauri_specta::{Commands, collect_commands};
@@ -68,6 +70,8 @@ pub fn catalog<R: Runtime>() -> Commands<R> {
         system::app_open_mic_privacy_settings,
         system::app_open_page,
         system::app_about,
+        updates::updates_check,
+        updates::updates_install,
         hotkeys::hotkeys_status,
         hotkeys::hotkeys_pause,
         hotkeys::hotkeys_capture,

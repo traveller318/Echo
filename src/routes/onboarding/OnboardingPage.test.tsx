@@ -41,6 +41,7 @@ const REGISTRY: RegistryView = {
   ],
   engines: [],
   metrics: [],
+  credits: [],
 };
 
 const STEPS: Readonly<Record<OnboardingStepSpec["id"], OnboardingStepSpec>> = {

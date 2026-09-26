@@ -19,7 +19,7 @@
 
 use std::sync::Arc;
 
-use super::reentrancy::ReentrancyLocks;
+use super::reentrancy::{ReentrancyGuard, ReentrancyLocks};
 use crate::{
     pipeline::{
         asr::AsrWorker,
@@ -37,7 +37,7 @@ use crate::{
         PrivacyConsent, ProcessStats, SystemAppearance, SystemLauncher, Updater, WorkerScheduler,
     },
     services::Db,
-    types::{AppEvent, AppInfo, AppPaths, SettingsSnapshot, SharedSettings},
+    types::{AppError, AppEvent, AppInfo, AppPaths, Reentrancy, SettingsSnapshot, SharedSettings},
 };
 
 /// The parts a CommandCtx is built from.
@@ -339,6 +339,12 @@ impl CommandCtx {
     /// The factory's keyed reentrancy locks.
     pub(super) fn locks(&self) -> &ReentrancyLocks {
         &self.locks
+    }
+
+    /// Takes `reentrancy`'s key for work that runs outside a command (the automatic update check), so it never
+    /// overlaps the commands that share the key; `Busy` while one of them runs. Released when the guard drops.
+    pub fn hold(&self, reentrancy: Reentrancy) -> Result<ReentrancyGuard<'_>, AppError> {
+        self.locks.acquire(reentrancy)
     }
 }
 

@@ -1,15 +1,19 @@
 /*!
  * SOURCE OF TRUTH KEYWORDS: permission registry, PERMISSIONS, PermissionCtx, permission check, permission gate, offline mode denies network, microphone consent, preflight
- * WHAT:  One entry per Permission with the fn that decides whether it holds right now, the context those fns
- *        read (PermissionCtx: resolved settings and the privacy consent port), `check` to run one and `gate` to
- *        hand the same check to an adapter that must ask again while it works.
+ * WHAT:  One entry per Permission with the fn that decides whether it holds right now and the AppError a denial
+ *        reports, the context those fns read (PermissionCtx: resolved settings and the privacy consent port),
+ *        `check` to run one, `denial` for its error, and `gate` to hand both to an adapter that must ask again
+ *        while it works.
  * WHY:   The command factory's preflight (02 §4.1 step 3) and onboarding ask the registry instead of each
  *        command re-checking (root CLAUDE.md §3). Network is denied unless offline mode is explicitly off, so a
  *        missing value fails closed (privacy first, 02 §10). The microphone asks Windows privacy consent through
  *        a port (05 W13). Clipboard and input injection have no OS consent gate on Windows desktop: a busy
  *        clipboard (05 W4) and an elevated paste target (05 W2) are runtime outcomes handled by delivery, not
  *        permissions, so their checks grant. A failed consent read is returned, never guessed; the caller logs
- *        the detail and decides. PermissionCtx lives here because it holds a port handle (types/ cannot).
+ *        the detail and decides. The denial error is part of the entry because only the entry knows why it
+ *        denies: offline mode is the one reason Network is refused, so it reports `Offline`, while a blocked
+ *        microphone reports `PermissionDenied { microphone }`. A new permission is one entry, never a branch in
+ *        the factory or an adapter. PermissionCtx lives here because it holds a port handle (types/ cannot).
  * WHERE: `check` is called by ipc/factory.rs (preflight), onboarding and pipeline/models (`models_list`'s network
  *        state); `gate` by app/bootstrap for the HTTP client (adapters/net); tests below.
  */
@@ -37,6 +41,8 @@ pub type PermissionCheck = fn(&PermissionCtx<'_>) -> PortResult<PermissionState>
 pub struct PermissionEntry {
     pub permission: Permission,
     pub check: PermissionCheck,
+    /// What the UI is told when `check` answers Denied; None = `PermissionDenied { permission }`.
+    pub denied: Option<AppError>,
 }
 
 /// Every permission with its check.
@@ -44,36 +50,51 @@ pub const PERMISSIONS: &[PermissionEntry] = &[
     PermissionEntry {
         permission: Permission::Microphone,
         check: microphone,
+        denied: None,
     },
     PermissionEntry {
         permission: Permission::Network,
         check: network,
+        denied: Some(AppError::Offline),
     },
     PermissionEntry {
         permission: Permission::Clipboard,
         check: always_granted,
+        denied: None,
     },
     PermissionEntry {
         permission: Permission::InputInjection,
         check: always_granted,
+        denied: None,
     },
 ];
 
-/// Whether `permission` holds right now.
-pub fn check(permission: Permission, ctx: &PermissionCtx<'_>) -> PortResult<PermissionState> {
-    let entry = PERMISSIONS
+fn entry(permission: Permission) -> Option<&'static PermissionEntry> {
+    PERMISSIONS
         .iter()
         .find(|entry| entry.permission == permission)
-        .ok_or_else(|| {
-            PortError::new(AppError::Internal)
-                .with_detail(format!("no registry entry for permission {permission:?}"))
-        })?;
+}
+
+/// Whether `permission` holds right now.
+pub fn check(permission: Permission, ctx: &PermissionCtx<'_>) -> PortResult<PermissionState> {
+    let entry = entry(permission).ok_or_else(|| {
+        PortError::new(AppError::Internal)
+            .with_detail(format!("no registry entry for permission {permission:?}"))
+    })?;
     (entry.check)(ctx)
+}
+
+/// The error a denied `permission` reports: its entry's `denied`, else `PermissionDenied { permission }`.
+pub fn denial(permission: Permission) -> AppError {
+    entry(permission)
+        .and_then(|entry| entry.denied.clone())
+        .unwrap_or(AppError::PermissionDenied { permission })
 }
 
 /**
  * SOURCE OF TRUTH KEYWORDS: permission gate, live permission check, offline mode mid-download, gate builder
- * WHAT:  A PermissionGate that runs `permission`'s registry check over the settings in effect at each call.
+ * WHAT:  A PermissionGate that runs `permission`'s registry check over the settings in effect at each call and
+ *        reports the entry's denial error.
  * WHY:   The factory checks once before a command; a long transfer must stop the moment offline mode is switched
  *        on, with the same answer the factory would give, without the adapter knowing any setting.
  * WHERE: app/bootstrap (the HTTP client's network gate).
@@ -85,6 +106,7 @@ pub fn gate(
 ) -> PermissionGate {
     PermissionGate::new(
         permission,
+        denial(permission),
         Arc::new(move || {
             check(
                 permission,
@@ -215,10 +237,23 @@ mod tests {
         )]));
         assert_eq!(
             network.require().map_err(PortError::into_app_error),
-            Err(AppError::PermissionDenied {
-                permission: Permission::Network
-            })
+            Err(AppError::Offline)
         );
+    }
+
+    #[test]
+    fn offline_mode_is_the_networks_denial_and_the_rest_name_their_permission() {
+        assert_eq!(denial(Permission::Network), AppError::Offline);
+        for permission in [
+            Permission::Microphone,
+            Permission::Clipboard,
+            Permission::InputInjection,
+        ] {
+            assert_eq!(
+                denial(permission),
+                AppError::PermissionDenied { permission }
+            );
+        }
     }
 
     #[test]

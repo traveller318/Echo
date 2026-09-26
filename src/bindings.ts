@@ -108,6 +108,13 @@ export const commands = {
 	appOpenPage: (input: OpenPageInput) => typedError<null, AppError>(__TAURI_INVOKE("app_open_page", { input })),
 	/**  Echo's version, whether this is a development build, and how much memory Echo uses right now. */
 	appAbout: () => typedError<AboutView, AppError>(__TAURI_INVOKE("app_about")),
+	/**  Looks for a newer Echo; `not_configured` when this build has no update source (nothing is asked). */
+	updatesCheck: () => typedError<UpdateStatus, AppError>(__TAURI_INVOKE("updates_check")),
+	/**
+	 *  Installs the update the last check found; `Busy` while a take, a History retry or a model transfer is in
+	 *  progress, `NotFound { update }` when there is nothing to install.
+	 */
+	updatesInstall: () => typedError<null, AppError>(__TAURI_INVOKE("updates_install")),
 	/**  Whether Echo's hotkeys are paused by the user, or off while a hotkey field captures a combination. */
 	hotkeysStatus: () => typedError<HotkeyStatus, AppError>(__TAURI_INVOKE("hotkeys_status")),
 	/**  Pauses (`paused: true`) or resumes Echo's hotkeys, like the tray's "Pause hotkeys"; returns the new status. */
@@ -1067,6 +1074,8 @@ export type RegistryView = {
 	nav: NavItem[],
 	engines: EngineSpec[],
 	metrics: MetricSpec[],
+	/**  Third-party components the installer ships, with their licenses (About). */
+	credits: ThirdPartyCredit[],
 };
 
 /**  What a `NotFound` error could not find. */
@@ -1294,6 +1303,22 @@ export type TextPair = {
 
 /**  The `general.theme` choice: follow Windows, or always light or dark. */
 export type ThemePreference = "system" | "light" | "dark";
+
+/**  One third-party component the installer ships, with the license it is used under. */
+export type ThirdPartyCredit = {
+	/**  Kebab-case registry id. */
+	id: string,
+	/**  Name and pinned version, as the user reads it. */
+	label: string,
+	/**  SPDX id where one exists (`MIT`, `OFL-1.1`), otherwise the name of the vendor's terms. */
+	license: string,
+	/**  The copyright or credit line the license asks to be shown. */
+	attribution: string,
+	/**  License texts shipped in the installed `licenses/` folder (file names). */
+	license_files: string[],
+	/**  Installed resource files this credit covers, relative to the resources folder (`onnxruntime/…`). */
+	bundled_files: string[],
+};
 
 /**  One take in full. */
 export type Transcript = {

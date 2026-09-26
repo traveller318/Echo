@@ -15,7 +15,8 @@ export const NAVIGATION_KEYS = ["ArrowDown", "ArrowUp", "Home", "End", "PageDown
 export type NavigationKey = (typeof NAVIGATION_KEYS)[number];
 
 export function isNavigationKey(key: string): key is NavigationKey {
-  return (NAVIGATION_KEYS as readonly string[]).includes(key);
+  const keys: readonly string[] = NAVIGATION_KEYS;
+  return keys.includes(key);
 }
 
 /** `index` limited to the rows that exist (0 when there are none). */

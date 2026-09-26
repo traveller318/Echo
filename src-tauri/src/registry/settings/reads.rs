@@ -1,12 +1,12 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: typed setting reads, sound_cues, notice_shown, onboarded, launch_at_startup, start_minimized, debug_log, theme read, transcription reads, polish reads, remove_fillers, dictionary, llm_polisher, trailing_space, delivery_policy, input_device, session_policy, record_mode, retention_policy, typing_wpm
+ * SOURCE OF TRUTH KEYWORDS: typed setting reads, sound_cues, notice_shown, onboarded, launch_at_startup, start_minimized, debug_log, theme read, transcription reads, polish reads, remove_fillers, dictionary, llm_polisher, trailing_space, delivery_policy, input_device, session_policy, record_mode, retention_policy, typing_wpm, auto_check_updates
  * WHAT:  Typed reads of a SettingsSnapshot for the settings the core acts on.
  * WHY:   Values are stored as tagged SettingValues and enum text; spelling them is the registry's job, so the
  *        pipeline asks here instead of matching kinds or comparing strings. A resolved snapshot always holds a
  *        valid value for every key, so each fallback only guards a snapshot built outside `resolve` and uses the
  *        spec's own default.
  * WHERE: Re-exported by registry/settings; read by pipeline/appearance, pipeline/asr, pipeline/polish,
- *        pipeline/delivery, pipeline/metrics (typing_wpm) and the session actor (session_policy, input_device,
+ *        pipeline/delivery, pipeline/metrics (typing_wpm), pipeline/updates (auto_check_updates) and the session actor (session_policy, input_device,
  *        delivery_policy).
  */
 
@@ -133,6 +133,11 @@ pub fn launch_at_startup(settings: &SettingsSnapshot) -> bool {
 /// `general.start_minimized`: a start at sign-in keeps the main window hidden.
 pub fn start_minimized(settings: &SettingsSnapshot) -> bool {
     bool_or_default(settings, &keys::START_MINIMIZED)
+}
+
+/// `updates.auto_check`: look for a newer Echo shortly after startup (only acted on while an update source exists).
+pub fn auto_check_updates(settings: &SettingsSnapshot) -> bool {
+    bool_or_default(settings, &keys::UPDATES_AUTO_CHECK)
 }
 
 /// `general.debug_log`: the log files take debug lines too.

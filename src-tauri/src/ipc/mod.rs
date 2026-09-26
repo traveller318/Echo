@@ -15,3 +15,4 @@ mod reentrancy;
 #[cfg(test)]
 pub use context::testing;
 pub use context::{CommandCtx, CommandDeps};
+pub use reentrancy::ReentrancyGuard;

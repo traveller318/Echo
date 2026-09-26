@@ -280,6 +280,7 @@ impl Rig {
         let (reading, budget) = (Arc::clone(&online), Arc::clone(&gate_budget));
         let gate = PermissionGate::new(
             Permission::Network,
+            AppError::Offline,
             Arc::new(move || {
                 let left = budget.load(Ordering::SeqCst);
                 if left != usize::MAX {
@@ -570,23 +571,13 @@ fn offline_mode_blocks_a_download_and_stops_one_that_is_running() {
     let big = content(10, BIG);
     let manifest = rig.serve(&[("model.onnx", &big)]);
     rig.online.store(false, Ordering::SeqCst);
-    assert_eq!(
-        app_error(rig.download(&manifest).0),
-        AppError::PermissionDenied {
-            permission: Permission::Network
-        }
-    );
+    assert_eq!(app_error(rig.download(&manifest).0), AppError::Offline);
     assert!(rig.server.requests().is_empty());
 
     rig.online.store(true, Ordering::SeqCst);
     // The request and a few chunks pass, then offline mode is on.
     rig.gate_budget.store(4, Ordering::SeqCst);
-    assert_eq!(
-        app_error(rig.download(&manifest).0),
-        AppError::PermissionDenied {
-            permission: Permission::Network
-        }
-    );
+    assert_eq!(app_error(rig.download(&manifest).0), AppError::Offline);
     assert!(matches!(
         rig.store.status(&manifest).unwrap(),
         ModelStatus::Partial { .. }

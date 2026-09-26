@@ -91,7 +91,7 @@ const METRICS: MetricSpec[] = [
   },
 ];
 
-const REGISTRY: RegistryView = { settings: [], sections: [], hotkeys: [], nav: [...NAV], engines: [], metrics: METRICS };
+const REGISTRY: RegistryView = { settings: [], sections: [], hotkeys: [], nav: [...NAV], engines: [], metrics: METRICS, credits: [] };
 
 function summary(range: MetricsSummary["range"], words: number | null, streak: number | null): MetricsSummary {
   return {

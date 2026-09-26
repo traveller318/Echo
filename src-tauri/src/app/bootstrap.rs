@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: bootstrap, composition root, startup sequence, ASR worker, session actor, pill presenter, event fan-out, start_speech_engine, prepare_session, schedule_warm_up, stop_session, command context, startup recovery, retention sweeper, panic hook, sound player, audio device watch, day watch, model manager, HTTP client, hotkey gate, power events, launch at startup, process stats
+ * SOURCE OF TRUTH KEYWORDS: bootstrap, composition root, startup sequence, ASR worker, session actor, pill presenter, event fan-out, start_speech_engine, prepare_session, schedule_warm_up, stop_session, command context, startup recovery, retention sweeper, panic hook, sound player, audio device watch, day watch, model manager, HTTP client, hotkey gate, power events, launch at startup, process stats, updater choice, schedule_update_check
  * WHAT:  `start`: the startup sequence that runs before any window exists: resolve AppPaths from the Tauri path
  *        API, start local logging, open and migrate the database, settle the takes a crash left unfinished
  *        (pipeline/recovery.rs), resolve the stored settings over the registry defaults, start the appearance
@@ -16,13 +16,14 @@
  *        pill presenter over the overlay adapter, and manage the CommandCtx (settings;
  *        consent, appearance, launcher, microphone, thread-priority, hotkey, foreground-window, toast and
  *        main-window adapters; the ASR worker; the Delivery over the clipboard, paste and toast adapters; the
- *        session handle; the hotkey gate; the pill presenter; the retention handle; the disabled updater (02 §11);
+ *        session handle; the hotkey gate; the pill presenter; the retention handle; the updater this build ships (`updater`, 02 §11);
  *        the start-at-sign-in and process-stats adapters; the version; AppPaths, database, event sink) plus the
  *        overlay
  *        adapter itself, which app/windows.rs attaches to the pill window once it exists; returns the recovery report.
  *        `announce_recovery`, `prepare_session` and `schedule_warm_up`: once the windows exist, toast what recovery
  *        found, let the session bind its hotkeys, and STARTUP_IDLE_DELAY later load and warm the selected speech
- *        engine, the voice detector and the polish chain in the background (05 W19).
+ *        engine, the voice detector and the polish chain in the background (05 W19). `schedule_update_check`:
+ *        AUTO_CHECK_DELAY later, run the automatic update check (which does nothing without an update source).
  *        `stop_session`: at exit, finalize an open recording.
  * WHY:   The composition root is the only place that names a concrete adapter or resolves a path (02 §3.2,
  *        05 W23); every other layer receives ports, AppPaths and the Db handle. Logging starts first so every
@@ -45,8 +46,8 @@
  *        are in front (05 W35). Recovery runs right after the database opens, before the session, the sweeper or
  *        any command exists, so no take can be live while stuck rows are settled; a recovery failure is logged and
  *        startup goes on (the next start retries), since the takes' audio stays on disk either way (02 §7.3).
- * WHERE: `start` is called once by app::run before the event loop, `prepare_session` and `schedule_warm_up` on
- *        RunEvent::Ready, `stop_session` on RunEvent::Exit; its parts (TauriEventSink, logging) live next to it in
+ * WHERE: `start` is called once by app::run before the event loop, `prepare_session`, `schedule_warm_up` and
+ *        `schedule_update_check` on RunEvent::Ready, `stop_session` on RunEvent::Exit; its parts (TauriEventSink, logging) live next to it in
  *        app/.
  */
 
@@ -93,16 +94,17 @@ use crate::{
         retention::{RetentionDeps, RetentionHandle},
         session::{self, SessionActor, SessionConfig, SessionEngines, SessionHandle},
         sound_cues::SoundCues,
+        updates::{self, StartupCheckDeps},
     },
     ports::{
         AudioCapture, EventSink, ForegroundApp, HotkeyService, LaunchAtLogin, Notifier,
-        PowerEvents, PrivacyConsent, SystemAppearance, WorkerScheduler,
+        PowerEvents, PrivacyConsent, SystemAppearance, Updater, WorkerScheduler,
     },
     registry::{self, engines::BuildCtx},
     services::{self, Db},
     types::{
         AcceleratorPolicy, AppEvent, AppInfo, AppPaths, Permission, PortError, RecoveryReport,
-        SharedSettings,
+        Reentrancy, SharedSettings,
     },
 };
 
@@ -268,7 +270,7 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<RecoveryReport, Box<dyn Error>>
         main_window: Arc::new(TauriMainWindow::new(app.handle().clone(), MAIN_WINDOW)),
         retention,
         models,
-        updater: Arc::new(DisabledUpdater::new()),
+        updater: updater(),
         launch: launch_at_login,
         process: Arc::new(Win32ProcessStats::new()),
         app_info: AppInfo {
@@ -351,6 +353,40 @@ pub fn schedule_warm_up<R: Runtime>(app: &AppHandle<R>) {
             Some(ctx) => ctx.session().warm(),
             None => tracing::error!("the warm-up ran before the command context was managed"),
         }
+    });
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: schedule_update_check, automatic update check, AUTO_CHECK_DELAY, updates.auto_check at startup
+ * WHAT:  AUTO_CHECK_DELAY after the windows exist, runs the automatic update check over the settings in effect then;
+ *        returns at once.
+ * WHY:   The check must never compete with the first paint or the speech engine's load (05 W19), and its rules (no
+ *        source, setting off, offline) live in pipeline/updates.rs, so this only waits and hands over the ports. It
+ *        holds the `updates` key the check and install commands share, so it never overlaps them (a command already
+ *        running means the user is checking; the automatic check is skipped). With this build's DisabledUpdater it
+ *        finishes without asking anything (02 §11).
+ * WHERE: app::run on RunEvent::Ready, after schedule_warm_up.
+ */
+pub fn schedule_update_check<R: Runtime>(app: &AppHandle<R>) {
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(registry::updates::AUTO_CHECK_DELAY).await;
+        let Some(ctx) = handle.try_state::<CommandCtx>() else {
+            tracing::error!("the update check ran before the command context was managed");
+            return;
+        };
+        let Ok(_updates) = ctx.hold(Reentrancy::Exclusive("updates")) else {
+            tracing::debug!("an update command is running; the automatic check is skipped");
+            return;
+        };
+        let outcome = updates::check_at_startup(StartupCheckDeps {
+            updater: ctx.updater(),
+            settings: &ctx.settings(),
+            consent: ctx.consent(),
+            notifier: ctx.notifier(),
+        })
+        .await;
+        tracing::debug!(?outcome, "automatic update check finished");
     });
 }
 
@@ -438,6 +474,20 @@ fn watch_power<R: Runtime>(app: &App<R>, session: &SessionHandle) {
             "sleep and wake cannot be followed; hotkeys may need a restart after sleep"
         ),
     }
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: updater adapter choice, update source, DisabledUpdater, swap updater, future update endpoint
+ * WHAT:  The Updater this build ships: the DisabledUpdater (caps `available: false`, no update network call).
+ * WHY:   02 §11: Echo is installed on the owner's PC only and its repo is private, so there is no update source (a
+ *        private repo's GitHub Releases cannot serve an updater without shipping a token). This is the one place an
+ *        update source is chosen: a future one is a new adapter in adapters/updater returned here, its host in
+ *        registry/network.rs and its endpoint in tauri.conf.json; the commands, the automatic check and the UI
+ *        already follow its caps.
+ * WHERE: `start`, into CommandCtx.
+ */
+fn updater() -> Arc<dyn Updater> {
+    Arc::new(DisabledUpdater::new())
 }
 
 /**

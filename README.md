@@ -1,3 +1,10 @@
+<!--
+  SOURCE OF TRUTH KEYWORDS: README, install, privacy, build from source, local gate, licenses, third-party credits
+  WHAT:  The user-facing page of the repository: how to install Echo, what stays private, how to build and test it.
+  WHY:   The repository must stand on its own: it links to nothing outside the tracked files.
+  WHERE: GitHub repository front page.
+-->
+
 # Echo
 
 Local, private speech-to-text for Windows. Press a hotkey, speak, press it again, and polished text is pasted into the app you are using. Speech recognition and text cleanup run entirely on your machine: no account, no subscription, no usage limit, no telemetry.
@@ -34,6 +41,8 @@ pnpm install
 pnpm tauri dev          # run Echo in development mode
 ```
 
+The speech-recognition tests run the real Parakeet model, which is too large for the repository. Install it once before running the tests: start Echo with `pnpm tauri dev` and download the model during setup (or on the Models page). It lands in `%LOCALAPPDATA%\app.echo.desktop\models`, where the tests read it.
+
 Before any build, the local gate must pass:
 
 ```powershell
@@ -53,8 +62,8 @@ Then build the installer:
 pnpm tauri build        # installer lands in src-tauri/target/release/bundle/nsis/
 ```
 
-Architecture and design docs start at [`docs/00-START-HERE.md`](docs/00-START-HERE.md).
-
 ## License
 
-MIT. See [`LICENSE`](LICENSE). Model licenses and attributions are listed in the app under Settings → About. The bundled Inter typeface is © The Inter Project Authors under the SIL Open Font License 1.1 ([`src/styles/fonts/Inter-OFL.txt`](src/styles/fonts/Inter-OFL.txt)).
+Echo is MIT licensed. See [`LICENSE`](LICENSE).
+
+Echo ships third-party components under their own licenses: ONNX Runtime (MIT), DirectML (Microsoft Software License Terms), the Microsoft Visual C++ runtime (Visual Studio distributable code), the Silero VAD model (MIT), and the Inter and Poppins typefaces (SIL Open Font License 1.1). Their license texts are in [`src-tauri/resources/licenses`](src-tauri/resources/licenses) and [`src/styles/fonts`](src/styles/fonts), and the installer places them in its `licenses` folder. Models you download (Parakeet, CC BY 4.0; Qwen3, Apache 2.0) and the llama.cpp runtime (MIT) are credited on their cards on the app's Models page.

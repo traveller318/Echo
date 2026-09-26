@@ -1,8 +1,9 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: TempDir, test temp folder, source_resource_paths, installed_app_paths, dev model install, bundled resources in tests, cfg(test) helper
+ * SOURCE OF TRUTH KEYWORDS: TempDir, test temp folder, source_resource_paths, installed_app_paths, installed_resource_files, dev model install, bundled resources in tests, cfg(test) helper
  * WHAT:  TempDir: a fresh, uniquely named folder under the OS temp dir for one test, removed when dropped;
  *        `source_resource_paths`: AppPaths whose resources dir is the repository's `src-tauri/resources`;
- *        `installed_app_paths`: the same, over this machine's real Echo data folder (where downloaded models live).
+ *        `installed_app_paths`: the same, over this machine's real Echo data folder (where downloaded models live);
+ *        `installed_resource_files`: every file tauri.conf.json's `bundle.resources` installs, by installed path.
  * WHY:   Database, journal, logging and adapter tests all need real files without touching the user's data;
  *        one helper keeps the naming (unique per call, so parallel tests never share a folder) and the cleanup in
  *        one place. The bundle maps every resource to the same relative path it has in `src-tauri/resources`, so
@@ -16,6 +17,7 @@
  */
 
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
 };
@@ -65,4 +67,39 @@ pub fn installed_app_paths() -> AppPaths {
     let identifier = config["identifier"].as_str().unwrap();
     let local_data = std::env::var_os("LOCALAPPDATA").unwrap();
     source_resource_paths(&PathBuf::from(local_data).join(identifier))
+}
+
+/// Every file the installer puts in the resources folder, as `folder/file` with forward slashes, read from
+/// tauri.conf.json's `bundle.resources` map: a `dir/*` source installs each file in `dir` under its target folder,
+/// any other source installs one file at its target path.
+pub fn installed_resource_files() -> BTreeSet<String> {
+    let config: serde_json::Value =
+        serde_json::from_str(include_str!("../../tauri.conf.json")).unwrap();
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut installed = BTreeSet::new();
+    for (source, target) in config["bundle"]["resources"].as_object().unwrap() {
+        let target = target.as_str().unwrap();
+        match source.strip_suffix("/*") {
+            Some(folder) => {
+                for entry in fs::read_dir(manifest_dir.join(folder)).unwrap() {
+                    let entry = entry.unwrap();
+                    if entry.file_type().unwrap().is_file() {
+                        installed.insert(format!(
+                            "{}/{}",
+                            target.trim_end_matches('/'),
+                            entry.file_name().to_string_lossy()
+                        ));
+                    }
+                }
+            }
+            None => {
+                assert!(
+                    manifest_dir.join(source).is_file(),
+                    "{source} is not a file"
+                );
+                installed.insert(target.to_owned());
+            }
+        }
+    }
+    installed
 }

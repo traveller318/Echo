@@ -1,8 +1,8 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: globals.css, tailwind import, theme mapping, @theme inline reference, Poppins font-face, Inter numeric font-face, base styles, focus ring, animations, data-backdrop
+ * SOURCE OF TRUTH KEYWORDS: globals.css, tailwind import, theme mapping, @theme inline reference, Poppins font-face, Inter numeric font-face, base styles, focus ring, animations, data-backdrop, hidden scrollbar
  * WHAT:  Global stylesheet for both windows: loads Tailwind v4 and tokens.css, bundles Poppins (UI text) and Inter
  *        Variable (numerals), maps every token into Tailwind's theme, defines the enter/exit animations and the base layer (font, text colour,
- *        window background per backdrop, focus ring, icon stroke).
+ *        window background per backdrop, focus ring, icon stroke, hidden scrollbars).
  * WHY:   Tailwind's automatic source detection would crawl src-tauri/target, so `source("../")` limits scanning to
  *        src/ and the two HTML entries are added explicitly. `--*: initial` drops every default Tailwind value, so
  *        a class that is not a docs/04 token (`p-7`, `rounded-lg`, `text-white`) generates nothing; the lint catches
@@ -285,5 +285,15 @@
 
   svg.lucide {
     stroke-width: var(--icon-stroke);
+  }
+
+  /* Hidden scrollbars app-wide: WebView2 draws the classic Windows scrollbar (arrows + grey track), which clashes
+     with the glass surfaces. Regions stay scrollable by wheel, touch and keyboard. */
+  * {
+    scrollbar-width: none;
+  }
+
+  *::-webkit-scrollbar {
+    display: none;
   }
 }

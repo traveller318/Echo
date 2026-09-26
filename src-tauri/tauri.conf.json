@@ -85,7 +85,9 @@
     "resources": {
       "resources/onnxruntime/*": "onnxruntime/",
       "resources/models/*": "models/",
-      "resources/licenses/*": "licenses/"
+      "resources/licenses/*": "licenses/",
+      "../src/styles/fonts/Inter-OFL.txt": "licenses/Inter-OFL.txt",
+      "../src/styles/fonts/Poppins-OFL.txt": "licenses/Poppins-OFL.txt"
     },
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
     "windows": {
@@ -93,7 +95,9 @@
         "type": "embedBootstrapper"
       },
       "nsis": {
-        "installMode": "currentUser"
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico"
       }
     }
   }

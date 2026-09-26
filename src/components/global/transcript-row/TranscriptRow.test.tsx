@@ -63,7 +63,8 @@ describe("TranscriptRow", () => {
 
 describe("TranscriptStatusBadge", () => {
   it("pairs every status with a glyph and a label", () => {
-    const statuses = Object.keys(TRANSCRIPT_STATUS_LOOK) as TranscriptStatus[];
+    const isStatus = (key: string): key is TranscriptStatus => key in TRANSCRIPT_STATUS_LOOK;
+    const statuses = Object.keys(TRANSCRIPT_STATUS_LOOK).filter(isStatus);
     expect(statuses).toHaveLength(6);
     for (const status of statuses) {
       const { container, unmount } = render(<TranscriptStatusBadge status={status} />);

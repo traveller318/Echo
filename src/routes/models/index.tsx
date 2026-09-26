@@ -22,7 +22,7 @@ import { useModelActions, useModels, useModelTransfers } from "@/hooks";
 import { describeAppError, toAppError } from "@/lib/app-error";
 import { RemoveModelDialog } from "./_components/RemoveModelDialog";
 
-const OFFLINE_COPY = describeAppError({ code: "PermissionDenied", permission: "network" });
+const OFFLINE_COPY = describeAppError({ code: "Offline" });
 
 export default function ModelsPage({ nav }: NavPageProps) {
   const models = useModels();

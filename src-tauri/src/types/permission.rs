@@ -59,7 +59,7 @@ pub type PermissionCheckFn = dyn Fn() -> PortResult<PermissionState> + Send + Sy
 /**
  * SOURCE OF TRUTH KEYWORDS: PermissionGate, require permission, offline gate, network gate, repeated permission check
  * WHAT:  A permission check an adapter can run again at any moment: `require()` is Ok while the permission holds and
- *        `PermissionDenied { permission }` once it does not.
+ *        the permission's denial error (from its registry entry, e.g. `Offline` for Network) once it does not.
  * WHY:   The command factory checks a permission once, before the handler (02 §4.1); a model download runs for
  *        minutes, and offline mode switched on halfway must stop it at once (02 §10: "rejects everything" while
  *        offline). The gate is built in app/ from the registry's own check over the live settings, so the adapter
@@ -71,12 +71,18 @@ pub type PermissionCheckFn = dyn Fn() -> PortResult<PermissionState> + Send + Sy
 #[derive(Clone)]
 pub struct PermissionGate {
     permission: Permission,
+    /// Behind an Arc so the gate stays two pointers wide inside the HTTP body it travels with.
+    denied: Arc<AppError>,
     check: Arc<PermissionCheckFn>,
 }
 
 impl PermissionGate {
-    pub fn new(permission: Permission, check: Arc<PermissionCheckFn>) -> Self {
-        Self { permission, check }
+    pub fn new(permission: Permission, denied: AppError, check: Arc<PermissionCheckFn>) -> Self {
+        Self {
+            permission,
+            denied: Arc::new(denied),
+            check,
+        }
     }
 
     /// The permission this gate guards.
@@ -84,15 +90,12 @@ impl PermissionGate {
         self.permission
     }
 
-    /// Ok while the permission holds; `PermissionDenied { permission }` when it does not.
+    /// Ok while the permission holds; the gate's denial error when it does not.
     pub fn require(&self) -> PortResult<()> {
         if (self.check)()?.is_granted() {
             Ok(())
         } else {
-            Err(AppError::PermissionDenied {
-                permission: self.permission,
-            }
-            .into())
+            Err(AppError::clone(&self.denied).into())
         }
     }
 }
@@ -131,6 +134,7 @@ mod tests {
         let reading = Arc::clone(&online);
         let gate = PermissionGate::new(
             Permission::Network,
+            AppError::Offline,
             Arc::new(move || {
                 Ok(if reading.load(Ordering::SeqCst) {
                     PermissionState::Granted
@@ -144,9 +148,7 @@ mod tests {
         assert_eq!(
             gate.require()
                 .map_err(super::super::PortError::into_app_error),
-            Err(AppError::PermissionDenied {
-                permission: Permission::Network
-            })
+            Err(AppError::Offline)
         );
         assert_eq!(gate.permission(), Permission::Network);
     }

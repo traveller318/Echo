@@ -428,8 +428,8 @@ pub const SETTINGS: &[SettingSpec] = &[
     SettingSpec {
         key: keys::UPDATES_AUTO_CHECK,
         section: SettingSection::Updates,
-        label: StaticStr::new("Check for updates"),
-        help: StaticStr::new("Look for a newer version of Echo automatically."),
+        label: StaticStr::new("Check for updates automatically"),
+        help: StaticStr::new("Look for a newer version of Echo shortly after it starts."),
         kind: SettingKind::Bool,
         default: SettingValue::Bool(true),
         restart_required: false,
