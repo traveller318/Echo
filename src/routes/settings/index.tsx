@@ -12,12 +12,11 @@
  * WHERE: Lazy-loaded by app/routes.tsx for the `settings` nav entry (app/nav-page.ts).
  */
 import type { NavPageProps } from "@/app/nav-page";
-import { EmptyState, NavIcon, Page, ProgressBar } from "@/components/global";
+import { EmptyState, NavIcon, Page, ProgressBar, SettingRow } from "@/components/global";
 import { Button } from "@/components/ui";
 import { useRegistryView, useSettingsAvailability, useSettingValues } from "@/hooks";
 import { describeAppError, toAppError } from "@/lib/app-error";
 import { ModelSetupNotices } from "./_components/ModelSetupNotices";
-import { SettingRow } from "./_components/SettingRow";
 import { SettingsSection } from "./_components/SettingsSection";
 import { settingsBySection } from "./_components/settings-layout";
 

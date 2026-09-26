@@ -13,9 +13,9 @@
  */
 import { KeyboardIcon } from "lucide-react";
 import { useId, type ComponentProps } from "react";
-import { Kbd, KbdGroup } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { acceleratorKeys } from "./accelerator";
+import { ShortcutKeys } from "./ShortcutKeys";
 import { useHotkeyCapture, type HotkeyCaptureHint } from "./use-hotkey-capture";
 
 export type HotkeyInputProps = Omit<ComponentProps<"button">, "value" | "onChange" | "children" | "type"> & {
@@ -66,11 +66,7 @@ export function HotkeyInput({ value, onChange, invalid = false, className, onBlu
         {keys.length === 0 ? (
           <span className="truncate text-fg-tertiary">{placeholder}</span>
         ) : (
-          <KbdGroup>
-            {keys.map((key) => (
-              <Kbd key={key}>{key}</Kbd>
-            ))}
-          </KbdGroup>
+          <ShortcutKeys shortcut={keys} />
         )}
         <KeyboardIcon aria-hidden="true" className="size-icon-sm shrink-0 text-fg-secondary" />
         {capture.capturing ? <span className="sr-only">Press the new shortcut, or Escape to cancel.</span> : null}

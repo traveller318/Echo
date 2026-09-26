@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: event payloads, AppEvent, SessionStateChanged, AudioLevel, TranscriptSaved, HistoryChanged, MetricsChanged, SettingsChanged, ModelProgress, ModelsChanged, AppearanceChanged, NavigationRequested, AudioDevicesChanged
+ * SOURCE OF TRUTH KEYWORDS: event payloads, AppEvent, SessionStateChanged, AudioLevel, TranscriptSaved, HistoryChanged, MetricsChanged, SettingsChanged, ModelProgress, ModelsChanged, AppearanceChanged, NavigationRequested, AudioDevicesChanged, OnboardingRequested, HotkeyRehearsed
  * WHAT:  The payload struct of every Rust → UI event in 02 §4.4 (each struct name is the event name), and AppEvent,
  *        the envelope emitters hand to the event sink.
  * WHY:   Rust owns domain state and pushes it as typed events; the UI reads once through a command and then stays
@@ -14,15 +14,15 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use super::{
-    AppearanceView, ByteCount, ModelId, ModelPhase, NavId, SessionView, SettingKey, SettingValue,
-    TranscriptSummary,
+    AppearanceView, ByteCount, HotkeyAction, HotkeyId, KeyState, ModelId, ModelPhase, NavId,
+    SessionView, SettingKey, SettingValue, TranscriptSummary,
 };
 
 /// The session changed state; carries the full view, so the UI never merges partial updates.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct SessionStateChanged(pub SessionView);
 
-/// Input level while recording, at most 30 Hz.
+/// Input level while a take records or a microphone check listens (`audio_test_level`), at most 30 Hz.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Type)]
 pub struct AudioLevel {
     /// Root mean square of the last frame, 0 to 1.
@@ -94,6 +94,21 @@ pub struct NavigationRequested {
     pub page: NavId,
 }
 
+/// Something outside the main window (the pill's "Model not installed · Set up") asked for onboarding; the main
+/// window opens it. Sent after the main window was brought forward.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct OnboardingRequested {}
+
+/// A hotkey was pressed, released or interrupted while the session rehearses hotkeys (`session_rehearse`) in an
+/// Echo window; it started nothing. Onboarding's hotkey step shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct HotkeyRehearsed {
+    pub hotkey: HotkeyId,
+    /// What the hotkey does outside a rehearsal.
+    pub action: HotkeyAction,
+    pub state: KeyState,
+}
+
 /**
  * SOURCE OF TRUTH KEYWORDS: AppEvent, any event, event envelope, emit event, EventSink AppEvent, From payload
  * WHAT:  One value that can carry any event payload above; `From<Payload>` for each, so emitters write
@@ -118,6 +133,8 @@ pub enum AppEvent {
     AppearanceChanged(AppearanceChanged),
     NavigationRequested(NavigationRequested),
     AudioDevicesChanged(AudioDevicesChanged),
+    OnboardingRequested(OnboardingRequested),
+    HotkeyRehearsed(HotkeyRehearsed),
 }
 
 /// `From<Payload> for AppEvent` for every payload, so the variant is never named twice at an emit site.
@@ -143,6 +160,8 @@ app_event_from![
     AppearanceChanged,
     NavigationRequested,
     AudioDevicesChanged,
+    OnboardingRequested,
+    HotkeyRehearsed,
 ];
 
 #[cfg(test)]

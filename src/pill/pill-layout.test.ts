@@ -33,6 +33,7 @@ describe("pillKind", () => {
     expect(pillKind(view({ status: "done", outcome: "pasted" }), false)).toBe("done");
     expect(pillKind(view({ status: "done", outcome: "copied" }), false)).toBe("copied");
     expect(pillKind(view({ status: "done", outcome: "no_speech" }), false)).toBe("no_speech");
+    expect(pillKind(view({ status: "done", outcome: "shown" }), false)).toBe("done");
     expect(pillKind(view({ status: "failed", error: { code: "Asr" } }), false)).toBe("error");
     expect(
       pillKind(view({ status: "failed", error: { code: "ModelMissing", model_id: "parakeet-tdt-0.6b-v3" } }), false),

@@ -1,7 +1,8 @@
 /*!
  * SOURCE OF TRUTH KEYWORDS: audio commands, audio_list_devices, audio_test_level, microphone check, input devices, MicCheck
  * WHAT:  The audio command group (02 §4.3): `audio_list_devices` returns the input devices Windows has now;
- *        `audio_test_level` listens to one for a short window and returns its levels and a verdict.
+ *        `audio_test_level` listens to one for a short window, sends its live AudioLevel events meanwhile (the
+ *        meter a caller draws) and returns its levels and a verdict.
  * WHY:   The device list feeds the `audio.input_device` setting (kind Device) and onboarding; it is read on demand,
  *        never cached, because devices come and go. The microphone check declares the Microphone permission, so a
  *        blocked Windows privacy consent is refused by the factory before the device opens (05 W13), and it is
@@ -53,6 +54,7 @@ pub async fn test_level(
         ctx.scheduler(),
         input.device.as_ref(),
         Duration::from_millis(u64::from(input.window_ms)),
+        Some(ctx.event_sink()),
     )
     .await
 }

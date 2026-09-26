@@ -1,7 +1,7 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: pill commands, stopTake, openPage from pill, reportHitAreas, reportExited, pill error action
+ * SOURCE OF TRUTH KEYWORDS: pill commands, stopTake, openPage from pill, openOnboarding, reportHitAreas, reportExited, pill error action
  * WHAT:  The pill's calls into Rust: stop the take, report its button areas, report the end of its exit animation,
- *        bring the main window forward on a page, and perform an AppError action.
+ *        bring the main window forward on a page or on onboarding, and perform an AppError action.
  * WHY:   The pill has no router, no toasts and no QueryClient (02 §6.2: a minimal bundle), so each call is a plain
  *        command whose failure is logged to the console: a pill that could not tell Rust something costs a click,
  *        never the take (Rust's fallbacks hide the pill and keep it click-through). Page actions go through
@@ -40,6 +40,11 @@ export function reportExited(): void {
 /** Shows the main window on `page`. */
 export function openPage(page: NavId): void {
   send(() => commands.appOpenPage({ page }));
+}
+
+/** Shows the main window on onboarding ("Model not installed · Set up"). */
+export function openOnboarding(): void {
+  send(() => commands.onboardingOpen());
 }
 
 /** Performs an AppError action from the pill (page actions open the main window). */

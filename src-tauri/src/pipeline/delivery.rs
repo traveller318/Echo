@@ -1,9 +1,10 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: Delivery, deliver take, delivery plan, auto paste, keep on clipboard, copy-only fallback, elevated target toast, clipboard restore, CLIPBOARD_RESTORE_DELAY
+ * SOURCE OF TRUTH KEYWORDS: Delivery, deliver take, delivery plan, auto paste, keep on clipboard, copy-only fallback, elevated target toast, clipboard restore, CLIPBOARD_RESTORE_DELAY, keep_in_app
  * WHAT:  Delivery: puts a finished take's text where the user wants it. `plan` decides (nothing, paste, or copy
  *        and why) from the text, the take's target, the `output.*` policy and the inserter's caps; `deliver`
  *        carries the plan out through the Clipboard, TextInserter and Notifier ports and reports what happened;
- *        `copy` is a plain excluded clipboard write; `restore_clipboard` gives the user's previous clipboard back.
+ *        `copy` is a plain excluded clipboard write; `restore_clipboard` gives the user's previous clipboard back;
+ *        `keep_in_app` is a rehearsed take's delivery (the text stays in Echo, no port is touched).
  * WHY:   One owner for 02 §9's paste rules. Every transcript write is excluded from Win+V history and cloud sync
  *        (05 W5). The clipboard is written first only when the inserter pastes from it (`uses_clipboard`, 05
  *        decision log). An elevated target that the inserter cannot reach is copied instead of pasted, with the
@@ -77,7 +78,7 @@ pub fn plan(
     policy: DeliveryPolicy,
     caps: InserterCaps,
 ) -> DeliveryPlan {
-    if text.trim().is_empty() {
+    if is_nothing(text) {
         return DeliveryPlan::Nothing;
     }
     if !policy.auto_paste {
@@ -89,6 +90,32 @@ pub fn plan(
             DeliveryPlan::Copy(CopyReason::ElevatedTarget)
         }
         Some(target) => DeliveryPlan::Paste(target.clone()),
+    }
+}
+
+/// Text that delivers nothing: empty or whitespace only.
+fn is_nothing(text: &str) -> bool {
+    text.trim().is_empty()
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: keep_in_app, rehearsed take delivery, practice take, DeliveryOutcome Shown
+ * WHAT:  The report of a rehearsed take (onboarding's practice take): `Shown` when there is text, `NoSpeech` when
+ *        there is none; the clipboard, the target app and toasts are never touched.
+ * WHY:   The practice take proves the whole pipeline while the text is shown in Echo's card instead of pasted
+ *        (step 24); it keeps the empty-text rule of `plan`, so an empty practice take reads "No speech detected".
+ * WHERE: The session runner's delivery when the session rehearses a take in an Echo window
+ *        (pipeline/session/rehearsal.rs decides).
+ */
+pub fn keep_in_app(text: &str) -> DeliveryReport {
+    DeliveryReport {
+        outcome: if is_nothing(text) {
+            DeliveryOutcome::NoSpeech
+        } else {
+            DeliveryOutcome::Shown
+        },
+        copy_reason: None,
+        restore: None,
     }
 }
 
@@ -630,5 +657,18 @@ mod tests {
             rig.clipboard.writes(),
             [(String::from("from history"), ClipboardHistory::Exclude)]
         );
+    }
+
+    #[test]
+    fn a_rehearsed_take_is_shown_in_echo_and_touches_nothing() {
+        assert_eq!(
+            keep_in_app(TEXT),
+            DeliveryReport {
+                outcome: DeliveryOutcome::Shown,
+                copy_reason: None,
+                restore: None,
+            }
+        );
+        assert_eq!(keep_in_app("  \t ").outcome, DeliveryOutcome::NoSpeech);
     }
 }

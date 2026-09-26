@@ -16,11 +16,10 @@ import { useState } from "react";
 import type { ModelEntry } from "@/bindings";
 import type { NavPageProps } from "@/app/nav-page";
 import { useAppErrorAction } from "@/app/shell/use-app-error-action";
-import { EmptyState, InlineNotice, ModelCard, NavIcon, Page, ProgressBar } from "@/components/global";
+import { EmptyState, InlineNotice, ModelCard, ModelCardActions, NavIcon, Page, ProgressBar } from "@/components/global";
 import { Button } from "@/components/ui";
 import { useModelActions, useModels, useModelTransfers } from "@/hooks";
 import { describeAppError, toAppError } from "@/lib/app-error";
-import { ModelActions } from "./_components/ModelActions";
 import { RemoveModelDialog } from "./_components/RemoveModelDialog";
 
 const OFFLINE_COPY = describeAppError({ code: "PermissionDenied", permission: "network" });
@@ -98,7 +97,7 @@ export default function ModelsPage({ nav }: NavPageProps) {
               entry={entry}
               transfer={transfer}
               actions={
-                <ModelActions
+                <ModelCardActions
                   entry={entry}
                   transfer={transfer}
                   actions={actions}

@@ -1,18 +1,19 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: app shell test, sidebar navigation test, route fallback test, titlebar window controls test, toast action test, route error test
+ * SOURCE OF TRUTH KEYWORDS: app shell test, sidebar navigation test, route fallback test, titlebar window controls test, toast action test, route error test, onboarding gate test
  * WHAT:  Renders the routed shell (buildAppRoutes on a memory router, the real lazy pages, the real Providers) with
  *        Tauri's IPC mocked, and verifies: registry-ordered sidebar with the current page marked, navigation,
  *        the catch-all redirect, the titlebar's minimize and close calls, AppError toast actions (page and
- *        command), and that a failing page keeps the sidebar and offers a reload.
+ *        command), that a failing page keeps the sidebar and offers a reload, and that onboarding opens at launch when
+ *        Rust says it is due and whenever OnboardingRequested arrives.
  * WHY:   The shell is the frame every later page lives in (04 §5); these are the behaviours a user notices first
  *        and the ones a registry or router change would silently break.
  * WHERE: Runs in the `web` Vitest project (jsdom) with Tauri's IPC and events mocked (test/tauri-mocks.ts).
  */
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { NavItem, RegistryView } from "@/bindings";
+import { events, type NavItem, type OnboardingView, type RegistryView, type SessionView } from "@/bindings";
 import { RegistryContext } from "@/hooks/use-registry";
 import { showAppErrorToast, useToastStore } from "@/stores/toast-store";
 import { clearTauriMocks, mockTauri } from "@/test/tauri-mocks";
@@ -43,11 +44,34 @@ function renderShell(path = "/", pages: NavPages = NAV_PAGES) {
   return router;
 }
 
+/** Onboarding finished and the model installed: nothing is due. */
+const SETTLED: OnboardingView = {
+  required: false,
+  first_run: false,
+  speech_engine: "parakeet-tdt-0.6b-v3",
+  speech_model_ready: true,
+  microphone: "granted",
+  record_hotkey: "Ctrl+Alt",
+  hold_to_talk: true,
+  steps: [],
+};
+
+const IDLE: SessionView = {
+  status: "idle",
+  transcript_id: null,
+  elapsed_ms: 0,
+  countdown_remaining_ms: null,
+  outcome: null,
+  error: null,
+};
+
 /** What the mocked Rust answers for reads the real pages make on mount. */
 const PAGE_READS: Readonly<Record<string, unknown>> = {
   history_list: { items: [], next_cursor: null },
   metrics_summary: { range: "all_time", values: [] },
   metrics_activity: [],
+  onboarding_get: SETTLED,
+  session_get_state: IDLE,
 };
 
 beforeEach(() => {
@@ -138,5 +162,34 @@ describe("app shell", () => {
     expect(within(alert).getByRole("button", { name: "Open logs folder" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Main" })).toBeInTheDocument();
     consoleError.mockRestore();
+  });
+
+  it("opens onboarding at launch when Rust says it is due", async () => {
+    const due: OnboardingView = {
+      ...SETTLED,
+      required: true,
+      first_run: true,
+      steps: [{ id: "practice", label: "Try it", shown: "always", settings: [] }],
+    };
+    ipc.mockImplementation((cmd) => (cmd === "onboarding_get" ? due : (PAGE_READS[cmd] ?? null)));
+    const router = renderShell("/");
+    expect(await screen.findByRole("heading", { level: 1, name: "Try it" })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/onboarding");
+    expect(screen.queryByRole("navigation", { name: "Main" })).not.toBeInTheDocument();
+  });
+
+  it("stays on the page when nothing is due and opens onboarding when asked", async () => {
+    const router = renderShell("/");
+    await screen.findByRole("heading", { level: 1, name: "Dashboard" });
+    await waitFor(() => {
+      expect(ipc).toHaveBeenCalledWith("onboarding_get", expect.anything());
+    });
+    expect(router.state.location.pathname).toBe("/");
+
+    await act(async () => {
+      await events.onboardingRequested.emit({});
+    });
+    expect(await screen.findByRole("heading", { level: 1, name: "Echo is ready" })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/onboarding");
   });
 });

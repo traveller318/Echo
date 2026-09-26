@@ -11,6 +11,8 @@ pub const LAUNCH_AT_STARTUP: SettingKey = SettingKey::from_static("general.launc
 pub const START_MINIMIZED: SettingKey = SettingKey::from_static("general.start_minimized");
 pub const SOUND_CUES: SettingKey = SettingKey::from_static("general.sound_cues");
 pub const THEME: SettingKey = SettingKey::from_static("general.theme");
+/// Hidden: first-run onboarding was completed once.
+pub const ONBOARDED: SettingKey = SettingKey::from_static("general.onboarded");
 pub const RECORD_HOTKEY: SettingKey = SettingKey::from_static("hotkeys.record");
 pub const HOTKEY_MODE: SettingKey = SettingKey::from_static("hotkeys.mode");
 pub const PASTE_LAST_HOTKEY: SettingKey = SettingKey::from_static("hotkeys.paste_last");

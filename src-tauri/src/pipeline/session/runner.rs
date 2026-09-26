@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: effect runner, Runner, run effect, absorb worker reply, TakeSlot, take resources, Esc guard, session timer, clipboard restore, polish chain per take, play sound cue, Bluetooth hint, paste-last hotkey toast
+ * SOURCE OF TRUTH KEYWORDS: effect runner, Runner, run effect, absorb worker reply, TakeSlot, take resources, Esc guard, session timer, clipboard restore, polish chain per take, play sound cue, Bluetooth hint, paste-last hotkey toast, rehearsal
  * WHAT:  Runner: executes every SessionEffect through the ports, in the order the machine lists them, and turns the
  *        replies of the work it started (WorkerReply) back into SessionInputs. It holds the resources of the
  *        current take and nothing else: the open microphone and ASR take (TakeSlot), the Esc guard, the one timer,
@@ -26,7 +26,9 @@
  *        Cue effects play through SoundCues, which reads `general.sound_cues` at that moment. A take that opens a
  *        Bluetooth microphone shows the one-time Bluetooth hint (05 W11, NoticeBoard) without waiting on it. A
  *        paste-last from the hotkey has no caller to answer, so its failure toasts (NOTHING_TO_PASTE_TOAST when no
- *        take is finished yet). Transcript text is never logged (02 §10).
+ *        take is finished yet). The runner also holds what the session rehearses for onboarding (rehearsal.rs): a
+ *        rehearsed hotkey is reported as HotkeyRehearsed instead of routed, and a rehearsed take in an Echo window
+ *        is delivered as `Shown` without touching the clipboard or any app. Transcript text is never logged (02 §10).
  * WHERE: Owned by the session actor (actor.rs): `run` for each effect of a transition, `absorb` for each
  *        WorkerReply, `paste_last` on Message::PasteLast, `prepare` on Message::Prepare, `shutdown` on
  *        Message::Shutdown, `abandon` after a caught panic.
@@ -46,12 +48,13 @@ use super::{
     hotkey_input,
     inbox::{HotkeyForwarder, Outbox, PasteLastReply, WorkerReply},
     notices::{HOTKEY_UNAVAILABLE_TOAST, TAKE_FAILED_TOAST, paste_last_toast},
+    rehearsal::Rehearsal,
 };
 use crate::{
     pipeline::{
         asr::AsrTake,
         capture::{Capture, CaptureOutcome, journal},
-        delivery::{CLIPBOARD_RESTORE_DELAY, Delivery},
+        delivery::{self, CLIPBOARD_RESTORE_DELAY, Delivery},
         history,
         hotkeys::{self, SessionHotkeys},
         notices::NoticeBoard,
@@ -62,9 +65,10 @@ use crate::{
     registry, services,
     types::{
         AppError, AppTarget, AsrEvent, AudioTransport, CaptureEvent, CaptureSummary,
-        ClipboardRestore, DeliveryReport, EngineId, HistoryChangeReason, HistoryChanged, Language,
-        PolishOutcome, PortError, PortResult, SessionEffect, SessionInput, SessionStateChanged,
-        SettingsSnapshot, TimerToken, TranscriptChange, TranscriptId, TranscriptStatus,
+        ClipboardRestore, DeliveryReport, EngineId, HistoryChangeReason, HistoryChanged,
+        HotkeyEvent, Language, PolishOutcome, PortError, PortResult, SessionEffect, SessionInput,
+        SessionRehearsal, SessionStateChanged, SettingsSnapshot, TimerToken, TranscriptChange,
+        TranscriptId, TranscriptStatus,
     },
 };
 
@@ -114,6 +118,8 @@ pub(super) struct Runner {
     restore: Option<PendingRestore>,
     /// One-time hints (the Bluetooth microphone one).
     notices: NoticeBoard,
+    /// What the session rehearses for onboarding (off unless asked).
+    rehearsal: Rehearsal,
 }
 
 impl Runner {
@@ -133,12 +139,40 @@ impl Runner {
             timer: None,
             detector: None,
             restore: None,
+            rehearsal: Rehearsal::default(),
         }
     }
 
     /// The settings in effect now.
     pub fn settings(&self) -> Arc<SettingsSnapshot> {
         self.config.settings.current()
+    }
+
+    /// What the session rehearses from now on.
+    pub fn rehearse(&mut self, rehearsal: SessionRehearsal) {
+        tracing::debug!(?rehearsal, "session rehearsal");
+        self.rehearsal.set(rehearsal);
+    }
+
+    /**
+     * SOURCE OF TRUTH KEYWORDS: rehearsed hotkey, HotkeyRehearsed emit, hotkey test without a take
+     * WHAT:  Under a hotkey rehearsal with an Echo window focused, reports `event` as HotkeyRehearsed and returns
+     *        true (the event is consumed); otherwise returns false and the actor routes it as usual.
+     * WHY:   Onboarding's hotkey step shows each press without starting a take (rehearsal.rs decides when that
+     *        applies). Reading the focused window is a couple of Win32 calls, fast enough for the actor's turn.
+     * WHERE: The actor, for every hotkey event while no take is in progress.
+     */
+    pub fn rehearsed_hotkey(&self, event: &HotkeyEvent) -> bool {
+        match self
+            .rehearsal
+            .hotkey(event, self.config.foreground.as_ref())
+        {
+            Some(rehearsed) => {
+                self.config.events.emit(rehearsed.into());
+                true
+            }
+            None => false,
+        }
     }
 
     /**
@@ -736,7 +770,8 @@ impl Runner {
     /**
      * SOURCE OF TRUTH KEYWORDS: deliver take, polish then paste, PolishContext per take, delivery off the actor
      * WHAT:  Polishes the joined text with the take's engine caps and language, then delivers it to the take's
-     *        target under the delivery settings in effect now; replies Delivered with the polish outcome.
+     *        target under the delivery settings in effect now (or keeps it in Echo for a rehearsed take); replies
+     *        Delivered with the polish outcome.
      * WHY:   Polish may wait up to the slow-stage timeout (an LLM) and the paste brings a window forward, so both run
      *        in a task; a polish that panics delivers the unpolished text rather than nothing (02 §8.3: a stage never
      *        blocks delivery). The settings are read now, so a toggle changed during the take applies to it.
@@ -769,6 +804,7 @@ impl Runner {
         let context = polish_context(&settings, caps, language);
         let chain = self.config.engines.polish.for_settings(&settings);
         let policy = registry::settings::delivery_policy(&settings);
+        let in_app = self.rehearsal.keeps_in_app(target.as_ref());
         let pending = self.restore.take().map(|pending| {
             pending.task.abort();
             pending.restore
@@ -791,6 +827,9 @@ impl Runner {
             let result = tokio::task::spawn_blocking(move || {
                 if let Some(previous) = pending {
                     restore_clipboard(&delivery, &previous);
+                }
+                if in_app {
+                    return Ok(delivery::keep_in_app(&delivered));
                 }
                 delivery.deliver(&delivered, target.as_ref(), policy)
             })

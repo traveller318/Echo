@@ -248,6 +248,12 @@ impl CommandCtx {
         self.events.as_ref()
     }
 
+    /// A shared handle to the event sink, for pipeline work that emits from its own threads (the microphone check's
+    /// live levels).
+    pub fn event_sink(&self) -> Arc<dyn EventSink<AppEvent>> {
+        Arc::clone(&self.events)
+    }
+
     /// The pill window's presenter.
     pub fn pill(&self) -> &PillPresenter {
         &self.pill

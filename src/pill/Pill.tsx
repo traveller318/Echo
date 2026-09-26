@@ -37,7 +37,7 @@ import {
 } from "@/styles/motion";
 import { CountdownRing, PillAction, StatusGlyph, Waveform } from "./_components";
 import { PillHitAreaRegistry, PillHitAreasContext } from "./hit-areas";
-import { openPage, performPillAction, reportExited, reportHitAreas, stopTake } from "./pill-commands";
+import { openOnboarding, performPillAction, reportExited, reportHitAreas, stopTake } from "./pill-commands";
 import { isFinishing, PILL_WIDTH_TOKENS, pillKind, type PillKind } from "./pill-layout";
 
 const MS_PER_SECOND = 1000;
@@ -50,7 +50,7 @@ const PILL_LABELS: Readonly<Record<PillKind, string>> = {
   recording: "Recording",
   cancel: "Cancelling",
   processing: "Transcribing",
-  done: "Pasted",
+  done: "Done",
   copied: "Copied",
   no_speech: "No speech detected",
   error: "Something went wrong",
@@ -148,7 +148,7 @@ function PillContent({
           <PillAction
             className="text-accent"
             onPress={() => {
-              openPage("models");
+              openOnboarding();
             }}
           >
             Set up

@@ -5,8 +5,9 @@
  * WHY:   One list feeds both the running app's invoke handler and the generated bindings (app/bindings.rs), so a
  *        command cannot be declared but left unreachable or untyped. Adding a command is an `echo_command!` in
  *        its group plus one path here.
- * WHERE: `catalog()` is read by app/bindings.rs; groups are filled step by step (session reads the take and sends
- *        the pill's stop and retries a stored take; history lists, reads, copies, deletes and pastes the last take;
+ * WHERE: `catalog()` is read by app/bindings.rs; groups are filled step by step (session reads the take, sends
+ *        the pill's stop, retries a stored take and sets the onboarding rehearsal; onboarding reads, completes and
+ *        opens first-run setup; history lists, reads, copies, deletes and pastes the last take;
  *        metrics computes the dashboard's summary and activity; models lists, downloads, cancels, imports,
  *        verifies, removes and activates models; engine reports where the speech engine runs and measures
  *        it again; audio lists devices and runs the
@@ -19,6 +20,7 @@ pub mod engine;
 pub mod history;
 pub mod metrics;
 pub mod models;
+pub mod onboarding;
 pub mod pill;
 pub mod session;
 pub mod settings;
@@ -35,6 +37,7 @@ pub fn catalog<R: Runtime>() -> Commands<R> {
         session::session_get_state,
         session::session_input,
         session::session_retry,
+        session::session_rehearse,
         history::history_list,
         history::history_get,
         history::history_copy,
@@ -62,5 +65,8 @@ pub fn catalog<R: Runtime>() -> Commands<R> {
         system::app_open_logs_dir,
         system::app_open_mic_privacy_settings,
         system::app_open_page,
+        onboarding::onboarding_get,
+        onboarding::onboarding_complete,
+        onboarding::onboarding_open,
     ]
 }

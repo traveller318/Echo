@@ -32,6 +32,7 @@ mod model;
 mod nav;
 mod network;
 mod notification;
+mod onboarding;
 mod overlay;
 mod paths;
 mod permission;
@@ -77,8 +78,9 @@ pub use engine::{
 pub use error::{AppError, AppErrorCode, HotkeyIssue, ResourceKind};
 pub use events::{
     AppEvent, AppearanceChanged, AudioDevicesChanged, AudioLevel, HistoryChangeReason,
-    HistoryChanged, MetricsChanged, ModelProgress, ModelsChanged, NavigationRequested,
-    SessionStateChanged, SettingsChanged, TranscriptSaved,
+    HistoryChanged, HotkeyRehearsed, MetricsChanged, ModelProgress, ModelsChanged,
+    NavigationRequested, OnboardingRequested, SessionStateChanged, SettingsChanged,
+    TranscriptSaved,
 };
 pub use future::BoxFuture;
 pub use hotkey::{
@@ -106,6 +108,9 @@ pub use model::{
 pub use nav::{NavIcon, NavId, NavItem, OpenPageInput};
 pub use network::{AllowedHost, HostAllowlist, HttpPolicy};
 pub use notification::{OneTimeNotice, Toast, ToastKind};
+pub use onboarding::{
+    OnboardingCondition, OnboardingNeeds, OnboardingStepId, OnboardingStepSpec, OnboardingView,
+};
 pub use overlay::{OverlayRect, PillHitAreas};
 pub use paths::{AppPaths, ONNX_RUNTIME_LOAD_ORDER, OnnxRuntimeLibrary};
 pub use permission::{Permission, PermissionCheckFn, PermissionGate, PermissionState};
@@ -116,7 +121,7 @@ pub use port_error::{PortError, PortResult};
 pub use power::PowerEvent;
 pub use registry::RegistryView;
 pub use scheduling::WorkerPriority;
-pub use session::{DeliveryOutcome, SessionStatus, SessionUiInput, SessionView};
+pub use session::{DeliveryOutcome, SessionRehearsal, SessionStatus, SessionUiInput, SessionView};
 pub use session_machine::{
     ArmingTake, CancelPendingTake, DeliveringTake, FinalizingTake, IgnoreReason, IgnoredInput,
     RecordClock, RecordingTake, SessionCue, SessionEffect, SessionInput, SessionPhase,

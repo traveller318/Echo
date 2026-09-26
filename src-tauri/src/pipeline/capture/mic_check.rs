@@ -1,13 +1,16 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: check_microphone, mic check, audio_test_level, microphone test window, level verdict, device lost during check
+ * SOURCE OF TRUTH KEYWORDS: check_microphone, mic check, audio_test_level, microphone test window, level verdict, device lost during check, live level meter
  * WHAT:  `check_microphone` listens to a device for a window through the regular capture worker (levels only: no
- *        journal, no VAD, no AudioLevel events) and returns its peak and mean RMS with a MicVerdict.
+ *        journal, no VAD) and returns its peak and mean RMS with a MicVerdict; given a `levels` sink, it also sends
+ *        the live AudioLevel events a meter draws while it listens.
  * WHY:   Onboarding and Settings must prove the microphone works before a take depends on it (05 §4 checklist):
  *        reusing Capture means the check hears exactly what a take would (same device selection, downmix,
  *        resampling and errors), including a blocked privacy consent that delivers digital silence (05 W13). The
  *        wait is an async timer, so no runtime thread sleeps; closing the stream and joining the worker afterwards
  *        takes a few milliseconds. A device lost or failing during the window is an error, not a verdict, so the
- *        UI never calls a broken device "quiet".
+ *        UI never calls a broken device "quiet". The live levels are the same capped-at-30 Hz AudioLevel a take sends
+ *        (pipeline/capture/level.rs), so onboarding's meter and the pill read one event; a take and a check never
+ *        overlap (the check is Exclusive and the port answers Busy while a take holds the microphone).
  * WHERE: `ipc/commands/audio.rs` (`audio_test_level`).
  */
 
@@ -18,15 +21,17 @@ use parking_lot::Mutex;
 use super::{Capture, CaptureConfig, level};
 use crate::{
     ports::{AudioCapture, EventSink, WorkerScheduler},
-    types::{AppError, AudioDeviceId, CaptureEvent, MicCheck, PortError, PortResult},
+    types::{AppError, AppEvent, AudioDeviceId, CaptureEvent, MicCheck, PortError, PortResult},
 };
 
-/// Listens to `device` (None = Windows default) for `window` and reports how it sounded.
+/// Listens to `device` (None = Windows default) for `window` and reports how it sounded; `levels` receives the
+/// live AudioLevel events meanwhile.
 pub async fn check_microphone(
     capture: &dyn AudioCapture,
     scheduler: Arc<dyn WorkerScheduler>,
     device: Option<&AudioDeviceId>,
     window: Duration,
+    levels: Option<Arc<dyn EventSink<AppEvent>>>,
 ) -> PortResult<MicCheck> {
     let stream_events = Arc::new(FirstEvent::default());
     let take = Capture::start(
@@ -35,7 +40,7 @@ pub async fn check_microphone(
         CaptureConfig {
             journal: None,
             segmentation: None,
-            levels: None,
+            levels,
             events: stream_events.clone(),
             scheduler,
         },
@@ -77,7 +82,7 @@ impl EventSink<CaptureEvent> for FirstEvent {
 mod tests {
     use super::*;
     use crate::{
-        ports::fakes::{FakeAudioCapture, FakeWorkerScheduler},
+        ports::fakes::{FakeAudioCapture, FakeWorkerScheduler, RecordingSink},
         types::{CaptureFormat, MicVerdict, ResourceKind},
     };
 
@@ -87,6 +92,14 @@ mod tests {
     };
 
     fn run(capture: &FakeAudioCapture, device: Option<&AudioDeviceId>) -> PortResult<MicCheck> {
+        run_with_levels(capture, device, None)
+    }
+
+    fn run_with_levels(
+        capture: &FakeAudioCapture,
+        device: Option<&AudioDeviceId>,
+        levels: Option<Arc<dyn EventSink<AppEvent>>>,
+    ) -> PortResult<MicCheck> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_time()
             .build()
@@ -96,7 +109,22 @@ mod tests {
             Arc::new(FakeWorkerScheduler::default()),
             device,
             Duration::from_millis(30),
+            levels,
         ))
+    }
+
+    #[test]
+    fn a_meter_receives_live_levels_while_the_check_listens() {
+        let capture = FakeAudioCapture::new(FORMAT);
+        capture.play_on_start(vec![0.2; 48_000]);
+        let levels = Arc::new(RecordingSink::<AppEvent>::default());
+        let check = run_with_levels(&capture, None, Some(Arc::clone(&levels) as _)).unwrap();
+        assert_eq!(check.verdict, MicVerdict::Good);
+        let events = levels.events();
+        assert!(!events.is_empty(), "the meter hears the check");
+        assert!(events.iter().all(
+            |event| matches!(event, AppEvent::AudioLevel(level) if (level.rms - 0.2).abs() < 0.01)
+        ));
     }
 
     #[test]

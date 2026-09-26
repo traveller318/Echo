@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: typed setting reads, sound_cues, notice_shown, theme read, transcription reads, polish reads, remove_fillers, dictionary, llm_polisher, trailing_space, delivery_policy, input_device, session_policy, record_mode, retention_policy, typing_wpm
+ * SOURCE OF TRUTH KEYWORDS: typed setting reads, sound_cues, notice_shown, onboarded, theme read, transcription reads, polish reads, remove_fillers, dictionary, llm_polisher, trailing_space, delivery_policy, input_device, session_policy, record_mode, retention_policy, typing_wpm
  * WHAT:  Typed reads of a SettingsSnapshot for the settings the core acts on.
  * WHY:   Values are stored as tagged SettingValues and enum text; spelling them is the registry's job, so the
  *        pipeline asks here instead of matching kinds or comparing strings. A resolved snapshot always holds a
@@ -118,6 +118,11 @@ pub fn delivery_policy(settings: &SettingsSnapshot) -> DeliveryPolicy {
 /// `general.sound_cues`: play the start, stop, cancel and error chimes.
 pub fn sound_cues(settings: &SettingsSnapshot) -> bool {
     bool_or_default(settings, &keys::SOUND_CUES)
+}
+
+/// `general.onboarded`: first-run onboarding was completed once.
+pub fn onboarded(settings: &SettingsSnapshot) -> bool {
+    bool_or_default(settings, &keys::ONBOARDED)
 }
 
 /// The one-time `notice` was already shown (its hidden flag is set).

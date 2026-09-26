@@ -36,6 +36,7 @@ const mocks = vi.hoisted(() => ({
   appOpenPage: vi.fn(),
   appOpenLogsDir: vi.fn(),
   appOpenMicPrivacySettings: vi.fn(),
+  onboardingOpen: vi.fn(),
 }));
 
 vi.mock("@/bindings", () => ({
@@ -47,6 +48,7 @@ vi.mock("@/bindings", () => ({
     appOpenPage: mocks.appOpenPage,
     appOpenLogsDir: mocks.appOpenLogsDir,
     appOpenMicPrivacySettings: mocks.appOpenMicPrivacySettings,
+    onboardingOpen: mocks.onboardingOpen,
   },
 }));
 
@@ -94,6 +96,7 @@ beforeEach(() => {
     mocks.appOpenPage,
     mocks.appOpenLogsDir,
     mocks.appOpenMicPrivacySettings,
+    mocks.onboardingOpen,
   ]) {
     command.mockResolvedValue(ok);
   }
@@ -138,7 +141,7 @@ describe("Pill", () => {
     push({ status: "cancel_pending", transcript_id: TAKE, countdown_remaining_ms: 3_000 });
     expect(screen.getByText("Cancelling · Esc to undo")).toBeInTheDocument();
     push({ status: "done", transcript_id: TAKE, outcome: "pasted" });
-    expect(screen.getByRole("img", { name: "Pasted" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Done" })).toBeInTheDocument();
     push({ status: "done", transcript_id: TAKE, outcome: "copied" });
     expect(screen.getByText("Copied")).toBeInTheDocument();
     push({ status: "done", transcript_id: TAKE, outcome: "no_speech" });
@@ -164,7 +167,7 @@ describe("Pill", () => {
     expect(screen.getByText("Model not installed")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Set up" }));
     await waitFor(() => {
-      expect(mocks.appOpenPage).toHaveBeenCalledWith({ page: "models" });
+      expect(mocks.onboardingOpen).toHaveBeenCalled();
     });
   });
 

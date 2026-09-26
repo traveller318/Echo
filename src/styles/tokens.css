@@ -160,6 +160,8 @@
   --setting-control-width: 240px;
   --number-field-width: 72px;
   --chart-height: 160px;
+  --onboarding-width: 560px;
+  --step-dot: 8px;
   --opacity-disabled: 0.45;
 
   /* 3.10 Sizes: the pill (4) */

@@ -1,7 +1,8 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: SessionView, SessionStatus, SessionUiInput, DeliveryOutcome, take state, pill state, session_input
+ * SOURCE OF TRUTH KEYWORDS: SessionView, SessionStatus, SessionUiInput, DeliveryOutcome, SessionRehearsal, take state, pill state, session_input, session_rehearse
  * WHAT:  The read-only projection of the session state machine that the UI renders (SessionView), the UI-only
- *        input enum of `session_input` (SessionUiInput) and how a finished take was delivered (DeliveryOutcome).
+ *        input enum of `session_input` (SessionUiInput), how a finished take was delivered (DeliveryOutcome) and
+ *        what the session rehearses for onboarding (SessionRehearsal, `session_rehearse`).
  * WHY:   The session actor is the sole owner of recording state (02 §5); the UI only ever receives this view in
  *        `SessionStateChanged` and never keeps its own copy. SessionUiInput holds only UI-originated inputs, so the
  *        UI cannot fake a hotkey, timer or worker input (05 decision log). The internal state machine types
@@ -46,6 +47,9 @@ pub enum DeliveryOutcome {
     Copied,
     /// VAD heard no speech; nothing was pasted (02 §6.1, 05 A4).
     NoSpeech,
+    /// A rehearsed take (onboarding's practice take): the text stays in Echo for the window that asked for the
+    /// rehearsal to show; neither the clipboard nor any app was touched.
+    Shown,
 }
 
 /// Everything the UI may know about the current take.
@@ -112,6 +116,33 @@ pub enum SessionUiInput {
     Stop,
 }
 
+/**
+ * SOURCE OF TRUTH KEYWORDS: SessionRehearsal, session_rehearse, rehearsal mode, hotkey test, practice take, onboarding try it, keep text in Echo
+ * WHAT:  What the session rehearses while Echo's own window has focus: nothing (Off), the hotkeys (every press is
+ *        reported as HotkeyRehearsed and starts no take), or a take (it runs as usual, but its text stays in Echo,
+ *        DeliveryOutcome::Shown, instead of being pasted or copied).
+ * WHY:   Onboarding must prove the hotkey and the whole take work before the user relies on them (01 §7) without
+ *        recording a test press or pasting into Echo itself. A rehearsal only ever applies while an Echo window is
+ *        in the foreground, so one left on by a window that closed or hid can never swallow a hotkey or keep text
+ *        from the app the user dictates into. It is session configuration, not recording state: the machine is
+ *        untouched, the actor only decides what a hotkey or a delivery means (02 §5 stays the one owner).
+ * WHERE: Sent by `session_rehearse` (ipc/commands/session.rs) from onboarding's hotkey and practice steps; held by
+ *        the session actor (pipeline/session/rehearsal.rs).
+ */
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Type, garde::Validate,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionRehearsal {
+    /// Hotkeys and takes behave normally.
+    #[default]
+    Off,
+    /// Hotkey presses are reported (HotkeyRehearsed) and start nothing.
+    Hotkey,
+    /// Takes run fully and their text is shown in Echo instead of delivered.
+    Take,
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -140,6 +171,22 @@ mod tests {
             SessionUiInput::Stop
         );
         assert!(serde_json::from_str::<SessionUiInput>("\"record_pressed\"").is_err());
+    }
+
+    #[test]
+    fn rehearsal_is_off_by_default_and_snake_case_on_the_wire() {
+        assert_eq!(SessionRehearsal::default(), SessionRehearsal::Off);
+        for (rehearsal, wire) in [
+            (SessionRehearsal::Off, "off"),
+            (SessionRehearsal::Hotkey, "hotkey"),
+            (SessionRehearsal::Take, "take"),
+        ] {
+            assert_eq!(serde_json::to_value(rehearsal).unwrap(), json!(wire));
+        }
+        assert_eq!(
+            serde_json::to_value(DeliveryOutcome::Shown).unwrap(),
+            json!("shown")
+        );
     }
 
     #[test]

@@ -69,6 +69,15 @@ pub fn builder<R: Runtime>() -> Builder<R> {
             "SETTING_TOKEN_MAX_CHARS",
             u32::try_from(types::SettingKind::MAX_TOKEN_LEN).unwrap_or(u32::MAX),
         )
+        // The microphone check's listening window bounds; the UI picks its window inside them.
+        .constant(
+            "MIC_CHECK_MIN_WINDOW_MS",
+            types::AudioTestLevelInput::MIN_WINDOW_MS,
+        )
+        .constant(
+            "MIC_CHECK_MAX_WINDOW_MS",
+            types::AudioTestLevelInput::MAX_WINDOW_MS,
+        )
 }
 
 /**

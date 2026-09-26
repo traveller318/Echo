@@ -38,10 +38,12 @@ static_str_id! {
  *        held, the adapter reports Interrupted instead of Released, so the session can drop a take that was never
  *        meant (05 W9). Only adapters with `HotkeyCaps.supports_modifier_only` report it; after Interrupted no
  *        Released follows for that press.
+ *        It crosses IPC inside HotkeyRehearsed, so onboarding can show a press, a release or an interruption.
  * WHERE: HotkeyEvent.state, built by the hotkey adapters; mapped to session inputs by
- *        pipeline/session/hotkey_input.rs.
+ *        pipeline/session/hotkey_input.rs; reported as-is by a hotkey rehearsal (pipeline/session/rehearsal.rs).
  */
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
 pub enum KeyState {
     Pressed,
     Released,

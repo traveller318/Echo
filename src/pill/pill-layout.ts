@@ -10,7 +10,7 @@
  *        take whose model is missing gets its own "Set up" layout; every other failure is the error layout.
  * WHERE: src/pill/Pill.tsx.
  */
-import type { SessionView } from "@/bindings";
+import type { DeliveryOutcome, SessionView } from "@/bindings";
 
 export type PillKind =
   | "recording"
@@ -34,6 +34,15 @@ export const PILL_WIDTH_TOKENS = {
   model_missing: "--pill-width-setup",
 } as const satisfies Readonly<Record<PillKind, string>>;
 
+/** The layout of a delivered take, per outcome; keyed by the generated union, so a new outcome fails tsc here. */
+const DONE_KIND: Readonly<Record<DeliveryOutcome, PillKind>> = {
+  pasted: "done",
+  copied: "copied",
+  no_speech: "no_speech",
+  // A rehearsed take (onboarding's practice): the text is in Echo's card, the pill just confirms.
+  shown: "done",
+};
+
 /** The take stopped and its text is being transcribed or delivered. */
 export function isFinishing(view: SessionView | null): boolean {
   return view?.status === "finalizing" || view?.status === "delivering";
@@ -56,10 +65,7 @@ export function pillKind(view: SessionView | null, processingShown: boolean): Pi
     case "delivering":
       return processingShown ? "processing" : "recording";
     case "done":
-      if (view.outcome === "no_speech") {
-        return "no_speech";
-      }
-      return view.outcome === "copied" ? "copied" : "done";
+      return view.outcome === null ? "done" : DONE_KIND[view.outcome];
     case "failed":
       return view.error?.code === "ModelMissing" ? "model_missing" : "error";
   }

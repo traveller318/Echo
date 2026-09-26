@@ -3,7 +3,7 @@
  * WHAT:  `useNavigationRequests()` navigates the main window to the page every NavigationRequested event names.
  * WHY:   Surfaces without the router (the pill's "Set up" and "Open") call `app_open_page`; Rust brings this window
  *        forward and sends the event, and the router here is the one place that can act on it.
- * WHERE: app/shell/ShellLayout.tsx (the routed shell, so it runs once per main window).
+ * WHERE: app/shell/AppRoot.tsx (the root route, so it runs once per main window, on every screen).
  */
 import { useEchoEvent } from "@/hooks/use-echo-event";
 import { useOpenPage } from "./use-open-page";

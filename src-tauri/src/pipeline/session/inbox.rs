@@ -1,6 +1,6 @@
 /*!
  * SOURCE OF TRUTH KEYWORDS: session inbox, Message, WorkerReply, Outbox, HotkeyForwarder, TakeEvents, actor mailbox, weak sender
- * WHAT:  The session actor's mailbox: every message it can receive (Message: hotkeys, the pill, queries, paste-last,
+ * WHAT:  The session actor's mailbox: every message it can receive (Message: hotkeys, the pill, rehearsals, queries, paste-last,
  *        lifecycle, panic reports and WorkerReply, the replies of the work its effects started), the Outbox the actor's own tasks and sinks
  *        post through, and the port sinks that forward into it (HotkeyForwarder for the hotkey port, TakeEvents for
  *        one take's capture and ASR events).
@@ -26,7 +26,7 @@ use crate::{
     ports::{EventSink, VoiceActivity},
     types::{
         AsrEvent, CaptureEvent, DeliveryOutcome, DeliveryReport, HotkeyEvent, PolishOutcome,
-        PortResult, SessionInput, SessionUiInput, SessionView, TranscriptId,
+        PortResult, SessionInput, SessionRehearsal, SessionUiInput, SessionView, TranscriptId,
     },
 };
 
@@ -72,6 +72,8 @@ pub(super) enum Message {
     Hotkey(HotkeyEvent),
     /// An input from the pill (`session_input`).
     Ui(SessionUiInput),
+    /// What the session rehearses from now on (`session_rehearse`, onboarding).
+    Rehearse(SessionRehearsal),
     Worker(WorkerReply),
     /// `session_get_state`: the view at this moment.
     View(oneshot::Sender<SessionView>),

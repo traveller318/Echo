@@ -23,7 +23,7 @@ import type {
 } from "@/bindings";
 import { RegistryContext } from "@/hooks";
 import { createEchoQueryClient } from "@/lib/query-client";
-import { modelActionPlan } from "./_components/model-actions";
+import { modelActionPlan } from "@/components/global";
 
 const NAV: NavItem = { id: "models", label: "Models", icon: "boxes", route: "/models", order: 2 };
 

@@ -25,6 +25,7 @@ export {
   type PerformAppErrorActionOptions,
 } from "./app-error-actions";
 export { applyAppearance, syncAppearance, type SyncAppearanceOptions } from "./appearance";
+export { levelFromRms, smoothLevel } from "./audio-level";
 export { cn, THEME_SCALE } from "./cn";
 export { runCommand, type CommandResult } from "./command";
 export { adoptCspStyleNonce, CSP_NONCE_SELECTOR } from "./csp-nonce";

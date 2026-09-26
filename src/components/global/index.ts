@@ -1,5 +1,5 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: components global barrel, reusable components, GlassSurface, EmptyState, InlineNotice, ModelCard, ProgressBar, NavIcon, Page, DataList, TranscriptRow, SettingField, HotkeyInput, StatCard, take actions
+ * SOURCE OF TRUTH KEYWORDS: components global barrel, reusable components, GlassSurface, EmptyState, InlineNotice, ModelCard, ModelCardActions, ProgressBar, NavIcon, Page, DataList, TranscriptRow, SettingField, SettingRow, HotkeyInput, StatCard, MicCheckPanel, take actions
  * WHAT:  Barrel for every reusable app component (one folder each under components/global).
  * WHY:   Routes import `@/components/global` and never reach into a folder, so components can be reorganised
  *        inside their folders freely (03 §3). Components inside global/ import each other by folder, never
@@ -28,22 +28,33 @@ export {
   MODIFIER_TOKENS,
   modifierToken,
   orderModifiers,
+  ShortcutKeys,
   useHotkeyCapture,
   type HotkeyCapture,
   type HotkeyCaptureHint,
   type HotkeyInputProps,
   type ModifierToken,
+  type ShortcutKeysProps,
 } from "./hotkey-input";
 export { InlineNotice, type InlineNoticeProps } from "./inline-notice";
+export { MIC_VERDICT_LOOK, MicCheckPanel, type MicCheckPanelProps, type MicVerdictLook } from "./mic-check";
 export {
+  ALL_SECONDARY_MODEL_ACTIONS,
   engineKindLabel,
   isDeterminate,
   languagesSummary,
   ModelCard,
+  ModelCardActions,
+  modelActionPlan,
   modelStatusLook,
+  needsNetwork,
   transferSummary,
+  type ModelActionPlan,
+  type ModelCardActionsProps,
   type ModelCardProps,
   type ModelStatusLook,
+  type PrimaryModelAction,
+  type SecondaryModelAction,
 } from "./model-card";
 export { NavIcon, type NavIconProps } from "./nav-icon";
 export { Page, type PageProps } from "./page";
@@ -56,6 +67,7 @@ export {
   type SettingFieldProps,
   type SettingForm,
 } from "./setting-field";
+export { SettingRow, SettingRowFor, type SettingRowForProps, type SettingRowProps } from "./setting-row";
 export {
   StatCard,
   StatFigure,

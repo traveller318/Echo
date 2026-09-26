@@ -21,6 +21,11 @@ export const commands = {
 	sessionInput: (input: SessionUiInput) => typedError<null, AppError>(__TAURI_INVOKE("session_input", { input })),
 	/**  Transcribes a stored take again from its saved audio and returns its updated History row. */
 	sessionRetry: (input: TranscriptInput) => typedError<TranscriptSummary, AppError>(__TAURI_INVOKE("session_retry", { input })),
+	/**
+	 *  Sets what the session rehearses while an Echo window has focus: `hotkey` reports presses without starting a
+	 *  take (HotkeyRehearsed), `take` shows a take's text in Echo instead of pasting it, `off` ends it.
+	 */
+	sessionRehearse: (input: SessionRehearsal) => typedError<null, AppError>(__TAURI_INVOKE("session_rehearse", { input })),
 	/**  One page of History, newest first: every take, or those whose text matches `search`. */
 	historyList: (input: HistoryListInput) => typedError<Page<TranscriptSummary>, AppError>(__TAURI_INVOKE("history_list", { input })),
 	/**  One take in full (both texts and every measurement). */
@@ -93,6 +98,15 @@ export const commands = {
 	appOpenMicPrivacySettings: () => typedError<null, AppError>(__TAURI_INVOKE("app_open_mic_privacy_settings")),
 	/**  Brings the main window forward on a page (the pill's "Set up" and "Open"). */
 	appOpenPage: (input: OpenPageInput) => typedError<null, AppError>(__TAURI_INVOKE("app_open_page", { input })),
+	/**
+	 *  Whether onboarding is due now, the steps to walk, the speech engine and its model's state, and the Windows
+	 *  microphone consent.
+	 */
+	onboardingGet: () => typedError<OnboardingView, AppError>(__TAURI_INVOKE("onboarding_get")),
+	/**  Remembers that onboarding was finished, turns the session rehearsal off and returns the view now in effect. */
+	onboardingComplete: () => typedError<OnboardingView, AppError>(__TAURI_INVOKE("onboarding_complete")),
+	/**  Brings the main window forward on onboarding (the pill's "Set up"). */
+	onboardingOpen: () => typedError<null, AppError>(__TAURI_INVOKE("onboarding_open")),
 };
 
 /** Events */
@@ -101,10 +115,12 @@ export const events = {
 	audioDevicesChanged: makeEvent<AudioDevicesChanged>("AudioDevicesChanged"),
 	audioLevel: makeEvent<AudioLevel>("AudioLevel"),
 	historyChanged: makeEvent<HistoryChanged>("HistoryChanged"),
+	hotkeyRehearsed: makeEvent<HotkeyRehearsed>("HotkeyRehearsed"),
 	metricsChanged: makeEvent<MetricsChanged>("MetricsChanged"),
 	modelProgress: makeEvent<ModelProgress>("ModelProgress"),
 	modelsChanged: makeEvent<ModelsChanged>("ModelsChanged"),
 	navigationRequested: makeEvent<NavigationRequested>("NavigationRequested"),
+	onboardingRequested: makeEvent<OnboardingRequested>("OnboardingRequested"),
 	sessionStateChanged: makeEvent<SessionStateChanged>("SessionStateChanged"),
 	settingsChanged: makeEvent<SettingsChanged>("SettingsChanged"),
 	transcriptSaved: makeEvent<TranscriptSaved>("TranscriptSaved"),
@@ -114,6 +130,10 @@ export const events = {
 export const HISTORY_PAGE_MAX = 500 as const;
 
 export const HISTORY_SEARCH_MAX_CHARS = 200 as const;
+
+export const MIC_CHECK_MAX_WINDOW_MS = 5000 as const;
+
+export const MIC_CHECK_MIN_WINDOW_MS = 1000 as const;
 
 export const SETTING_TOKEN_MAX_CHARS = 128 as const;
 
@@ -253,7 +273,7 @@ export type AudioDeviceId = string;
  */
 export type AudioDevicesChanged = Record<string, never>;
 
-/**  Input level while recording, at most 30 Hz. */
+/**  Input level while a take records or a microphone check listens (`audio_test_level`), at most 30 Hz. */
 export type AudioLevel = {
 	/**  Root mean square of the last frame, 0 to 1. */
 	rms: number | null,
@@ -327,7 +347,12 @@ export type DeliveryOutcome =
 /**  Only copied: the target could not receive a paste (elevated window, 05 W2) or auto-paste is off. */
 "copied" | 
 /**  VAD heard no speech; nothing was pasted (02 §6.1, 05 A4). */
-"no_speech";
+"no_speech" | 
+/**
+ *  A rehearsed take (onboarding's practice take): the text stays in Echo for the window that asked for the
+ *  rehearsal to show; neither the clipboard nor any app was touched.
+ */
+"shown";
 
 /**  The caps a registry engine entry declares, tagged by the kind of engine it builds. */
 export type EngineCaps = {
@@ -474,6 +499,17 @@ export type HotkeyIssue =
 /**  The combination cannot be registered (no key, or not allowed by the hotkey adapter's caps). */
 "invalid";
 
+/**
+ *  A hotkey was pressed, released or interrupted while the session rehearses hotkeys (`session_rehearse`) in an
+ *  Echo window; it started nothing. Onboarding's hotkey step shows it.
+ */
+export type HotkeyRehearsed = {
+	hotkey: HotkeyId,
+	/**  What the hotkey does outside a rehearsal. */
+	action: HotkeyAction,
+	state: KeyState,
+};
+
 /**  When a hotkey is registered with the system. */
 export type HotkeyScope = 
 /**  From startup until exit. */
@@ -500,6 +536,25 @@ export type InserterCaps = {
 	/**  Inserts by pasting what the clipboard holds, so delivery writes the text to the clipboard first. */
 	uses_clipboard: boolean,
 };
+
+/**
+ * 
+ *  * SOURCE OF TRUTH KEYWORDS: KeyState, Pressed, Released, Interrupted, modifier-only chord, chord interrupted, part of another shortcut
+ *  * WHAT:  What happened to a bound combination: it went down, came back up, or turned out to be the start of a
+ *  *        longer shortcut (Interrupted).
+ *  * WHY:   A modifier-only combination such as Ctrl+Alt fires the moment it is held (hold-to-talk must not wait), but
+ *  *        the same keys start other apps' shortcuts (Ctrl+Alt+T, Ctrl+Alt+Del). When another key joins while it is
+ *  *        held, the adapter reports Interrupted instead of Released, so the session can drop a take that was never
+ *  *        meant (05 W9). Only adapters with `HotkeyCaps.supports_modifier_only` report it; after Interrupted no
+ *  *        Released follows for that press.
+ *  *        It crosses IPC inside HotkeyRehearsed, so onboarding can show a press, a release or an interruption.
+ *  * WHERE: HotkeyEvent.state, built by the hotkey adapters; mapped to session inputs by
+ *  *        pipeline/session/hotkey_input.rs; reported as-is by a hotkey rehearsal (pipeline/session/rehearsal.rs).
+ *  
+ */
+export type KeyState = "pressed" | "released" | 
+/**  Another key joined a held modifier-only combination: the press was part of another shortcut. */
+"interrupted";
 
 /**
  *  A spoken-language code (ISO 639-1, e.g. `en`, `de`). "Auto-detect" is not a language; it is the absence
@@ -796,6 +851,63 @@ export type NavigationRequested = {
 	page: NavId,
 };
 
+/**  When a step is part of onboarding. */
+export type OnboardingCondition = 
+/**  Until onboarding has been completed once. */
+"first_run" | 
+/**  Whenever the selected speech engine's model is not ready (first run or later). */
+"speech_model_missing" | 
+/**  Every time onboarding is shown. */
+"always";
+
+/**
+ *  Something outside the main window (the pill's "Model not installed · Set up") asked for onboarding; the main
+ *  window opens it. Sent after the main window was brought forward.
+ */
+export type OnboardingRequested = Record<string, never>;
+
+/**  One onboarding step; each has a component in `src/routes/onboarding/_components/`. */
+export type OnboardingStepId = 
+/**  Windows microphone consent, the privacy deep link and a live level meter. */
+"microphone" | 
+/**  Download or import the speech model. */
+"model" | 
+/**  Press the dictation hotkey to test it; rebind it when it clashes. */
+"hotkey" | 
+/**  One practice take whose text is shown in the card instead of pasted. */
+"practice";
+
+/**  A registry onboarding step. */
+export type OnboardingStepSpec = {
+	id: OnboardingStepId,
+	/**  Short name for the dot indicator's accessible label, e.g. "Microphone". */
+	label: string,
+	/**  When the step is walked. */
+	shown: OnboardingCondition,
+	/**  The settings the step lets the user change on the spot, in order (rendered from their registry specs). */
+	settings: SettingKey[],
+};
+
+/**  Everything the onboarding screen renders from. */
+export type OnboardingView = {
+	/**  Onboarding should be shown: it was never completed, or the speech model is not ready. */
+	required: boolean,
+	/**  Onboarding has never been completed. */
+	first_run: boolean,
+	/**  The speech engine the settings select (its Models card is the model step); None when none is registered. */
+	speech_engine: EngineId | null,
+	/**  The selected speech engine's model is installed and undamaged (true when it needs no model). */
+	speech_model_ready: boolean,
+	/**  Windows microphone consent for desktop apps; None when it could not be read. */
+	microphone: PermissionState | null,
+	/**  The dictation hotkey as it is bound now (for the hotkey and practice steps' instructions). */
+	record_hotkey: Shortcut | null,
+	/**  The dictation hotkey is held while speaking (hold mode); false: press to start, press again to stop. */
+	hold_to_talk: boolean,
+	/**  The steps to walk now, in order; empty when onboarding is not required. */
+	steps: OnboardingStepSpec[],
+};
+
 /**
  * 
  *  * SOURCE OF TRUTH KEYWORDS: OpenPageInput, app_open_page input, open main window on a page, pill Set up, pill Open
@@ -884,6 +996,29 @@ export type ResourceKind = "transcript" | "model" | "engine" | "setting" | "audi
 "recording" | 
 /**  A take's text: it was never transcribed, or it was empty (copy and paste-last need it). */
 "transcript_text";
+
+/**
+ * 
+ *  * SOURCE OF TRUTH KEYWORDS: SessionRehearsal, session_rehearse, rehearsal mode, hotkey test, practice take, onboarding try it, keep text in Echo
+ *  * WHAT:  What the session rehearses while Echo's own window has focus: nothing (Off), the hotkeys (every press is
+ *  *        reported as HotkeyRehearsed and starts no take), or a take (it runs as usual, but its text stays in Echo,
+ *  *        DeliveryOutcome::Shown, instead of being pasted or copied).
+ *  * WHY:   Onboarding must prove the hotkey and the whole take work before the user relies on them (01 §7) without
+ *  *        recording a test press or pasting into Echo itself. A rehearsal only ever applies while an Echo window is
+ *  *        in the foreground, so one left on by a window that closed or hid can never swallow a hotkey or keep text
+ *  *        from the app the user dictates into. It is session configuration, not recording state: the machine is
+ *  *        untouched, the actor only decides what a hotkey or a delivery means (02 §5 stays the one owner).
+ *  * WHERE: Sent by `session_rehearse` (ipc/commands/session.rs) from onboarding's hotkey and practice steps; held by
+ *  *        the session actor (pipeline/session/rehearsal.rs).
+ *  
+ */
+export type SessionRehearsal = 
+/**  Hotkeys and takes behave normally. */
+"off" | 
+/**  Hotkey presses are reported (HotkeyRehearsed) and start nothing. */
+"hotkey" | 
+/**  Takes run fully and their text is shown in Echo instead of delivered. */
+"take";
 
 /**  The session changed state; carries the full view, so the UI never merges partial updates. */
 export type SessionStateChanged = SessionView;

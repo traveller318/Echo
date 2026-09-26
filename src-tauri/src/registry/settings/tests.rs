@@ -113,6 +113,7 @@ fn every_documented_setting_is_registered() {
             "general.start_minimized",
             "general.sound_cues",
             "general.theme",
+            "general.onboarded",
             "hotkeys.record",
             "hotkeys.mode",
             "hotkeys.paste_last",
@@ -687,5 +688,20 @@ fn hotkey_writes_and_resets_refuse_a_chord_another_hotkey_uses() {
         Err(AppError::NotFound {
             resource: ResourceKind::Setting
         })
+    );
+}
+
+#[test]
+fn onboarding_starts_undone_hidden_and_is_remembered_once_set() {
+    let spec = find(&keys::ONBOARDED).unwrap();
+    assert!(!spec.visible, "onboarding completion is internal state");
+    assert!(!onboarded(&defaults()));
+    assert!(onboarded(&resolve([(
+        keys::ONBOARDED,
+        SettingValue::Bool(true)
+    )])));
+    assert!(
+        !onboarded(&SettingsSnapshot::default()),
+        "an unresolved snapshot falls back to the spec default"
     );
 }

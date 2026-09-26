@@ -2,7 +2,8 @@
  * SOURCE OF TRUTH KEYWORDS: session pipeline, session state machine, session actor, transition, effect runner, session toasts, take lifecycle, sole owner of recording state
  * WHAT:  The session of 02 §5: the pure `transition` (transition.rs) and the toasts it raises (notices.rs), and the
  *        actor that owns the state and runs the machine (actor.rs: SessionActor, SessionHandle, SessionConfig),
- *        with its inbox (inbox.rs), the hotkey → input or paste-last routing (hotkey_input.rs), the Arm effect (arm.rs) and the
+ *        with its inbox (inbox.rs), the hotkey → input or paste-last routing (hotkey_input.rs), the onboarding
+ *        rehearsal (rehearsal.rs), the Arm effect (arm.rs) and the
  *        effect runner (runner.rs); the row writes that end a take (rows.rs, shared with retry). The machine's state, inputs, effects and policy are data in
  *        types/session_machine.rs.
  * WHY:   The session is the sole owner of recording state; keeping the decisions in one pure function means the
@@ -18,6 +19,7 @@ mod arm;
 mod hotkey_input;
 mod inbox;
 mod notices;
+mod rehearsal;
 pub mod rows;
 mod runner;
 mod transition;

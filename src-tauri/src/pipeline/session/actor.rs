@@ -1,8 +1,8 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: session actor, SessionActor, SessionHandle, SessionInbox, SessionConfig, SessionEngines, PanicReporter, actor loop, sole owner of recording state, session_get_state, shutdown finalize, panic supervision
+ * SOURCE OF TRUTH KEYWORDS: session actor, SessionActor, SessionHandle, SessionInbox, SessionConfig, SessionEngines, PanicReporter, actor loop, sole owner of recording state, session_get_state, shutdown finalize, panic supervision, session rehearsal
  * WHAT:  The session actor of 02 §5: one tokio task with an mpsc inbox that owns SessionState, feeds every input
  *        through the pure `transition` and hands the effects to the Runner. SessionHandle is the cloneable way in
- *        (the pill's Stop, the current view, paste-last, prepare, shutdown); SessionConfig is what the actor works through
+ *        (the pill's Stop, the current view, paste-last, the onboarding rehearsal, prepare, shutdown); SessionConfig is what the actor works through
  *        (settings, ports, the ASR worker, delivery, paths, database, event sink, engine builders, sound cues).
  * WHY:   There is exactly one owner of recording state and no copy anywhere else: the view `session_get_state`
  *        returns is computed from the state at the moment of the query, and every change is published as the full
@@ -16,7 +16,9 @@
  *        gone or on Shutdown, which finalizes every open journal and then answers, so the app waits for the WAV
  *        header before it exits (02 §5). A panic while handling a message is caught (pipeline/unwind.rs): the live
  *        take is failed with its audio kept and the actor starts over at Idle, so one bug never leaves Echo deaf
- *        to its hotkeys; a panic anywhere else reaches the actor as a PanicReporter message (02 §12).
+ *        to its hotkeys; a panic anywhere else reaches the actor as a PanicReporter message (02 §12). A hotkey is
+ *        offered to the rehearsal (runner, rehearsal.rs) only while no take is in progress, so Esc and the stop of a
+ *        running take are never swallowed.
  * WHERE: app/bootstrap builds it from the same ports as CommandCtx and spawns `run`; `prepare` on RunEvent::Ready,
  *        `shutdown` on RunEvent::Exit; ipc/commands/session.rs calls `view` and `ui_input`; the panic hook
  *        (app/panics.rs) holds a PanicReporter.
@@ -52,8 +54,8 @@ use crate::{
     services::Db,
     types::{
         AppError, AppEvent, AppPaths, DeliveryOutcome, EngineId, MonotonicMs, PortError,
-        PortResult, SessionEffect, SessionInput, SessionPhase, SessionState, SessionUiInput,
-        SessionView, SharedSettings,
+        PortResult, SessionEffect, SessionInput, SessionPhase, SessionRehearsal, SessionState,
+        SessionUiInput, SessionView, SharedSettings,
     },
 };
 
@@ -142,6 +144,12 @@ impl SessionHandle {
     /// Sends a pill input; `Internal` when the actor has stopped.
     pub fn ui_input(&self, input: SessionUiInput) -> PortResult<()> {
         self.send(Message::Ui(input))
+    }
+
+    /// Sets what the session rehearses (onboarding's hotkey test and practice take); `Internal` when the actor has
+    /// stopped.
+    pub fn rehearse(&self, rehearsal: SessionRehearsal) -> PortResult<()> {
+        self.send(Message::Rehearse(rehearsal))
     }
 
     /// The session as the UI should show it now.
@@ -260,14 +268,21 @@ impl SessionActor {
     /// Handles one message; Break after Shutdown.
     async fn handle(&mut self, message: Message) -> ControlFlow<()> {
         match message {
-            Message::Hotkey(event) => match hotkey_input::route(&event, &self.runner.settings()) {
-                Some(HotkeyRoute::Input(input)) => self.feed(VecDeque::from([input])).await,
-                Some(HotkeyRoute::PasteLast) => self.runner.paste_last(None),
-                None => {}
-            },
+            Message::Hotkey(event) => {
+                let rehearsed = !self.state.phase.status().is_in_progress()
+                    && self.runner.rehearsed_hotkey(&event);
+                if !rehearsed {
+                    match hotkey_input::route(&event, &self.runner.settings()) {
+                        Some(HotkeyRoute::Input(input)) => self.feed(VecDeque::from([input])).await,
+                        Some(HotkeyRoute::PasteLast) => self.runner.paste_last(None),
+                        None => {}
+                    }
+                }
+            }
             Message::Ui(SessionUiInput::Stop) => {
                 self.feed(VecDeque::from([SessionInput::Stop])).await;
             }
+            Message::Rehearse(rehearsal) => self.runner.rehearse(rehearsal),
             Message::Worker(reply) => {
                 let mut inputs = VecDeque::new();
                 self.runner.absorb(reply, &mut inputs);

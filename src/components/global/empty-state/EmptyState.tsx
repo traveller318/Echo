@@ -18,7 +18,7 @@ export type EmptyStateProps = Omit<ComponentProps<"div">, "title"> & {
   readonly body?: ReactNode;
   readonly action?: ReactNode;
   /** Heading element for the title; pick the level that fits under the surrounding headings. */
-  readonly titleAs?: "h2" | "h3" | "h4" | "p";
+  readonly titleAs?: "h1" | "h2" | "h3" | "h4" | "p";
 };
 
 export function EmptyState({

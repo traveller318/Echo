@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: session actor tests, pipeline tests, full take test, Esc undo test, Esc discard test, device loss test, ASR error test, exit mid-take test, panic recovery test, audio retention after success test, sound cue test, paste-last hotkey test, hold mode test, Bluetooth hint test
+ * SOURCE OF TRUTH KEYWORDS: session actor tests, pipeline tests, full take test, Esc undo test, Esc discard test, device loss test, ASR error test, exit mid-take test, panic recovery test, audio retention after success test, sound cue test, paste-last hotkey test, hold mode test, Bluetooth hint test, rehearsal test
  * WHAT:  End-to-end tests of the session actor over port fakes: a real capture worker, ASR worker, polish chain,
  *        delivery and in-memory database, driven by fake hotkeys and a fake microphone, observed through the
  *        events, the database, the journal on disk and the fakes.
@@ -52,9 +52,10 @@ use crate::{
     types::{
         Accelerator, AcceleratorRequest, AppError, AppEvent, AppPaths, AppTarget, AsrLoadRequest,
         AudioTransport, CaptureFormat, DeliveryOutcome, EngineId, HistoryChangeReason,
-        HistoryChanged, HotkeyCaps, Permission, PortError, ResourceKind, SessionCue, SessionStatus,
-        SessionView, SettingKey, SettingValue, SettingsSnapshot, SharedSettings, StaticStr,
-        TranscriptId, TranscriptStatus, testing::TempDir,
+        HistoryChanged, HotkeyAction, HotkeyCaps, HotkeyRehearsed, KeyState, Permission, PortError,
+        ResourceKind, SessionCue, SessionRehearsal, SessionStatus, SessionView, SettingKey,
+        SettingValue, SettingsSnapshot, SharedSettings, StaticStr, TranscriptId, TranscriptStatus,
+        testing::TempDir,
     },
 };
 
@@ -87,6 +88,7 @@ struct Rig {
     events: Arc<ChannelSink<AppEvent>>,
     audio: Arc<FakeAudioCapture>,
     hotkeys: Arc<FakeHotkeyService>,
+    foreground: Arc<FakeForegroundApp>,
     notifier: Arc<FakeNotifier>,
     clipboard: Arc<FakeClipboard>,
     inserter: Arc<FakeTextInserter>,
@@ -141,6 +143,7 @@ impl Rig {
             supports_release: true,
             supports_modifier_only: true,
         }));
+        let foreground = Arc::new(FakeForegroundApp::focused(notepad()));
         let notifier = Arc::new(FakeNotifier::default());
         let clipboard = Arc::new(FakeClipboard::with_text("before"));
         let inserter = Arc::new(FakeTextInserter::default());
@@ -184,7 +187,7 @@ impl Rig {
                 scheduler: Arc::new(FakeWorkerScheduler::default()),
                 asr,
                 hotkeys: Arc::clone(&hotkeys) as _,
-                foreground: Arc::new(FakeForegroundApp::focused(notepad())),
+                foreground: Arc::clone(&foreground) as _,
                 notifier: Arc::clone(&notifier) as _,
                 delivery: Delivery::new(DeliveryPorts {
                     clipboard: Arc::clone(&clipboard) as _,
@@ -220,6 +223,7 @@ impl Rig {
             events,
             audio,
             hotkeys,
+            foreground,
             notifier,
             clipboard,
             inserter,
@@ -270,6 +274,23 @@ impl Rig {
                 }
                 Some(event) => before.push(event),
                 None => panic!("the session never reached {status:?}; saw {before:?}"),
+            }
+        }
+    }
+
+    /// Sets the session rehearsal; it applies from the next message the actor handles.
+    fn rehearse(&self, rehearsal: SessionRehearsal) {
+        self.handle.rehearse(rehearsal).unwrap();
+    }
+
+    /// Waits for the next HotkeyRehearsed; returns it and every event before it.
+    fn wait_for_rehearsed(&self) -> (HotkeyRehearsed, Vec<AppEvent>) {
+        let mut before = Vec::new();
+        loop {
+            match self.events.next() {
+                Some(AppEvent::HotkeyRehearsed(rehearsed)) => return (rehearsed, before),
+                Some(event) => before.push(event),
+                None => panic!("no hotkey was rehearsed; saw {before:?}"),
             }
         }
     }
@@ -356,6 +377,14 @@ impl EventSink<AppEvent> for PanicOnPublish {
 
 fn notepad() -> AppTarget {
     FakeForegroundApp::target("notepad.exe", false)
+}
+
+/// Echo's own main window: the focused window belongs to this process.
+fn echo_window() -> AppTarget {
+    AppTarget {
+        process_id: std::process::id(),
+        ..FakeForegroundApp::target("echo.exe", false)
+    }
 }
 
 fn settings_with(changes: Vec<(SettingKey, SettingValue)>) -> SettingsSnapshot {
@@ -906,5 +935,85 @@ fn a_wired_microphone_gets_no_bluetooth_hint() {
         !services::settings::get::all(&rig.db)
             .unwrap()
             .contains(&(BLUETOOTH_MIC_NOTICE.shown.clone(), SettingValue::Bool(true)))
+    );
+}
+
+/// Onboarding's hotkey test: with Echo focused, presses are reported and start nothing; the same press in another
+/// app starts a take, so a rehearsal left on never breaks dictation elsewhere.
+#[test]
+fn a_hotkey_rehearsal_reports_presses_in_echo_and_records_elsewhere() {
+    let rig = Rig::start();
+    rig.foreground.set(Some(echo_window()));
+    rig.rehearse(SessionRehearsal::Hotkey);
+    rig.press();
+    let (rehearsed, before) = rig.wait_for_rehearsed();
+    assert_eq!(
+        rehearsed,
+        HotkeyRehearsed {
+            hotkey: RECORD,
+            action: HotkeyAction::Record,
+            state: KeyState::Pressed,
+        }
+    );
+    assert!(before.is_empty(), "nothing else happened: {before:?}");
+    assert_eq!(rig.view(), SessionView::IDLE);
+    assert!(
+        !rig.audio.is_open(),
+        "no microphone opened for a rehearsed press"
+    );
+
+    rig.foreground.set(Some(notepad()));
+    thread::sleep(PAST_DEBOUNCE);
+    let take = rig.record();
+    assert_eq!(
+        transcripts::get::get(&rig.db, take).unwrap().status,
+        TranscriptStatus::Recording
+    );
+}
+
+/// A rehearsal never swallows the keys of a take already running: Esc still starts the cancel countdown.
+#[test]
+fn a_hotkey_rehearsal_leaves_a_running_take_alone() {
+    let rig = Rig::start();
+    rig.record();
+    rig.foreground.set(Some(echo_window()));
+    rig.rehearse(SessionRehearsal::Hotkey);
+    rig.esc();
+    rig.wait_for(SessionStatus::CancelPending);
+}
+
+/// Onboarding's practice take: it runs end to end, is stored, and its text stays in Echo (Shown) with the
+/// clipboard and every app untouched; turned off, the next take pastes again.
+#[test]
+fn a_take_rehearsal_in_echo_shows_the_text_instead_of_pasting_it() {
+    let rig = Rig::start();
+    rig.foreground.set(Some(echo_window()));
+    rig.rehearse(SessionRehearsal::Take);
+    rig.engine.push_text("Practice makes perfect.");
+    let take = rig.record();
+    rig.feed(&speech(400));
+    rig.feed(&silence(700));
+    rig.stop();
+    let (done, _) = rig.wait_for(SessionStatus::Done);
+    assert_eq!(done.outcome, Some(DeliveryOutcome::Shown));
+    assert_eq!(done.transcript_id, Some(take));
+    assert!(rig.inserter.insertions().is_empty(), "nothing was pasted");
+    assert_eq!(
+        rig.clipboard.text().as_deref(),
+        Some("before"),
+        "the clipboard is untouched"
+    );
+    let row = transcripts::get::get(&rig.db, take).unwrap();
+    assert_eq!(row.status, TranscriptStatus::Done);
+    assert_eq!(row.final_text.as_deref(), Some("Practice makes perfect."));
+    rig.wait_for(SessionStatus::Idle);
+
+    rig.rehearse(SessionRehearsal::Off);
+    rig.foreground.set(Some(notepad()));
+    thread::sleep(PAST_DEBOUNCE);
+    rig.dictate("Back to work.");
+    assert_eq!(
+        rig.inserter.insertions(),
+        [(notepad(), String::from("Back to work. "))]
     );
 }

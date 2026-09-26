@@ -103,6 +103,19 @@ pub const SETTINGS: &[SettingSpec] = &[
         requires: None,
     },
     SettingSpec {
+        key: keys::ONBOARDED,
+        section: SettingSection::General,
+        label: StaticStr::new("Onboarding done"),
+        help: StaticStr::new(
+            "Internal: first-run setup was finished once. Setup still returns while the speech model is missing.",
+        ),
+        kind: SettingKind::Bool,
+        default: SettingValue::Bool(false),
+        restart_required: false,
+        visible: false,
+        requires: None,
+    },
+    SettingSpec {
         key: keys::RECORD_HOTKEY,
         section: SettingSection::Hotkeys,
         label: StaticStr::new("Dictation hotkey"),

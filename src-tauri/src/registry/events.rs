@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: event catalog, registry events, AppearanceChanged, AudioDevicesChanged, tauri_specta Event, collect_events, event names, emit, AppEvent dispatch
+ * SOURCE OF TRUTH KEYWORDS: event catalog, registry events, AppearanceChanged, AudioDevicesChanged, OnboardingRequested, HotkeyRehearsed, tauri_specta Event, collect_events, event names, emit, AppEvent dispatch
  * WHAT:  The catalog of every Rust → UI event: gives each types/events.rs payload its wire name, collects them
  *        for the tauri-specta builder, and emits an AppEvent as its typed payload.
  * WHY:   An event is a registry entry (02 §3.3): adding one is a payload struct plus an AppEvent variant in types/
@@ -14,9 +14,9 @@ use tauri::{AppHandle, Runtime};
 use tauri_specta::{Event, Events, collect_events};
 
 use crate::types::{
-    AppEvent, AppearanceChanged, AudioDevicesChanged, AudioLevel, HistoryChanged, MetricsChanged,
-    ModelProgress, ModelsChanged, NavigationRequested, SessionStateChanged, SettingsChanged,
-    TranscriptSaved,
+    AppEvent, AppearanceChanged, AudioDevicesChanged, AudioLevel, HistoryChanged, HotkeyRehearsed,
+    MetricsChanged, ModelProgress, ModelsChanged, NavigationRequested, OnboardingRequested,
+    SessionStateChanged, SettingsChanged, TranscriptSaved,
 };
 
 /**
@@ -64,6 +64,8 @@ event_catalog![
     AppearanceChanged,
     NavigationRequested,
     AudioDevicesChanged,
+    OnboardingRequested,
+    HotkeyRehearsed,
 ];
 
 #[cfg(test)]
@@ -86,6 +88,8 @@ mod tests {
                 "AppearanceChanged",
                 "NavigationRequested",
                 "AudioDevicesChanged",
+                "OnboardingRequested",
+                "HotkeyRehearsed",
             ]
         );
         assert_eq!(SessionStateChanged::NAME, "SessionStateChanged");
