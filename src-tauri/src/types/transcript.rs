@@ -84,6 +84,12 @@ impl TranscriptStatus {
         !matches!(self, Self::Empty)
     }
 
+    /// Clearing History erases this take: it is listed and settled. An unfinished take still belongs to the
+    /// session (or to startup recovery), which would write its text back after the clear.
+    pub const fn is_cleared_with_history(self) -> bool {
+        self.is_listed_in_history() && !self.is_unfinished()
+    }
+
     /// Every status in `ALL` that `keep` accepts, in declaration order (a selector's status list).
     pub fn matching(keep: fn(Self) -> bool) -> Vec<Self> {
         Self::ALL
@@ -179,16 +185,19 @@ pub enum TranscriptChange {
     LatencyMs(u32),
     AppName(Option<String>),
     ErrorCode(Option<AppErrorCode>),
+    /// The user cleared History at this time: the row leaves History but still counts in the metrics.
+    ClearedAt(UnixMs),
 }
 
 /**
  * SOURCE OF TRUTH KEYWORDS: TranscriptSelector, select transcripts, bulk selection, recovery query, retention query
  * WHAT:  Which stored takes a bulk read or delete applies to: every condition that is set must hold.
  * WHY:   Startup recovery (rows left `recording`/`transcribing`), the audio retention sweep (old takes with audio,
- *        except failed/recoverable) and history retention (rows older than N days) are all "these rows" queries
- *        (02 §7.3); one selector serves them and any later sweep. `statuses: None` means any status, while
+ *        except failed/recoverable), history retention (rows older than N days) and clearing History (rows still
+ *        listed) are all "these rows" queries (02 §7.3); one selector serves them and any later sweep. `statuses: None` means any status, while
  *        `Some(vec![])` matches nothing, so an empty list can never widen a delete to every row.
- * WHERE: Built by the pipeline (recovery, retention); read by services/transcripts/{list::select, delete::delete_matching}.
+ * WHERE: Built by the pipeline (recovery, retention, history clear) and history_list; read by
+ *        services/transcripts/{list::list, list::select, delete::delete_matching}.
  */
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TranscriptSelector {
@@ -197,6 +206,8 @@ pub struct TranscriptSelector {
     pub created_before: Option<UnixMs>,
     /// Only takes whose journal is (true) or is not (false) still on disk.
     pub has_audio: Option<bool>,
+    /// Only takes the user cleared from History (true) or still in it (false).
+    pub cleared: Option<bool>,
 }
 
 /// The identifying columns of a selected take: enough to find or delete its journal.
@@ -359,6 +370,18 @@ mod tests {
                 "{status:?}"
             );
         }
+    }
+
+    #[test]
+    fn clearing_history_erases_only_listed_settled_takes() {
+        assert_eq!(
+            TranscriptStatus::matching(TranscriptStatus::is_cleared_with_history),
+            [
+                TranscriptStatus::Done,
+                TranscriptStatus::Failed,
+                TranscriptStatus::Recoverable
+            ]
+        );
     }
 
     #[test]

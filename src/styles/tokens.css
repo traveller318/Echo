@@ -77,6 +77,7 @@
   --space-12: 48px;
   --sidebar-width: 220px;
   --titlebar-height: 40px;
+  --titlebar-logo-width: 28px;
   --content-max: 1040px;
   --content-pad: var(--space-8);
 

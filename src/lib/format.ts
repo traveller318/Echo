@@ -226,7 +226,7 @@ export function formatWords(value: number, locale?: string): string {
  * WHY:   History is scanned by recency; repeating today's date on every row is noise. The order and 12/24-hour
  *        clock follow the Windows locale through Intl (the locale is a parameter so tests are deterministic);
  *        `now` is a parameter so the rule is testable and a list renders with one clock.
- * WHERE: TranscriptRow (History rows, later the Dashboard's recent takes), the History detail sheet.
+ * WHERE: TranscriptRow (History rows and the Dashboard's recent takes).
  */
 export function formatTakeTime(createdAt: number, now: number = Date.now(), locale?: string): string {
   const at = new Date(createdAt);

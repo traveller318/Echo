@@ -7,7 +7,6 @@
 export {
   CommandError,
   describeAppError,
-  describeTakeFailure,
   inlineAppError,
   isAppError,
   isAppErrorCode,

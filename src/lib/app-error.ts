@@ -201,36 +201,6 @@ export function inlineAppError(error: AppError): string {
   return `${copy.title}. ${copy.body}`;
 }
 
-/**
- * SOURCE OF TRUTH KEYWORDS: TAKE_FAILURE_COPY, describeTakeFailure, stored error code, transcripts.error_code, why a take failed
- * WHAT:  One calm sentence per AppError code saying why a stored take failed.
- * WHY:   A take's row keeps only the error code (`transcripts.error_code`, 02 §4.2), not the variant's fields, so
- *        the full copy builders above cannot run; this table is keyed by the same code union, so a new code fails
- *        tsc until it has a sentence.
- * WHERE: The History detail sheet (routes/history).
- */
-const TAKE_FAILURE_COPY: Readonly<Record<AppErrorCode, string>> = {
-  Validation: "Something about the take wasn't valid.",
-  PermissionDenied: "Windows didn't allow a step, such as using the microphone or the clipboard.",
-  Busy: "Echo was busy with another task.",
-  NotFound: "Something the take needed was missing.",
-  ModelMissing: "The speech model wasn't installed.",
-  ModelCorrupt: "The speech model was damaged.",
-  AudioDevice: "The microphone stopped working.",
-  Asr: "Speech recognition didn't finish.",
-  Polish: "Cleanup didn't finish.",
-  Storage: "Echo couldn't write to disk.",
-  Offline: "Offline mode was on.",
-  Network: "The download server couldn't be reached.",
-  Hotkey: "The hotkey stopped working.",
-  Internal: "Something went wrong inside Echo.",
-};
-
-/** Why a stored take failed, from its error code. */
-export function describeTakeFailure(code: AppErrorCode): string {
-  return TAKE_FAILURE_COPY[code];
-}
-
 export function isAppErrorCode(code: string): code is AppErrorCode {
   return Object.hasOwn(APP_ERROR_COPY, code);
 }

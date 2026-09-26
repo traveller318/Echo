@@ -34,6 +34,8 @@ export const commands = {
 	historyCopy: (input: TranscriptInput) => typedError<null, AppError>(__TAURI_INVOKE("history_copy", { input })),
 	/**  Deletes a take and its saved audio. */
 	historyDelete: (input: TranscriptInput) => typedError<null, AppError>(__TAURI_INVOKE("history_delete", { input })),
+	/**  Clears History: every take's text and audio are erased; the dashboard and streak keep counting them. */
+	historyClear: () => typedError<null, AppError>(__TAURI_INVOKE("history_clear")),
 	/**  Pastes the newest completed take into the focused app again (copies it when pasting is not possible). */
 	historyPasteLast: () => typedError<DeliveryOutcome, AppError>(__TAURI_INVOKE("history_paste_last")),
 	/**
@@ -431,7 +433,9 @@ export type HistoryChangeReason = "inserted" | "updated" | "deleted" |
 /**  Startup recovery marked unfinished takes recoverable. */
 "recovered" | 
 /**  A retention sweep removed audio or rows. */
-"retention";
+"retention" | 
+/**  The user cleared History: its takes were erased and hidden, their measurements kept. */
+"cleared";
 
 /**  History rows changed; list queries should refetch. */
 export type HistoryChanged = {

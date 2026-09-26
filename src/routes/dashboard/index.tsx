@@ -2,11 +2,11 @@
  * SOURCE OF TRUTH KEYWORDS: DashboardPage, dashboard route, dashboard page, hero stat, stat cards, activity chart, recent takes, metrics range
  * WHAT:  The Dashboard (04 §5): a range picker in the header, the hero stat card (time saved), the primary stat
  *        cards (words, transcriptions, speaking speed), the activity chart, the small cards (median latency,
- *        streak) and the five most recent takes with the shared take actions and detail sheet.
+ *        streak) and the five most recent takes with the shared take actions.
  * WHY:   The layout comes from the registry's metric entries (dashboardLayout: query + emphasis), so a new metric is
  *        a Rust registry entry and no change here. Every number is computed by Rust from the kept takes
  *        (metrics_summary / metrics_activity) and refreshed by MetricsChanged, never polled (02 §4.4); the page
- *        holds only UI state (the picked range in the dashboard store, the open take in useTakeInspector). While a
+ *        holds only UI state (the picked range in the dashboard store, the take awaiting a delete confirmation in useTakeInspector). While a
  *        newly picked range loads the previous numbers stay; the first read shows an indeterminate bar only after
  *        --delay-loading (ProgressBar), so a fast read never flashes. A failed read offers "Try again".
  * WHERE: Lazy-loaded by app/routes.tsx for the `dashboard` nav entry (app/nav-page.ts).

@@ -1,8 +1,8 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: app shell test, sidebar navigation test, route fallback test, titlebar window controls test, toast action test, route error test, onboarding gate test
+ * SOURCE OF TRUTH KEYWORDS: app shell test, sidebar navigation test, route fallback test, titlebar window controls test, toast action test, route error test, onboarding gate test, sidebar toggle test
  * WHAT:  Renders the routed shell (buildAppRoutes on a memory router, the real lazy pages, the real Providers) with
  *        Tauri's IPC mocked, and verifies: registry-ordered sidebar with the current page marked, navigation,
- *        the catch-all redirect, the titlebar's minimize and close calls, AppError toast actions (page and
+ *        the catch-all redirect, the titlebar's minimize and close calls, the sidebar toggle, AppError toast actions (page and
  *        command), that a failing page keeps the sidebar and offers a reload, and that onboarding opens at launch when
  *        Rust says it is due and whenever OnboardingRequested arrives.
  * WHY:   The shell is the frame every later page lives in (04 §5); these are the behaviours a user notices first
@@ -15,6 +15,7 @@ import { RouterProvider } from "react-router/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { events, type NavItem, type OnboardingView, type RegistryView, type SessionView } from "@/bindings";
 import { RegistryContext } from "@/hooks/use-registry";
+import { useShellStore } from "@/stores/shell-store";
 import { showAppErrorToast, useToastStore } from "@/stores/toast-store";
 import { clearTauriMocks, mockTauri } from "@/test/tauri-mocks";
 import { NAV_PAGES, type NavPages } from "./nav-page";
@@ -78,6 +79,7 @@ beforeEach(() => {
   mockTauri((cmd, payload) => ipc(cmd, payload));
   ipc.mockImplementation((cmd) => PAGE_READS[cmd] ?? null);
   useToastStore.setState({ toasts: [], nextId: 1 });
+  useShellStore.setState({ sidebarOpen: true });
 });
 
 afterEach(async () => {
@@ -123,6 +125,25 @@ describe("app shell", () => {
     const commands = ipc.mock.calls.map(([cmd]) => cmd);
     expect(commands).toContain("plugin:window|minimize");
     expect(commands).toContain("plugin:window|close");
+  });
+
+  it("hides and shows the sidebar from the titlebar", async () => {
+    renderShell("/");
+    await screen.findByRole("heading", { level: 1, name: "Dashboard" });
+    expect(screen.getByText("Echo")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide sidebar" }));
+    const show = screen.getByRole("button", { name: "Show sidebar" });
+    expect(show).toHaveAttribute("aria-expanded", "false");
+    const slot = document.getElementById(show.getAttribute("aria-controls") ?? "");
+    // jsdom keeps inert content in the accessibility tree; WebView2 drops it, so the attribute is the contract.
+    expect(slot).toHaveAttribute("inert");
+    expect(slot).toHaveAttribute("data-state", "closed");
+
+    fireEvent.click(show);
+    expect(screen.getByRole("button", { name: "Hide sidebar" })).toHaveAttribute("aria-expanded", "true");
+    expect(slot).not.toHaveAttribute("inert");
+    expect(slot).toHaveAttribute("data-state", "open");
   });
 
   it("opens a page from an AppError toast action", async () => {
@@ -176,6 +197,7 @@ describe("app shell", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Try your hotkey" })).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/onboarding");
     expect(screen.queryByRole("navigation", { name: "Main" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Hide sidebar" })).not.toBeInTheDocument();
   });
 
   it("stays on the page when nothing is due and opens onboarding when asked", async () => {

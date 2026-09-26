@@ -1,6 +1,6 @@
 /**
  * SOURCE OF TRUTH KEYWORDS: glassSurfaceVariants, GlassSurfaceVariant, GLASS_SURFACE_VARIANTS, glass recipe classes, glass variants
- * WHAT:  The glass recipe as class variants (card, sidebar, popover, pill, modal) and the list of variant names.
+ * WHAT:  The glass recipe as class variants (card, popover, pill, modal) and the list of variant names.
  * WHY:   docs/04 §3.2 makes GlassSurface the only place the recipe is assembled; the classes live in this sibling
  *        file only because a component file may export components alone (fast refresh). Every value is a token;
  *        under data-transparency="reduced" the tints are already solid (tokens.css) and the backdrop filter is
@@ -21,7 +21,6 @@ export const glassSurfaceVariants = cva(
           "rounded-card border-(length:--border-hairline) border-(--glass-border) backdrop-blur-md",
           "shadow-[inset_0_var(--border-hairline)_0_var(--glass-highlight),var(--shadow-e1)]",
         ],
-        sidebar: "backdrop-blur-md",
         popover: [
           "rounded-control border-(length:--border-hairline) border-(--glass-border) bg-(--glass-tint-strong) backdrop-blur-sm",
           "shadow-[inset_0_var(--border-hairline)_0_var(--glass-highlight),var(--shadow-e2)]",
@@ -46,7 +45,6 @@ export type GlassSurfaceVariant = NonNullable<VariantProps<typeof glassSurfaceVa
 
 export const GLASS_SURFACE_VARIANTS = [
   "card",
-  "sidebar",
   "popover",
   "pill",
   "modal",

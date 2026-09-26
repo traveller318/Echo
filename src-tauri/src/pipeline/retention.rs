@@ -72,6 +72,7 @@ pub fn sweep(db: &Db, paths: &AppPaths, policy: RetentionPolicy, now: UnixMs) ->
                 statuses: swept_statuses(),
                 created_before: Some(cutoff),
                 has_audio: None,
+                cleared: None,
             },
             "history",
         );
@@ -83,6 +84,7 @@ pub fn sweep(db: &Db, paths: &AppPaths, policy: RetentionPolicy, now: UnixMs) ->
             statuses: swept_statuses(),
             created_before: Some(policy.audio_cutoff(now)),
             has_audio: Some(true),
+            cleared: None,
         },
         "audio",
     );

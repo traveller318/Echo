@@ -3,7 +3,7 @@
  * WHAT:  The DataList `actions` slot of a take row: Copy, Retry and Delete for one take. Copy and Retry run at
  *        once; Delete asks first through `onDelete` (the confirmation dialog of TakeOverlays).
  * WHY:   04 §5: row actions on hover or focus. The mutations are shared (useTranscriptActions), so a retry started
- *        here shows as busy on its row and in the detail sheet alike; availability comes from takeAvailability, and
+ *        here shows as busy on its row wherever that take is listed; availability comes from takeAvailability, and
  *        Rust has the final say.
  * WHERE: The DataList actions slot of routes/history and routes/dashboard (recent takes).
  */

@@ -2,7 +2,7 @@
  * SOURCE OF TRUTH KEYWORDS: DashboardPage test, dashboard route test, stat cards test, activity chart test, recent takes test, metrics range test
  * WHAT:  Verifies the Dashboard against mocked commands: every registry metric in its row with its formatted value
  *        (a dash for no data), the range picker re-reading the summary, the activity card's summary line and chart,
- *        the five recent takes with the shared detail sheet, "Show all" opening History, and the error retry.
+ *        the five recent takes (a click opens no detail sheet), "Show all" opening History, and the error retry.
  * WHY:   The page is laid out from the registry and fed only by metrics_summary / metrics_activity / history_list;
  *        this is the one place that whole flow runs short of Rust. jsdom layout comes from test/layout-stubs.ts.
  * WHERE: Runs in the `web` Vitest project with `@/bindings` mocked.
@@ -18,7 +18,6 @@ import type {
   MetricsSummary,
   NavItem,
   RegistryView,
-  Transcript,
   TranscriptSummary,
 } from "@/bindings";
 import { RegistryContext } from "@/hooks/use-registry";
@@ -132,29 +131,10 @@ function take(id: string, preview: string): TranscriptSummary {
 
 const RECENT = [take("01K5ZQ9J3V7M8N2P4R6T8W0Y2B", "Pick up the milk."), take("01K5ZQ9J3V7M8N2P4R6T8W0Y2A", "Call Sam back.")];
 
-const FULL: Transcript = {
-  id: "01K5ZQ9J3V7M8N2P4R6T8W0Y2B",
-  created_at: Date.now(),
-  status: "done",
-  raw_text: "pick up the milk",
-  final_text: "Pick up the milk.",
-  has_audio: true,
-  duration_ms: 2000,
-  speech_ms: 1500,
-  word_count: 4,
-  engine_id: "parakeet-tdt-0.6b-v3",
-  polisher_ids: ["rules"],
-  language: null,
-  latency_ms: 180,
-  app_name: "notepad.exe",
-  error_code: null,
-};
-
 const mocks = vi.hoisted(() => ({
   metricsSummary: vi.fn(),
   metricsActivity: vi.fn(),
   historyList: vi.fn(),
-  historyGet: vi.fn(),
   historyCopy: vi.fn(),
   historyDelete: vi.fn(),
   sessionRetry: vi.fn(),
@@ -202,7 +182,6 @@ beforeEach(() => {
   );
   mocks.metricsActivity.mockResolvedValue({ status: "ok", data: ACTIVITY });
   mocks.historyList.mockResolvedValue({ status: "ok", data: { items: RECENT, next_cursor: null } });
-  mocks.historyGet.mockResolvedValue({ status: "ok", data: FULL });
 });
 
 afterEach(() => {
@@ -284,13 +263,11 @@ describe("DashboardPage", () => {
     );
   });
 
-  it("lists the five newest takes and opens one in the detail sheet", async () => {
+  it("lists the five newest takes and opens nothing on a click", async () => {
     renderPage();
     fireEvent.click(await screen.findByText("Pick up the milk."));
     expect(mocks.historyList).toHaveBeenCalledWith({ search: null, cursor: null, limit: 5 });
-    const sheet = await screen.findByRole("dialog");
-    expect(await within(sheet).findByText("180 ms")).toBeInTheDocument();
-    expect(mocks.historyGet).toHaveBeenCalledWith({ id: FULL.id });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("opens History from Show all", async () => {

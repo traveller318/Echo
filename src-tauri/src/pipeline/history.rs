@@ -1,20 +1,22 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: history pipeline, delete take, copy take, paste last, take text, announce saved, announce deleted, live take guard
- * WHAT:  What History does with stored takes beyond reading them: `delete_take` (WAV, then row), `copy_take` (its
+ * SOURCE OF TRUTH KEYWORDS: history pipeline, delete take, clear history, copy take, paste last, take text, announce saved, announce deleted, announce cleared, live take guard
+ * WHAT:  What History does with stored takes beyond reading them: `delete_take` (WAV, then row), `clear_history`
+ *        (every listed take leaves History, its text and audio erased, its measurements kept), `copy_take` (its
  *        text to the clipboard), `paste_last` (the newest completed take's text into the focused app),
  *        `take_text` (the text a take offers), `ensure_not_live` (refuse the take the session still owns) and the
- *        events that tell every window (`announce_saved`, `announce_deleted`).
+ *        events that tell every window (`announce_saved`, `announce_deleted`, `announce_cleared`).
  * WHY:   Business rules on files and rows live in the pipeline, never in services (one verb, one table) or
  *        commands (thin), so the History commands, the session actor and later the tray or a hotkey share them.
  *        Delete removes the WAV before the row: if the WAV cannot be removed the row stays, so History still shows
  *        the take and the user can try again instead of an orphaned file lingering unseen (00 constraint 5 cuts
- *        both ways). Copy offers the polished text, else the raw text a failed delivery left (02 §7.3: the raw
+ *        both ways). Clearing History must not reset the dashboard or the streak, which are aggregates over the
+ *        rows (02 §7.4), so it erases a row's content and marks it `cleared_at` instead of deleting it. Copy offers the polished text, else the raw text a failed delivery left (02 §7.3: the raw
  *        text is stored before delivery), and refuses a take with neither (`NotFound { transcript_text }`).
  *        Paste-last pastes exactly what a take would have pasted (the stored text plus the trailing space the
  *        chain adds), into the focused window unless that window is Echo's own (then it copies, like a take with
  *        no target). Clipboard work blocks for up to the adapter's retries (05 W4), so callers run these on the
  *        blocking pool. Transcript text is never logged (02 §10).
- * WHERE: ipc/commands/history.rs (history_get, history_copy, history_delete); the session runner (paste_last,
+ * WHERE: ipc/commands/history.rs (history_get, history_copy, history_delete, history_clear); the session runner (paste_last,
  *        announce_saved after a take settles); pipeline/retry.rs (announce_saved).
  */
 
@@ -26,7 +28,8 @@ use crate::{
     types::{
         AppError, AppEvent, AppPaths, AppTarget, DeliveryReport, HistoryChangeReason,
         HistoryChanged, MetricsChanged, PortError, PortResult, ResourceKind, SessionView,
-        SettingsSnapshot, Transcript, TranscriptId, TranscriptSaved, TranscriptStatus,
+        SettingsSnapshot, Transcript, TranscriptChange, TranscriptId, TranscriptSaved,
+        TranscriptSelector, TranscriptStatus, UnixMs,
     },
 };
 
@@ -54,6 +57,59 @@ pub fn delete_take(db: &Db, paths: &AppPaths, id: TranscriptId) -> PortResult<()
     services::transcripts::get::get(db, id)?;
     journal::remove(&paths.recording(id))?;
     services::transcripts::delete::delete(db, id)
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: clear_history, clear all takes, erase text and audio, keep metrics, keep streak, cleared_at
+ * WHAT:  Erases every take History lists (settled ones, except `live`, the take the session still owns): WAV
+ *        first, then one transaction blanks the text, audio path and app and stamps `cleared_at = now`, which
+ *        hides the row from History. Returns how many takes were cleared.
+ * WHY:   The rows stay because the dashboard and streak are computed from them; only what the user said and
+ *        where it went is erased (status, time, counts, durations and latency are what the aggregates read). WAV
+ *        before row, as in `delete_take`: a take whose WAV cannot be removed stays listed and untouched, the rest
+ *        are still cleared, and the first failure is returned so the user hears about it and can clear again.
+ * WHERE: history_clear (ipc/commands/history.rs), on the blocking pool.
+ */
+pub fn clear_history(
+    db: &Db,
+    paths: &AppPaths,
+    live: Option<TranscriptId>,
+    now: UnixMs,
+) -> PortResult<usize> {
+    let listed = services::transcripts::list::select(
+        db,
+        &TranscriptSelector {
+            statuses: Some(TranscriptStatus::matching(
+                TranscriptStatus::is_cleared_with_history,
+            )),
+            cleared: Some(false),
+            ..TranscriptSelector::default()
+        },
+    )?;
+    let mut failure = None;
+    let mut erased = Vec::with_capacity(listed.len());
+    for take in listed.iter().filter(|take| Some(take.id) != live) {
+        if take.audio_path.is_some()
+            && let Err(error) = journal::remove(&paths.recording(take.id))
+        {
+            tracing::warn!(take = %take.id, detail = error.detail(), "a take's audio could not be deleted; it stays in History");
+            failure.get_or_insert(error);
+            continue;
+        }
+        erased.push(take.id);
+    }
+    let cleared = services::transcripts::update::update_each(
+        db,
+        &erased,
+        &[
+            TranscriptChange::RawText(None),
+            TranscriptChange::FinalText(None),
+            TranscriptChange::AudioPath(None),
+            TranscriptChange::AppName(None),
+            TranscriptChange::ClearedAt(now),
+        ],
+    )?;
+    failure.map_or(Ok(cleared), Err)
 }
 
 /// Puts a stored take's text on the clipboard (excluded from Windows clipboard history, 05 W5).
@@ -134,6 +190,16 @@ pub fn announce_deleted(events: &dyn EventSink<AppEvent>) {
         .into(),
     );
     events.emit(MetricsChanged {}.into());
+}
+
+/// HistoryChanged for a cleared History; the metrics did not change, so no MetricsChanged.
+pub fn announce_cleared(events: &dyn EventSink<AppEvent>) {
+    events.emit(
+        HistoryChanged {
+            reason: HistoryChangeReason::Cleared,
+        }
+        .into(),
+    );
 }
 
 fn no_text() -> PortError {
@@ -269,6 +335,87 @@ mod tests {
     }
 
     #[test]
+    fn clear_erases_listed_takes_but_keeps_their_measurements() {
+        let fixture = fixture();
+        let done = take(
+            &fixture,
+            1_000,
+            TranscriptStatus::Done,
+            Some("raw"),
+            Some("Kept?"),
+        );
+        services::transcripts::update::update(
+            &fixture.db,
+            done,
+            &[
+                TranscriptChange::WordCount(1),
+                TranscriptChange::LatencyMs(300),
+                TranscriptChange::AppName(Some("notepad.exe".to_owned())),
+            ],
+        )
+        .unwrap();
+        let failed = take(
+            &fixture,
+            2_000,
+            TranscriptStatus::Failed,
+            Some("Heard."),
+            None,
+        );
+        let silent = take(&fixture, 3_000, TranscriptStatus::Empty, None, None);
+        let unfinished = take(&fixture, 4_000, TranscriptStatus::Transcribing, None, None);
+        let live = take(&fixture, 5_000, TranscriptStatus::Done, None, Some("Live."));
+
+        let cleared = clear_history(
+            &fixture.db,
+            &fixture.paths,
+            Some(live),
+            UnixMs::from_millis(9_000),
+        )
+        .unwrap();
+        assert_eq!(cleared, 2);
+        let read = |id| services::transcripts::get::get(&fixture.db, id).unwrap();
+        let erased = read(done);
+        assert_eq!(
+            (erased.raw_text, erased.final_text, erased.app_name),
+            (None, None, None)
+        );
+        assert!(!erased.has_audio);
+        assert_eq!(erased.status, TranscriptStatus::Done);
+        assert_eq!((erased.word_count, erased.latency_ms), (Some(1), Some(300)));
+        assert!(!fixture.paths.recording(done).exists());
+        assert!(!fixture.paths.recording(failed).exists());
+        assert_eq!(read(failed).raw_text, None);
+        for kept in [silent, unfinished, live] {
+            assert!(fixture.paths.recording(kept).exists(), "{kept}");
+        }
+        assert_eq!(read(live).final_text.as_deref(), Some("Live."));
+
+        let listed = services::transcripts::list::select(
+            &fixture.db,
+            &TranscriptSelector {
+                cleared: Some(false),
+                ..TranscriptSelector::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            listed.iter().map(|row| row.id).collect::<Vec<_>>(),
+            [silent, unfinished, live]
+        );
+        assert_eq!(
+            clear_history(
+                &fixture.db,
+                &fixture.paths,
+                Some(live),
+                UnixMs::from_millis(9_500)
+            )
+            .unwrap(),
+            0,
+            "a second clear finds nothing left"
+        );
+    }
+
+    #[test]
     fn copy_puts_the_text_on_the_clipboard_or_says_there_is_none() {
         let fixture = fixture();
         let done = take(
@@ -388,6 +535,15 @@ mod tests {
             })
         );
         assert_eq!(events[2], AppEvent::from(MetricsChanged {}));
+
+        let sink = RecordingSink::<AppEvent>::default();
+        announce_cleared(&sink);
+        assert_eq!(
+            sink.events(),
+            [AppEvent::from(HistoryChanged {
+                reason: HistoryChangeReason::Cleared
+            })]
+        );
 
         let sink = RecordingSink::<AppEvent>::default();
         announce_deleted(&sink);

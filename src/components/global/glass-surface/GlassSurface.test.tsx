@@ -14,7 +14,6 @@ import { GLASS_SURFACE_VARIANTS, type GlassSurfaceVariant } from "./glass-surfac
 
 const RECIPE: Readonly<Record<GlassSurfaceVariant, readonly string[]>> = {
   card: ["bg-(--glass-tint)", "backdrop-blur-md", "rounded-card", "border-(--glass-border)", "var(--shadow-e1)"],
-  sidebar: ["bg-(--glass-tint)", "backdrop-blur-md"],
   popover: ["bg-(--glass-tint-strong)", "backdrop-blur-sm", "rounded-control", "border-(--glass-border)", "var(--shadow-e2)"],
   pill: ["bg-(--glass-tint-strong)", "backdrop-blur-md", "rounded-pill", "border-(--glass-border)", "var(--shadow-e3)"],
   modal: ["bg-(--glass-tint-strong)", "backdrop-blur-lg", "rounded-card", "border-(--glass-border)", "var(--shadow-e2)"],
@@ -31,12 +30,6 @@ describe("GlassSurface", () => {
     }
     expect(surface.className).toContain("backdrop-saturate-(--glass-saturate)");
     expect(surface.className).toContain("[:root[data-transparency=reduced]_&]:backdrop-filter-none");
-  });
-
-  it("keeps the sidebar tint-only: no border, no shadow, no radius", () => {
-    render(<GlassSurface variant="sidebar">sidebar</GlassSurface>);
-    const { className } = screen.getByText("sidebar");
-    expect(className).not.toMatch(/\bborder-|\bshadow-|\brounded-/);
   });
 
   it("uses the card variant by default", () => {

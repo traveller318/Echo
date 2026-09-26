@@ -6,7 +6,7 @@
  *        generated TranscriptStatus union, so a new status in Rust fails tsc until it has a look here, and no
  *        component switches on a status. Colours follow 04 §3.1: red only for a take that is recording, orange
  *        for attention (failed, recovered), green for done. Copy is calm (04 §1).
- * WHERE: TranscriptStatusBadge and TranscriptRow (this folder); the History detail sheet.
+ * WHERE: TranscriptStatusBadge and TranscriptRow (this folder).
  */
 import {
   AudioLinesIcon,

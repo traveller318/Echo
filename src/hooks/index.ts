@@ -1,5 +1,5 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: hooks barrel, useEchoQuery, useEchoInfiniteQuery, useEchoEvent, useEchoMutation, useRegistryView, useSessionView, useHistoryList, useMetricsSummary, useModels, useModelActions, useSpeechEngineStatus, useSettingValues, useSettingWrite, useOnboarding, useSessionRehearsal, useMicCheck, useAudioLevel, useWindowFocused, data hooks
+ * SOURCE OF TRUTH KEYWORDS: hooks barrel, useEchoQuery, useEchoInfiniteQuery, useEchoEvent, useEchoMutation, useRegistryView, useSessionView, useHistoryList, useClearHistory, useMetricsSummary, useModels, useModelActions, useSpeechEngineStatus, useSettingValues, useSettingWrite, useOnboarding, useSessionRehearsal, useMicCheck, useAudioLevel, useWindowFocused, data hooks
  * WHAT:  Barrel for src/hooks: the data hooks every window uses to read commands (single and paged), run writes,
  *        follow Rust events, read the registry, follow the current take, read and act on History, read the
  *        Dashboard metrics, read and act on Models, read where the speech engine runs, read and act on Settings, read and
@@ -25,6 +25,7 @@ export {
   historyListQuery,
   recentTakesQuery,
   transcriptQuery,
+  useClearHistory,
   useHistoryList,
   useRecentTakes,
   useTranscript,

@@ -1,12 +1,12 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter, side drawer, detail drawer, Radix Dialog
+ * SOURCE OF TRUTH KEYWORDS: Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter, side drawer, editor drawer, Radix Dialog
  * WHAT:  The shadcn Sheet (a Radix Dialog shaped as a side drawer) restyled to Echo tokens: a --sheet-width
  *        `modal` GlassSurface sliding in from the right edge over the shared DialogOverlay.
- * WHY:   History shows a take's full text in a detail drawer (04 §5) without leaving the list. It reuses the
+ * WHY:   A side editor (the Pairs setting's dictionary) opens without leaving its page. It reuses the
  *        Dialog overlay and corner close button instead of restyling them (root CLAUDE.md §7), and the glass
  *        recipe comes from GlassSurface; only the drawer's own edge radius is overridden. The slide runs under
  *        motion-safe; reduced motion gets the fade.
- * WHERE: History detail drawer (step 16). Exported through components/ui/index.ts.
+ * WHERE: setting-field PairsControl (the Pairs editor). Exported through components/ui/index.ts.
  */
 import { Dialog as DialogPrimitive } from "radix-ui";
 import type { ComponentProps } from "react";

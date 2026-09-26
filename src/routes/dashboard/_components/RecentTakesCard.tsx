@@ -1,9 +1,8 @@
 /**
  * SOURCE OF TRUTH KEYWORDS: RecentTakesCard, recent takes, last takes, dashboard recent list, show all history
  * WHAT:  A glass card with the newest `limit` takes as DataList rows (TranscriptRow), the shared take actions on each
- *        row (Copy, Retry, Delete), the detail sheet on activation (through the page's TakeInspector) and a
- *        "Show all" button that opens History.
- * WHY:   04 §5 "recent takes (last 5, DataList rows)": the same list, row, actions and sheet as History
+ *        row (Copy, Retry, Delete, through the page's TakeInspector) and a "Show all" button that opens History.
+ * WHY:   04 §5 "recent takes (last 5, DataList rows)": the same list, row and actions as History
  *        (components/global), so a take behaves identically on both pages. The rows refresh from HistoryChanged,
  *        TranscriptSaved and MetricsChanged (useRecentTakes), never by polling; times are formatted against the
  *        read's own clock, so "today" is judged once per refresh.
@@ -83,9 +82,6 @@ export function RecentTakesCard({ limit, inspector }: RecentTakesCardProps) {
         row={(take) => <TranscriptRow take={take} now={takes.dataUpdatedAt} />}
         actions={(take) => <TakeRowActions take={take} actions={inspector.actions} onDelete={inspector.askDelete} />}
         empty={empty}
-        onActivate={(take) => {
-          inspector.open(take.id);
-        }}
       />
     </GlassSurface>
   );

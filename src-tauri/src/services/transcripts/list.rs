@@ -125,6 +125,7 @@ mod tests {
         statuses: None,
         created_before: None,
         has_audio: None,
+        cleared: None,
     };
 
     fn limit(value: u32) -> NonZeroU32 {
@@ -349,6 +350,7 @@ mod tests {
                 statuses: Some(vec![TranscriptStatus::Done]),
                 created_before: Some(UnixMs::from_millis(2_001)),
                 has_audio: Some(true),
+                cleared: None,
             },
         )
         .unwrap();

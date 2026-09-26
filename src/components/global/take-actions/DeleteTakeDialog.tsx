@@ -2,22 +2,12 @@
  * SOURCE OF TRUTH KEYWORDS: DeleteTakeDialog, confirm delete take, destructive confirmation, delete audio and text
  * WHAT:  Asks before a take is deleted: its text and saved audio go for good. Delete runs the mutation and closes;
  *        Cancel (or Esc) keeps the take.
- * WHY:   00 constraint 5 "never lose a take": deleting is the one History action that cannot be undone, so it is
- *        confirmed, with the destructive action in --color-record (04 §1 "red only means … destructive") and Cancel
- *        focused first by Radix so Enter never deletes by accident.
- * WHERE: TakeOverlays (this folder), from a row's Delete or the detail sheet.
+ * WHY:   00 constraint 5 "never lose a take": deleting is the one per-take action that cannot be undone, so it is
+ *        confirmed through the shared ConfirmDialog (destructive button, Cancel focused first).
+ * WHERE: TakeOverlays (this folder), from a row's Delete.
  */
 import type { TranscriptId } from "@/bindings";
-import {
-  Button,
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui";
+import { ConfirmDialog } from "../confirm-dialog";
 
 export interface DeleteTakeDialogProps {
   /** The take to delete; null keeps the dialog closed. */
@@ -28,35 +18,17 @@ export interface DeleteTakeDialogProps {
 
 export function DeleteTakeDialog({ take, onCancel, onConfirm }: DeleteTakeDialogProps) {
   return (
-    <Dialog
+    <ConfirmDialog
       open={take !== null}
-      onOpenChange={(open) => {
-        if (!open) {
-          onCancel();
+      title="Delete this take?"
+      description="Its text and saved audio are removed. This can't be undone."
+      confirmLabel="Delete"
+      onCancel={onCancel}
+      onConfirm={() => {
+        if (take !== null) {
+          onConfirm(take);
         }
       }}
-    >
-      <DialogContent showClose={false}>
-        <DialogHeader>
-          <DialogTitle>Delete this take?</DialogTitle>
-          <DialogDescription>Its text and saved audio are removed. This can&apos;t be undone.</DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <DialogClose asChild>
-            <Button>Cancel</Button>
-          </DialogClose>
-          <Button
-            variant="destructive"
-            onClick={() => {
-              if (take !== null) {
-                onConfirm(take);
-              }
-            }}
-          >
-            Delete
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    />
   );
 }

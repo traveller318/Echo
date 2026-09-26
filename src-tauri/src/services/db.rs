@@ -40,6 +40,7 @@ const STEPS: &[M<'static>] = &[
     M::up(include_str!(
         "../../migrations/0002_accelerator_benchmarks.sql"
     )),
+    M::up(include_str!("../../migrations/0003_cleared_takes.sql")),
 ];
 
 /// The migrations `open` applies.

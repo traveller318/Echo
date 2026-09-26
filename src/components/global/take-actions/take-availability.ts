@@ -5,8 +5,8 @@
  * WHY:   Rust enforces every rule (a live take is `Busy`, no audio is `NotFound { recording }`, no text is
  *        `NotFound { transcript_text }`); disabling what cannot work only spares the user an error toast. A take in
  *        `recording`/`transcribing` is either the one in progress or one a crash left behind, which startup
- *        recovery turns into `recoverable`; both wait for that. Row buttons and the detail sheet read one rule.
- * WHERE: TakeRowActions and TranscriptSheet (this folder), wherever takes are listed (History, Dashboard).
+ *        recovery turns into `recoverable`; both wait for that. Every take action reads this one rule.
+ * WHERE: TakeRowActions (this folder), wherever takes are listed (History, Dashboard).
  */
 import type { TranscriptStatus } from "@/bindings";
 

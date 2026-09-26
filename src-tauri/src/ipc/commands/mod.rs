@@ -7,7 +7,7 @@
  *        its group plus one path here.
  * WHERE: `catalog()` is read by app/bindings.rs; groups are filled step by step (session reads the take, sends
  *        the pill's stop, retries a stored take and sets the onboarding rehearsal; onboarding reads, completes and
- *        opens first-run setup; history lists, reads, copies, deletes and pastes the last take;
+ *        opens first-run setup; history lists, reads, copies, deletes, clears and pastes the last take;
  *        metrics computes the dashboard's summary and activity; models lists, downloads, cancels, imports,
  *        verifies, removes and activates models; engine reports where the speech engine runs and measures
  *        it again; audio lists devices and runs the
@@ -42,6 +42,7 @@ pub fn catalog<R: Runtime>() -> Commands<R> {
         history::history_get,
         history::history_copy,
         history::history_delete,
+        history::history_clear,
         history::history_paste_last,
         metrics::metrics_summary,
         metrics::metrics_activity,

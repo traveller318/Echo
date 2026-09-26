@@ -1,19 +1,21 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: history commands, history_list, history_get, history_copy, history_delete, history_paste_last, History page, FTS search, cursor paging
+ * SOURCE OF TRUTH KEYWORDS: history commands, history_list, history_get, history_copy, history_delete, history_clear, history_paste_last, History page, FTS search, cursor paging
  * WHAT:  The history command group (02 §4.3): `history_list` (one page of takes, newest first, optionally matching
  *        a full-text search), `history_get` (one take in full), `history_copy` (its text to the clipboard),
- *        `history_delete` (its row and WAV) and `history_paste_last` (the newest completed take into the focused
- *        app).
+ *        `history_delete` (its row and WAV), `history_clear` (every take leaves History, the dashboard numbers
+ *        stay) and `history_paste_last` (the newest completed take into the focused app).
  * WHY:   The History page reads through these and stays fresh from HistoryChanged / TranscriptSaved, never by
  *        polling (02 §4.4). Handlers are thin: the factory already validated the input schema (search length,
  *        page size, cursor shape) and maps errors, services own the SQL, and pipeline/history.rs owns the rules
  *        (what text a take offers, WAV before row, the session's live take is refused with `Busy`, Echo's own
  *        window is never a paste target). The list shows only statuses `TranscriptStatus::is_listed_in_history`
- *        accepts, so no-speech takes never bloat History or the Dashboard's recent takes. Clipboard and file work runs on the blocking pool (05 W4). Delete
- *        announces HistoryChanged and MetricsChanged (a deleted take leaves the dashboard sums). Paste-last goes
+ *        accepts and never a cleared take, so no-speech takes never bloat History or the Dashboard's recent takes.
+ *        Clipboard and file work runs on the blocking pool (05 W4). Delete announces HistoryChanged and
+ *        MetricsChanged (a deleted take leaves the dashboard sums); clear announces HistoryChanged only (a cleared
+ *        take still counts) and spares the take the session is still working on. Paste-last goes
  *        through the session actor, which owns the clipboard restore (05 W6).
  * WHERE: Registered through `ipc::commands::catalog`; called from the UI as `commands.historyList(…)`,
- *        `historyGet`, `historyCopy`, `historyDelete`, `historyPasteLast` (src/hooks/use-history.ts and the History
+ *        `historyGet`, `historyCopy`, `historyDelete`, `historyClear`, `historyPasteLast` (src/hooks/use-history.ts and the History
  *        route); the paste-last hotkey reaches the same actor path (pipeline/session/hotkey_input.rs).
  */
 
@@ -25,7 +27,7 @@ use crate::{
     services,
     types::{
         AppError, DeliveryOutcome, HistoryListInput, Page, PortError, Transcript, TranscriptInput,
-        TranscriptSelector, TranscriptStatus, TranscriptSummary,
+        TranscriptSelector, TranscriptStatus, TranscriptSummary, UnixMs,
     },
 };
 
@@ -70,6 +72,15 @@ echo_command! {
 }
 
 echo_command! {
+    /// Clears History: every take's text and audio are erased; the dashboard and streak keep counting them.
+    name: history_clear,
+    output: (),
+    permission: None,
+    reentrancy: Shared,
+    handler: clear,
+}
+
+echo_command! {
     /// Pastes the newest completed take into the focused app again (copies it when pasting is not possible).
     name: history_paste_last,
     output: DeliveryOutcome,
@@ -90,6 +101,7 @@ pub async fn list(
         statuses: Some(TranscriptStatus::matching(
             TranscriptStatus::is_listed_in_history,
         )),
+        cleared: Some(false),
         ..TranscriptSelector::default()
     };
     services::transcripts::list::list(
@@ -129,6 +141,21 @@ pub async fn delete(ctx: &CommandCtx, input: TranscriptInput) -> Result<(), Port
     Ok(())
 }
 
+/// Clears History, sparing the take the session is still working on.
+pub async fn clear(ctx: &CommandCtx, (): ()) -> Result<(), PortError> {
+    let session = ctx.session().view().await?;
+    let live = session.transcript_id.filter(|id| session.is_live(*id));
+    let db = ctx.db().clone();
+    let paths = ctx.paths().clone();
+    let cleared = run_blocking("clearing history", move || {
+        history::clear_history(&db, &paths, live, UnixMs::now())
+    })
+    .await;
+    // Some takes may have gone even when one WAV could not, so every window refreshes either way.
+    history::announce_cleared(ctx.events());
+    cleared.map(|_| ())
+}
+
 /// Pastes the newest completed take again.
 pub async fn paste_last(ctx: &CommandCtx, (): ()) -> Result<DeliveryOutcome, PortError> {
     ctx.session().paste_last().await
@@ -162,6 +189,7 @@ mod tests {
     const GET: CommandSpec = spec("history_get");
     const COPY: CommandSpec = spec("history_copy");
     const DELETE: CommandSpec = spec("history_delete");
+    const CLEAR: CommandSpec = spec("history_clear");
     const PASTE_LAST: CommandSpec = spec("history_paste_last");
 
     fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
@@ -379,6 +407,51 @@ mod tests {
             Err(AppError::NotFound {
                 resource: ResourceKind::Transcript
             })
+        );
+
+        assert!(ctx.session().shutdown(std::time::Duration::from_secs(5)));
+        runner.join().unwrap();
+    }
+
+    #[test]
+    fn clear_hides_every_take_and_keeps_the_dashboard_totals() {
+        let harness = harness();
+        let actor = harness.session_actor;
+        let runner = thread::spawn(move || block_on(actor.run()));
+        let ctx = &harness.ctx;
+        let first = done(ctx, 1_000, "Buy milk tomorrow.");
+        let second = done(ctx, 2_000, "Call the dentist.");
+        let before = services::transcripts::aggregate::totals(ctx.db(), None).unwrap();
+
+        block_on(factory::run(ctx, &CLEAR, (), clear)).unwrap();
+        let page = block_on(factory::run(ctx, &LIST, list_input(None, None, 10), list)).unwrap();
+        assert!(page.items.is_empty());
+        let searched = block_on(factory::run(
+            ctx,
+            &LIST,
+            list_input(Some("milk"), None, 10),
+            list,
+        ))
+        .unwrap();
+        assert!(searched.items.is_empty());
+        for id in [first, second] {
+            assert!(!ctx.paths().recording(id).exists());
+        }
+        assert_eq!(
+            services::transcripts::aggregate::totals(ctx.db(), None).unwrap(),
+            before
+        );
+        let events = harness.events.events();
+        assert!(events.contains(&AppEvent::from(HistoryChanged {
+            reason: HistoryChangeReason::Cleared
+        })));
+        assert!(!events.contains(&AppEvent::from(MetricsChanged {})));
+
+        let newer = done(ctx, 3_000, "After the clear.");
+        let page = block_on(factory::run(ctx, &LIST, list_input(None, None, 10), list)).unwrap();
+        assert_eq!(
+            page.items.iter().map(|row| row.id).collect::<Vec<_>>(),
+            [newer]
         );
 
         assert!(ctx.session().shutdown(std::time::Duration::from_secs(5)));

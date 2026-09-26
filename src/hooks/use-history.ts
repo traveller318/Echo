@@ -1,17 +1,17 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: useHistoryList, useTranscript, useTranscriptActions, useRecentTakes, historyListQuery, recentTakesQuery, transcriptQuery, HISTORY_EVENTS, history_list, session_retry, history_copy, history_delete
+ * SOURCE OF TRUTH KEYWORDS: useHistoryList, useTranscript, useTranscriptActions, useClearHistory, useRecentTakes, historyListQuery, recentTakesQuery, transcriptQuery, HISTORY_EVENTS, history_list, session_retry, history_copy, history_delete, history_clear
  * WHAT:  The History data layer: `historyListQuery(search)` / `useHistoryList(search)` (paged takes, newest
  *        first, optionally searched), `recentTakesQuery(limit)` / `useRecentTakes(limit)` (the newest few takes),
- *        `transcriptQuery(id)` / `useTranscript(id)` (one take in full) and `useTranscriptActions()` (copy, retry and
- *        delete as mutations with their success toasts).
+ *        `transcriptQuery(id)` / `useTranscript(id)` (one take in full), `useTranscriptActions()` (copy, retry and
+ *        delete as mutations with their success toasts) and `useClearHistory()` (clear every take from History).
  * WHY:   Every surface that shows takes (History, the Dashboard's recent takes) reads and acts through these, so
  *        keys, events and copy cannot drift. Reads are invalidated by HistoryChanged and TranscriptSaved (02 §4.4)
  *        and never polled; a write changes nothing in the cache by hand, its Rust event refetches (root CLAUDE.md
  *        §7). The recent takes also refresh on MetricsChanged, which Rust sends at local midnight, so "today" in
  *        their times moves on with the day. Failures toast through the AppError copy table (useEchoMutation);
  *        successes toast here in calm copy (04 §1). The page size is well under Rust's HistoryListInput limit.
- * WHERE: routes/history (list), routes/dashboard (recent takes), components/global/take-actions (detail sheet,
- *        row actions).
+ * WHERE: routes/history (list, clear), routes/dashboard (recent takes), components/global/take-actions (row
+ *        actions), routes/onboarding PracticePad (one take in full).
  */
 import {
   commands,
@@ -122,16 +122,27 @@ function useDeleteTake() {
   const mutation = useEchoMutation(commands.historyDelete);
   return {
     ...mutation,
-    run: (id: TranscriptId, onDeleted?: () => void) => {
-      mutation.mutate(
-        { id },
-        {
-          onSuccess: () => {
-            showToast({ title: "Take deleted" });
-            onDeleted?.();
-          },
-        },
-      );
+    run: (id: TranscriptId) => {
+      mutation.mutate({ id }, { onSuccess: () => showToast({ title: "Take deleted" }) });
+    },
+  };
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: useClearHistory, clear history mutation, history_clear, History cleared toast
+ * WHAT:  Clears every take from History (`history_clear`) and toasts once it is done.
+ * WHY:   Rust erases the text and audio but keeps each take's measurements, so the toast can promise the dashboard
+ *        and streak are untouched. The list refreshes from HistoryChanged { cleared }, never from this mutation.
+ * WHERE: routes/history (the page header's Clear history).
+ */
+export function useClearHistory() {
+  const mutation = useEchoMutation(commands.historyClear);
+  return {
+    ...mutation,
+    run: () => {
+      mutation.mutate(undefined, {
+        onSuccess: () => showToast({ title: "History cleared", body: "Your dashboard and streak are unchanged." }),
+      });
     },
   };
 }

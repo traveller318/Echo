@@ -44,6 +44,8 @@ pub enum HistoryChangeReason {
     Recovered,
     /// A retention sweep removed audio or rows.
     Retention,
+    /// The user cleared History: its takes were erased and hidden, their measurements kept.
+    Cleared,
 }
 
 /// History rows changed; list queries should refetch.

@@ -1,11 +1,11 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: TranscriptSelector SQL, where clause builder, bulk filter, status IN, created_before, has_audio
+ * SOURCE OF TRUTH KEYWORDS: TranscriptSelector SQL, where clause builder, bulk filter, status IN, created_before, has_audio, cleared_at
  * WHAT:  Turns a TranscriptSelector into a SQL `WHERE` condition with positional parameters.
  * WHY:   The bulk select and the bulk delete must match exactly the same rows, so both build their condition here.
  *        Only fixed column names and `?` placeholders are ever written into the SQL; every value is bound, so no
  *        selector content can change the statement. `statuses: Some(vec![])` becomes a condition that matches
  *        nothing (never "any"), so an empty list cannot widen a delete.
- * WHERE: services/transcripts/{list::select, delete::delete_matching}.
+ * WHERE: services/transcripts/{list::list, list::select, delete::delete_matching}.
  */
 
 use rusqlite::types::Value;
@@ -43,6 +43,16 @@ pub(super) fn condition(selector: &TranscriptSelector) -> (String, Vec<Value>) {
             .to_owned(),
         );
     }
+    if let Some(cleared) = selector.cleared {
+        clauses.push(
+            if cleared {
+                "cleared_at IS NOT NULL"
+            } else {
+                "cleared_at IS NULL"
+            }
+            .to_owned(),
+        );
+    }
     let sql = if clauses.is_empty() {
         "1".to_owned()
     } else {
@@ -65,10 +75,11 @@ mod tests {
             ]),
             created_before: Some(UnixMs::from_millis(10)),
             has_audio: Some(true),
+            cleared: Some(false),
         });
         assert_eq!(
             sql,
-            "status IN (?, ?) AND created_at < ? AND audio_path IS NOT NULL"
+            "status IN (?, ?) AND created_at < ? AND audio_path IS NOT NULL AND cleared_at IS NULL"
         );
         assert_eq!(
             params,
@@ -96,6 +107,14 @@ mod tests {
             })
             .0,
             "audio_path IS NULL"
+        );
+        assert_eq!(
+            condition(&TranscriptSelector {
+                cleared: Some(true),
+                ..TranscriptSelector::default()
+            })
+            .0,
+            "cleared_at IS NOT NULL"
         );
     }
 }
