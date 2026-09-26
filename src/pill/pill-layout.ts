@@ -39,7 +39,7 @@ const DONE_KIND: Readonly<Record<DeliveryOutcome, PillKind>> = {
   pasted: "done",
   copied: "copied",
   no_speech: "no_speech",
-  // A rehearsed take (onboarding's practice): the text is in Echo's card, the pill just confirms.
+  // A rehearsed take (onboarding's practice): the text is in Echo's practice pad, the pill just confirms.
   shown: "done",
 };
 

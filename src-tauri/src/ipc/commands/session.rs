@@ -16,7 +16,7 @@
  *        UI may set it freely and a window that forgets to turn it off cannot break dictation elsewhere.
  * WHERE: Registered through `ipc::commands::catalog`; called from the UI as `commands.sessionGetState()` and
  *        `commands.sessionInput("stop")` (the pill, step 15), `commands.sessionRetry({ id })` (History, step 16),
- *        `commands.sessionRehearse("hotkey" | "take" | "off")` (onboarding's hotkey and practice steps).
+ *        `commands.sessionRehearse("take" | "off")` (onboarding's practice step; `hotkey` stays for a press-only test).
  */
 
 use crate::{

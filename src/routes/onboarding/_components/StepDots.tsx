@@ -2,8 +2,8 @@
  * SOURCE OF TRUTH KEYWORDS: StepDots, step indicator, onboarding dots, setup progress, aria-current step
  * WHAT:  The onboarding dot indicator: one `--step-dot` dot per step, the current one in the accent, finished ones
  *        in the secondary text colour, the rest as a fill; each dot names its step for assistive tech.
- * WHY:   04 §5: "4 steps with a dot indicator". Colour alone never carries state (04 §7): every dot has a text label
- *        ("Step 2 of 4: Speech model, current"), and the current one is marked with aria-current.
+ * WHY:   04 §5: a dot indicator, one dot per step. Colour alone never carries state (04 §7): every dot has a text label
+ *        ("Step 2 of 3: Speech model, current"), and the current one is marked with aria-current.
  * WHERE: OnboardingFlow (this folder).
  */
 import type { OnboardingStepSpec } from "@/bindings";

@@ -70,8 +70,9 @@ export const THEME_SCALE = {
     "number-field",
     "chart",
     "step-dot",
+    "practice-pad",
   ],
-  container: ["content", "dialog", "measure", "sheet", "onboarding", "toast", "tooltip"],
+  container: ["content", "dialog", "measure", "sheet", "toast", "tooltip"],
   "font-weight": ["regular", "medium", "semibold", "bold"],
   ease: ["standard", "exit"],
   animate: [

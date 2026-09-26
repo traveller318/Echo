@@ -121,7 +121,6 @@ mod tests {
             [
                 OnboardingStepId::Microphone,
                 OnboardingStepId::Model,
-                OnboardingStepId::Hotkey,
                 OnboardingStepId::Practice,
             ]
         );

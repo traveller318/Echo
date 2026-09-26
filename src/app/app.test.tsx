@@ -173,7 +173,7 @@ describe("app shell", () => {
     };
     ipc.mockImplementation((cmd) => (cmd === "onboarding_get" ? due : (PAGE_READS[cmd] ?? null)));
     const router = renderShell("/");
-    expect(await screen.findByRole("heading", { level: 1, name: "Try it" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "Try your hotkey" })).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/onboarding");
     expect(screen.queryByRole("navigation", { name: "Main" })).not.toBeInTheDocument();
   });

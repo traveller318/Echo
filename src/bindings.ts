@@ -872,9 +872,7 @@ export type OnboardingStepId =
 "microphone" | 
 /**  Download or import the speech model. */
 "model" | 
-/**  Press the dictation hotkey to test it; rebind it when it clashes. */
-"hotkey" | 
-/**  One practice take whose text is shown in the card instead of pasted. */
+/**  Dictate with the hotkey into a practice pad in Echo (text shown, never pasted); rebind a clashing hotkey. */
 "practice";
 
 /**  A registry onboarding step. */
@@ -900,7 +898,7 @@ export type OnboardingView = {
 	speech_model_ready: boolean,
 	/**  Windows microphone consent for desktop apps; None when it could not be read. */
 	microphone: PermissionState | null,
-	/**  The dictation hotkey as it is bound now (for the hotkey and practice steps' instructions). */
+	/**  The dictation hotkey as it is bound now (for the practice step's instructions). */
 	record_hotkey: Shortcut | null,
 	/**  The dictation hotkey is held while speaking (hold mode); false: press to start, press again to stop. */
 	hold_to_talk: boolean,
@@ -1008,7 +1006,7 @@ export type ResourceKind = "transcript" | "model" | "engine" | "setting" | "audi
  *  *        in the foreground, so one left on by a window that closed or hid can never swallow a hotkey or keep text
  *  *        from the app the user dictates into. It is session configuration, not recording state: the machine is
  *  *        untouched, the actor only decides what a hotkey or a delivery means (02 §5 stays the one owner).
- *  * WHERE: Sent by `session_rehearse` (ipc/commands/session.rs) from onboarding's hotkey and practice steps; held by
+ *  * WHERE: Sent by `session_rehearse` (ipc/commands/session.rs) from onboarding's practice step (`take`); held by
  *  *        the session actor (pipeline/session/rehearsal.rs).
  *  
  */

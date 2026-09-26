@@ -11,7 +11,6 @@
  */
 import type { ComponentType } from "react";
 import type { OnboardingStepId, OnboardingView } from "@/bindings";
-import { HotkeyStep } from "./HotkeyStep";
 import { MicrophoneStep } from "./MicrophoneStep";
 import { ModelStep } from "./ModelStep";
 import { PracticeStep } from "./PracticeStep";
@@ -40,16 +39,10 @@ export const ONBOARDING_STEP_PAGES: Readonly<Record<OnboardingStepId, Onboarding
     body: "Speech recognition runs on this PC. Download the model once, or import it from a folder.",
     canContinue: (view) => view.speech_model_ready,
   },
-  hotkey: {
-    Component: HotkeyStep,
-    title: "Try your hotkey",
-    body: "The hotkey starts dictation from any app. Testing it here records nothing.",
-    canContinue: ALWAYS,
-  },
   practice: {
     Component: PracticeStep,
-    title: "Try it",
-    body: "Dictate one sentence. The text shows up here instead of being pasted.",
+    title: "Try your hotkey",
+    body: "The hotkey starts dictation from any app. Try it here: your words land in the box below, nowhere else.",
     canContinue: ALWAYS,
   },
 };

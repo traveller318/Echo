@@ -29,9 +29,7 @@ pub enum OnboardingStepId {
     Microphone,
     /// Download or import the speech model.
     Model,
-    /// Press the dictation hotkey to test it; rebind it when it clashes.
-    Hotkey,
-    /// One practice take whose text is shown in the card instead of pasted.
+    /// Dictate with the hotkey into a practice pad in Echo (text shown, never pasted); rebind a clashing hotkey.
     Practice,
 }
 
@@ -41,7 +39,6 @@ impl OnboardingStepId {
         match self {
             Self::Microphone => "microphone",
             Self::Model => "model",
-            Self::Hotkey => "hotkey",
             Self::Practice => "practice",
         }
     }
@@ -109,7 +106,7 @@ pub struct OnboardingView {
     pub speech_model_ready: bool,
     /// Windows microphone consent for desktop apps; None when it could not be read.
     pub microphone: Option<PermissionState>,
-    /// The dictation hotkey as it is bound now (for the hotkey and practice steps' instructions).
+    /// The dictation hotkey as it is bound now (for the practice step's instructions).
     pub record_hotkey: Option<Shortcut>,
     /// The dictation hotkey is held while speaking (hold mode); false: press to start, press again to stop.
     pub hold_to_talk: bool,
@@ -152,7 +149,6 @@ mod tests {
         for id in [
             OnboardingStepId::Microphone,
             OnboardingStepId::Model,
-            OnboardingStepId::Hotkey,
             OnboardingStepId::Practice,
         ] {
             assert_eq!(serde_json::to_value(id).unwrap(), json!(id.as_str()));

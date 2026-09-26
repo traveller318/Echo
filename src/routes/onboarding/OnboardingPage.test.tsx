@@ -1,10 +1,10 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: OnboardingPage test, onboarding flow test, microphone consent test, model step test, hotkey rehearsal test, practice take test, onboarding complete test
+ * SOURCE OF TRUTH KEYWORDS: OnboardingPage test, onboarding flow test, microphone consent test, model step test, practice pad test, practice take test, onboarding complete test
  * WHAT:  Renders onboarding inside the real routed shell (buildAppRoutes on a memory router at ONBOARDING_ROUTE, the
  *        real Providers) with Tauri's IPC and events mocked, and walks it: the dot indicator and the blocked-consent
  *        notice with its privacy link; the model step's card, its import-only actions and a Continue that waits for
- *        the model; the hotkey step's rehearsal and the press it reports; the practice step's rehearsal and the text of
- *        a shown take; Finish storing completion and opening the first page; and the "ready" card when nothing is due.
+ *        the model; the practice step's take rehearsal, its hotkey settings and the text of shown takes in the practice
+ *        pad; Finish storing completion and opening the first page; and the "ready" screen when nothing is due.
  * WHY:   Onboarding wires Rust's view, the session rehearsal, events and History together; this is the one place that
  *        whole flow runs short of Rust (02 §13 frontend tests).
  * WHERE: Runs in the `web` Vitest project (jsdom) with @tauri-apps/api/mocks (events mocked).
@@ -45,8 +45,7 @@ const REGISTRY: RegistryView = {
 const STEPS: Readonly<Record<OnboardingStepSpec["id"], OnboardingStepSpec>> = {
   microphone: { id: "microphone", label: "Microphone", shown: "first_run", settings: [] },
   model: { id: "model", label: "Speech model", shown: "speech_model_missing", settings: [] },
-  hotkey: { id: "hotkey", label: "Hotkey", shown: "first_run", settings: [] },
-  practice: { id: "practice", label: "Try it", shown: "always", settings: [] },
+  practice: { id: "practice", label: "Try it", shown: "always", settings: ["hotkeys.record", "hotkeys.mode"] },
 };
 
 function onboarding(overrides: Partial<OnboardingView> = {}): OnboardingView {
@@ -58,7 +57,7 @@ function onboarding(overrides: Partial<OnboardingView> = {}): OnboardingView {
     microphone: "granted",
     record_hotkey: "Ctrl+Alt",
     hold_to_talk: true,
-    steps: [STEPS.microphone, STEPS.model, STEPS.hotkey, STEPS.practice],
+    steps: [STEPS.microphone, STEPS.model, STEPS.practice],
     ...overrides,
   };
 }
@@ -202,8 +201,8 @@ describe("OnboardingPage", () => {
     renderOnboarding();
     expect(await screen.findByRole("heading", { level: 1, name: "Check your microphone" })).toBeInTheDocument();
     const progress = screen.getByRole("list", { name: "Setup progress" });
-    expect(within(progress).getAllByRole("listitem")).toHaveLength(4);
-    expect(within(progress).getByText("Step 1 of 4: Microphone, current")).toBeInTheDocument();
+    expect(within(progress).getAllByRole("listitem")).toHaveLength(3);
+    expect(within(progress).getByText("Step 1 of 3: Microphone, current")).toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "Main" })).not.toBeInTheDocument();
 
     expect(screen.getByText("Microphone access is off")).toBeInTheDocument();
@@ -241,35 +240,27 @@ describe("OnboardingPage", () => {
     expect(screen.getByText("The speech model is installed.")).toBeInTheDocument();
   });
 
-  it("rehearses the hotkey and reports the press it heard", async () => {
-    view = onboarding({ steps: [STEPS.hotkey, STEPS.practice], speech_model_ready: true });
+  it("moves from the model to the practice step and rehearses a take there", async () => {
+    view = onboarding({ steps: [STEPS.model, STEPS.practice], speech_model_ready: true });
     renderOnboarding();
-    expect(await screen.findByRole("heading", { level: 1, name: "Try your hotkey" })).toBeInTheDocument();
-    await waitFor(() => {
-      expect(rehearsals()).toContain("hotkey");
-    });
-    expect(screen.getByText("Waiting for the hotkey.")).toBeInTheDocument();
-
-    await act(async () => {
-      await events.hotkeyRehearsed.emit({ hotkey: "record", action: "record", state: "pressed" });
-    });
-    expect(await screen.findByText("Echo feels it. Now let go.")).toBeInTheDocument();
-    await act(async () => {
-      await events.hotkeyRehearsed.emit({ hotkey: "record", action: "record", state: "released" });
-    });
-    expect(await screen.findByText("Echo heard it. Your hotkey works.")).toBeInTheDocument();
-
-    await continueTo("Try it");
+    await screen.findByRole("heading", { level: 1, name: "Get the speech model" });
+    await continueTo("Try your hotkey");
     await waitFor(() => {
       expect(rehearsals().at(-1)).toBe("take");
     });
-    expect(rehearsals()).toContain("off");
+    expect(screen.getByRole("log", { name: "Practice pad" })).toHaveTextContent("Your words appear here.");
+    expect(screen.getByText(/Another app may use the same keys/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await screen.findByRole("heading", { level: 1, name: "Get the speech model" });
+    await waitFor(() => {
+      expect(rehearsals().at(-1)).toBe("off");
+    });
   });
 
-  it("shows the practice take's text, then finishes and opens the first page", async () => {
+  it("writes the practice take's text into the pad, then finishes and opens the first page", async () => {
     view = onboarding({ steps: [STEPS.practice], first_run: false, speech_model_ready: true });
     const router = renderOnboarding();
-    expect(await screen.findByRole("heading", { level: 1, name: "Try it" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "Try your hotkey" })).toBeInTheDocument();
 
     await act(async () => {
       await events.sessionStateChanged.emit({ ...IDLE, status: "recording", transcript_id: TAKE });
@@ -278,7 +269,15 @@ describe("OnboardingPage", () => {
     await act(async () => {
       await events.sessionStateChanged.emit({ ...IDLE, status: "done", transcript_id: TAKE, outcome: "shown" });
     });
-    expect(await screen.findByText("Hello from onboarding.")).toBeInTheDocument();
+    const pad = screen.getByRole("log", { name: "Practice pad" });
+    expect(await within(pad).findByText("Hello from onboarding.")).toBeInTheDocument();
+
+    // A take with no speech explains itself and keeps the text already in the pad.
+    await act(async () => {
+      await events.sessionStateChanged.emit({ ...IDLE, status: "done", transcript_id: null, outcome: "no_speech" });
+    });
+    expect(await screen.findByText(/No speech detected/)).toBeInTheDocument();
+    expect(within(pad).getByText("Hello from onboarding.")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Finish" }));
     await waitFor(() => {
@@ -294,7 +293,7 @@ describe("OnboardingPage", () => {
   it("explains a practice take that went to another app", async () => {
     view = onboarding({ steps: [STEPS.practice], speech_model_ready: true });
     renderOnboarding();
-    await screen.findByRole("heading", { level: 1, name: "Try it" });
+    await screen.findByRole("heading", { level: 1, name: "Try your hotkey" });
     await act(async () => {
       await events.sessionStateChanged.emit({ ...IDLE, status: "done", transcript_id: TAKE, outcome: "pasted" });
     });

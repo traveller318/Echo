@@ -126,7 +126,7 @@ pub enum SessionUiInput {
  *        in the foreground, so one left on by a window that closed or hid can never swallow a hotkey or keep text
  *        from the app the user dictates into. It is session configuration, not recording state: the machine is
  *        untouched, the actor only decides what a hotkey or a delivery means (02 §5 stays the one owner).
- * WHERE: Sent by `session_rehearse` (ipc/commands/session.rs) from onboarding's hotkey and practice steps; held by
+ * WHERE: Sent by `session_rehearse` (ipc/commands/session.rs) from onboarding's practice step (`take`); held by
  *        the session actor (pipeline/session/rehearsal.rs).
  */
 #[derive(

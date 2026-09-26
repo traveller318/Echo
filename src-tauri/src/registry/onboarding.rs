@@ -1,13 +1,15 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: onboarding registry, ONBOARDING_STEPS, onboarding steps, steps_for, microphone step, model step, hotkey step, practice step, first run
- * WHAT:  The onboarding steps in the order they are walked (Microphone → Model → Hotkey → Try it, 04 §5), each
- *        with the condition that puts it in onboarding and the settings it offers on the spot (the input device; the
+ * SOURCE OF TRUTH KEYWORDS: onboarding registry, ONBOARDING_STEPS, onboarding steps, steps_for, microphone step, model step, practice step, hotkey settings, first run
+ * WHAT:  The onboarding steps in the order they are walked (Microphone → Model → Try it, 04 §5), each with the
+ *        condition that puts it in onboarding and the settings it offers on the spot (the input device; the
  *        dictation hotkey and its mode), and `steps_for(needs)`: the steps to walk now.
  * WHY:   A step is a registry entry (02 §3.3), so adding or reordering one is an edit here plus its UI component,
  *        never a change to the flow. The conditions carry 01 §7 and the step-24 rules: on first run every step is
  *        walked, but the model step only while the model is missing ("skipped if already installed"); when an
  *        onboarded user's model goes missing, onboarding returns with just the model step and a practice take to
- *        prove the model works, so a returning user is never asked to test the microphone and hotkey again.
+ *        prove the model works, so a returning user is never asked to test the microphone again. The hotkey is
+ *        tested by the practice take itself (a take that starts proves the hotkey), so "Try it" offers the hotkey
+ *        and its mode for rebinding a clash on the spot rather than walking a separate press-only test.
  * WHERE: Read by pipeline/onboarding.rs (the OnboardingView of `onboarding_get` / `onboarding_complete`).
  */
 
@@ -20,8 +22,8 @@ use crate::types::{
 /// The microphone step offers the input device (a const of its own: SettingKey has drop glue).
 const MICROPHONE_SETTINGS: &[SettingKey] = &[keys::INPUT_DEVICE];
 
-/// The hotkey step offers the dictation hotkey and whether it is held or toggled.
-const HOTKEY_SETTINGS: &[SettingKey] = &[keys::RECORD_HOTKEY, keys::HOTKEY_MODE];
+/// The practice step offers the dictation hotkey and whether it is held or toggled.
+const PRACTICE_SETTINGS: &[SettingKey] = &[keys::RECORD_HOTKEY, keys::HOTKEY_MODE];
 
 const NO_SETTINGS: &[SettingKey] = &[];
 
@@ -40,16 +42,10 @@ pub const ONBOARDING_STEPS: &[OnboardingStepSpec] = &[
         settings: StaticList::new(NO_SETTINGS),
     },
     OnboardingStepSpec {
-        id: OnboardingStepId::Hotkey,
-        label: StaticStr::new("Hotkey"),
-        shown: OnboardingCondition::FirstRun,
-        settings: StaticList::new(HOTKEY_SETTINGS),
-    },
-    OnboardingStepSpec {
         id: OnboardingStepId::Practice,
         label: StaticStr::new("Try it"),
         shown: OnboardingCondition::Always,
-        settings: StaticList::new(NO_SETTINGS),
+        settings: StaticList::new(PRACTICE_SETTINGS),
     },
 ];
 
@@ -94,17 +90,17 @@ mod tests {
 
     #[test]
     fn a_first_run_walks_every_step_and_skips_an_installed_model() {
-        use OnboardingStepId::{Hotkey, Microphone, Model, Practice};
+        use OnboardingStepId::{Microphone, Model, Practice};
         let fresh = OnboardingNeeds {
             first_run: true,
             speech_model_missing: true,
         };
-        assert_eq!(ids(fresh), [Microphone, Model, Hotkey, Practice]);
+        assert_eq!(ids(fresh), [Microphone, Model, Practice]);
         let installed = OnboardingNeeds {
             first_run: true,
             speech_model_missing: false,
         };
-        assert_eq!(ids(installed), [Microphone, Hotkey, Practice]);
+        assert_eq!(ids(installed), [Microphone, Practice]);
     }
 
     #[test]
