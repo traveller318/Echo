@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: AsrEngine, speech recognition, transcribe, load model, warm up, unload, accelerator fallback, ASR port
+ * SOURCE OF TRUTH KEYWORDS: AsrEngine, speech recognition, transcribe, load model, warm up, unload, accelerator fallback, ComputeDevice, ASR port
  * WHAT:  AsrEngine turns a segment of 16 kHz mono audio into text, after loading a model from a folder onto an
  *        accelerator and warming it up.
  * WHY:   The core never names a model (00 constraint 4): Parakeet, Whisper or Moonshine are each one adapter with
@@ -14,16 +14,17 @@
 
 use std::path::Path;
 
-use crate::types::{Accelerator, AsrCaps, AsrOutput, Language, PortResult};
+use crate::types::{Accelerator, AsrCaps, AsrOutput, ComputeDevice, Language, PortResult};
 
 /// A local speech recognition engine.
 pub trait AsrEngine: Send + Sync {
     fn caps(&self) -> AsrCaps;
 
-    /// Loads the model files in `model_dir` onto `accelerator` (one of `caps().accelerators`), replacing any
-    /// loaded session. Returns the accelerator in use. Missing files fail with `ModelMissing`, unreadable ones
-    /// with `ModelCorrupt`.
-    fn load(&self, model_dir: &Path, accelerator: Accelerator) -> PortResult<Accelerator>;
+    /// Loads the model files in `model_dir` onto `device` (whose accelerator is one of `caps().accelerators`),
+    /// replacing any loaded session. Returns the accelerator in use: a GPU session that cannot start falls back to
+    /// the CPU, logged, not failed (05 A6). Missing files fail with `ModelMissing`, unreadable ones with
+    /// `ModelCorrupt`.
+    fn load(&self, model_dir: &Path, device: &ComputeDevice) -> PortResult<Accelerator>;
 
     /// Runs one inference on silence so the first real take is as fast as the tenth (05 A8).
     fn warm_up(&self) -> PortResult<()>;

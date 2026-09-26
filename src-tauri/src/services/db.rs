@@ -35,7 +35,12 @@ use rusqlite_migration::{M, Migrations};
 use crate::types::{AppError, AppPaths, PortError, PortResult};
 
 /// Every schema migration in order; a shipped entry is never edited, a change is a new file (forward only).
-const STEPS: &[M<'static>] = &[M::up(include_str!("../../migrations/0001_init.sql"))];
+const STEPS: &[M<'static>] = &[
+    M::up(include_str!("../../migrations/0001_init.sql")),
+    M::up(include_str!(
+        "../../migrations/0002_accelerator_benchmarks.sql"
+    )),
+];
 
 /// The migrations `open` applies.
 const MIGRATIONS: Migrations<'static> = Migrations::from_slice(STEPS);

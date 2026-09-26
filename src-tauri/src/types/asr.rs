@@ -1,9 +1,9 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: AsrOutput, AsrEvent, AsrReadiness, AsrLoadRequest, AsrLoaded, SegmentDone, segment text, engine readiness, engine load request
+ * SOURCE OF TRUTH KEYWORDS: AsrOutput, AsrEvent, AsrReadiness, AsrLoadRequest, SpeechEngineStatus, SegmentDone, segment text, engine readiness, engine load request
  * WHAT:  The speech recognition shapes: what an engine returns for one segment (AsrOutput), what the ASR worker
  *        reports per take (AsrEvent: SegmentDone / SegmentFailed / Drained), whether a take started now could be
- *        transcribed (AsrReadiness), which engine to load and how (AsrLoadRequest) and what a finished load reports
- *        (AsrLoaded).
+ *        transcribed (AsrReadiness), which engine to load and how (AsrLoadRequest), and the status the UI reads
+ *        (SpeechEngineStatus: readiness plus where the engine runs and why, types/accelerator.rs).
  * WHY:   Every engine (Parakeet today, Whisper or Moonshine later, 02 §8.4) returns one AsrOutput shape, so the ASR
  *        worker and the segment join never know which engine ran. The detected language is optional because only
  *        engines with `AsrCaps.auto_language` that also report it fill it; it is stored as `transcripts.language`.
@@ -13,10 +13,13 @@
  *        derives specta so the Models page and About can show it once a command or event carries it; it describes
  *        the engine a take started *now* would use, so it stays `Ready` while a replacement engine warms up
  *        (02 §8.1). AsrLoadRequest is resolved from settings and the registry by the pipeline and built into an
- *        engine by the registry, so the request itself names no model.
+ *        engine by the registry, so the request itself names no model. Its accelerator is a request (auto or one
+ *        accelerator) that the pipeline's accelerator picker turns into a device when the load runs, because GPUs
+ *        and drivers can change between the request and the load.
  * WHERE: AsrOutput is returned by `AsrEngine::transcribe` (ports/asr.rs); pipeline/asr (the ASR worker) emits
  *        AsrEvent, tracks AsrReadiness and takes AsrLoadRequest from app/bootstrap (startup load) and the engine
- *        switch; the session actor consumes AsrEvent.
+ *        switch; the session actor consumes AsrEvent; SpeechEngineStatus is returned by `engine_status`
+ *        (ipc/commands/engine.rs).
  */
 
 use std::path::PathBuf;
@@ -24,7 +27,10 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use super::{Accelerator, AppError, EngineId, Language, PortError, TranscriptId};
+use super::{
+    Accelerator, AcceleratorChoice, AcceleratorRequest, AppError, EngineId, Language, PortError,
+    TranscriptId,
+};
 
 /// Text an ASR engine produced for one segment.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,19 +104,23 @@ pub struct AsrLoadRequest {
     pub engine_id: EngineId,
     /// The folder holding the engine's model files (`AppPaths::model_dir`).
     pub model_dir: PathBuf,
-    /// One of the engine's declared accelerators.
-    pub accelerator: Accelerator,
+    /// Auto (measure and keep the faster) or one of the engine's declared accelerators.
+    pub accelerator: AcceleratorRequest,
 }
 
-/// A load that finished: the engine is installed and warm.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AsrLoaded {
-    /// The accelerator actually in use (a GPU request can fall back to the CPU, 05 A6).
-    pub accelerator: Accelerator,
-    /// How long `load` took, in ms.
-    pub load_ms: u64,
-    /// How long the warm-up inference took, in ms (05 A8).
-    pub warm_up_ms: u64,
+/// What the speech engine is doing and, once one is ready, where it runs and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct SpeechEngineStatus {
+    pub readiness: AsrReadiness,
+    /// Where the ready engine runs; None while no engine is ready.
+    pub accelerator: Option<AcceleratorChoice>,
+}
+
+impl SpeechEngineStatus {
+    pub const UNLOADED: Self = Self {
+        readiness: AsrReadiness::Unloaded,
+        accelerator: None,
+    };
 }
 
 #[cfg(test)]

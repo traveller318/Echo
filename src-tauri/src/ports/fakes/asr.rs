@@ -1,26 +1,28 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: FakeAsrEngine, AsrCall, fake speech recognition, scripted transcripts, load fallback, warm up count
+ * SOURCE OF TRUTH KEYWORDS: FakeAsrEngine, AsrCall, fake speech recognition, scripted transcripts, load fallback, warm up count, fake accelerator latency, fake GPU failure
  * WHAT:  FakeAsrEngine: an AsrEngine that returns scripted results in order and records every call (AsrCall).
  * WHY:   Pipeline tests need exact segment texts (to test ordered joins), failures (to test `failed` takes and
- *        retry) and the GPU → CPU fallback (05 A6) without a model. It enforces the port contract: the
+ *        retry), the GPU → CPU fallback (05 A6) and accelerators of different speed or a GPU that fails while
+ *        running (the accelerator picker) without a model. It enforces the port contract: the
  *        accelerator must be declared in caps, the engine must be loaded, a segment may not exceed
  *        `max_segment_s`, and auto-detect needs `auto_language`. An unscripted call fails loudly instead of
  *        inventing text.
- * WHERE: pipeline ASR worker, model switching and session actor tests.
+ * WHERE: pipeline ASR worker, accelerator picker, model switching and session actor tests.
  */
 
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     path::{Path, PathBuf},
     sync::Mutex,
+    time::Duration,
 };
 
 use super::lock;
 use crate::{
     ports::AsrEngine,
     types::{
-        Accelerator, AppError, AsrCaps, AsrOutput, Language, PIPELINE_SAMPLE_RATE_HZ, PortError,
-        PortResult, StaticList,
+        Accelerator, AppError, AsrCaps, AsrOutput, ComputeDevice, Language,
+        PIPELINE_SAMPLE_RATE_HZ, PortError, PortResult, StaticList,
     },
 };
 
@@ -35,6 +37,12 @@ pub struct AsrCall {
 struct AsrState {
     loaded: Option<(PathBuf, Accelerator)>,
     gpu_falls_back: bool,
+    /// Every device `load` was asked for, in order.
+    requested: Vec<ComputeDevice>,
+    /// How long each inference takes on an accelerator.
+    latency: HashMap<Accelerator, Duration>,
+    /// Inference fails while loaded on this accelerator.
+    failing: Option<Accelerator>,
     next_load_error: Option<PortError>,
     warm_ups: usize,
     script: VecDeque<PortResult<AsrOutput>>,
@@ -85,6 +93,21 @@ impl FakeAsrEngine {
         lock(&self.state).gpu_falls_back = true;
     }
 
+    /// Every warm-up and transcription on `accelerator` takes `latency`.
+    pub fn set_latency(&self, accelerator: Accelerator, latency: Duration) {
+        lock(&self.state).latency.insert(accelerator, latency);
+    }
+
+    /// Warm-ups and transcriptions fail with `Asr` while loaded on `accelerator` (a GPU that stops working).
+    pub fn fail_inference_on(&self, accelerator: Option<Accelerator>) {
+        lock(&self.state).failing = accelerator;
+    }
+
+    /// Every device `load` was asked for, in order.
+    pub fn requested(&self) -> Vec<ComputeDevice> {
+        lock(&self.state).requested.clone()
+    }
+
     pub fn fail_next_load(&self, error: PortError) {
         lock(&self.state).next_load_error = Some(error);
     }
@@ -105,6 +128,25 @@ impl FakeAsrEngine {
     fn not_loaded() -> PortError {
         PortError::new(AppError::Asr).with_detail("fake ASR: no model loaded")
     }
+
+    /// Checks the loaded accelerator can run, then waits its latency outside the lock.
+    fn infer(&self) -> PortResult<()> {
+        let state = lock(&self.state);
+        let Some((_, accelerator)) = state.loaded.as_ref() else {
+            return Err(Self::not_loaded());
+        };
+        if state.failing == Some(*accelerator) {
+            return Err(
+                PortError::new(AppError::Asr).with_detail("fake ASR: the device stopped working")
+            );
+        }
+        let latency = state.latency.get(accelerator).copied();
+        drop(state);
+        if let Some(latency) = latency {
+            std::thread::sleep(latency);
+        }
+        Ok(())
+    }
 }
 
 impl AsrEngine for FakeAsrEngine {
@@ -112,7 +154,9 @@ impl AsrEngine for FakeAsrEngine {
         self.caps.clone()
     }
 
-    fn load(&self, model_dir: &Path, accelerator: Accelerator) -> PortResult<Accelerator> {
+    fn load(&self, model_dir: &Path, device: &ComputeDevice) -> PortResult<Accelerator> {
+        let accelerator = device.accelerator();
+        lock(&self.state).requested.push(device.clone());
         if !self.caps.supports_accelerator(accelerator) {
             return Err(PortError::new(AppError::Internal)
                 .with_detail("fake ASR: accelerator not declared in caps"));
@@ -130,11 +174,8 @@ impl AsrEngine for FakeAsrEngine {
     }
 
     fn warm_up(&self) -> PortResult<()> {
-        let mut state = lock(&self.state);
-        if state.loaded.is_none() {
-            return Err(Self::not_loaded());
-        }
-        state.warm_ups += 1;
+        self.infer()?;
+        lock(&self.state).warm_ups += 1;
         Ok(())
     }
 
@@ -144,10 +185,8 @@ impl AsrEngine for FakeAsrEngine {
     }
 
     fn transcribe(&self, audio: &[f32], language: Option<&Language>) -> PortResult<AsrOutput> {
+        self.infer()?;
         let mut state = lock(&self.state);
-        if state.loaded.is_none() {
-            return Err(Self::not_loaded());
-        }
         let max_samples = usize::try_from(
             u64::from(self.caps.max_segment_s) * u64::from(PIPELINE_SAMPLE_RATE_HZ),
         )
@@ -182,7 +221,7 @@ mod tests {
         assert!(engine.transcribe(&[0.0; 16], Some(&EN)).is_err());
         assert_eq!(
             engine
-                .load(Path::new("models/fake"), Accelerator::Cpu)
+                .load(Path::new("models/fake"), &ComputeDevice::Cpu)
                 .unwrap(),
             Accelerator::Cpu
         );
@@ -218,7 +257,7 @@ mod tests {
     fn enforces_caps() {
         let engine = FakeAsrEngine::english();
         engine
-            .load(Path::new("models/fake"), Accelerator::Cpu)
+            .load(Path::new("models/fake"), &ComputeDevice::Cpu)
             .unwrap();
         engine.push_text("unused");
         assert!(engine.transcribe(&[0.0; 16], None).is_err());
@@ -241,12 +280,29 @@ mod tests {
         engine.fall_back_to_cpu();
         assert_eq!(
             engine
-                .load(Path::new("models/fake"), Accelerator::Gpu)
+                .load(
+                    Path::new("models/fake"),
+                    &ComputeDevice::Gpu(super::super::FakeGraphicsAdapters::integrated("1.0"))
+                )
                 .unwrap(),
             Accelerator::Cpu
         );
         engine.unload().unwrap();
         assert_eq!(engine.loaded(), None);
         assert!(engine.warm_up().is_err());
+    }
+
+    #[test]
+    fn records_devices_and_fails_inference_on_a_broken_accelerator() {
+        let engine = FakeAsrEngine::english();
+        let gpu = ComputeDevice::Gpu(super::super::FakeGraphicsAdapters::integrated("1.0"));
+        engine.fail_inference_on(Some(Accelerator::Gpu));
+        engine.load(Path::new("models/fake"), &gpu).unwrap();
+        assert!(engine.warm_up().is_err(), "the GPU stopped working");
+        engine
+            .load(Path::new("models/fake"), &ComputeDevice::Cpu)
+            .unwrap();
+        engine.warm_up().unwrap();
+        assert_eq!(engine.requested(), [gpu, ComputeDevice::Cpu]);
     }
 }

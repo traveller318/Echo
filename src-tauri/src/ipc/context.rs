@@ -398,6 +398,7 @@ pub mod testing {
         let root = std::env::temp_dir().join("echo-harness");
         let paths = AppPaths::new(root.join("data"), root.join("resources"));
         let asr = AsrWorker::spawn(AsrWorkerConfig {
+            accelerators: crate::pipeline::asr::AcceleratorPicker::without_gpu(),
             build: Arc::new(|_: &EngineId| {
                 Ok(Arc::new(FakeAsrEngine::english()) as Arc<dyn AsrEngine>)
             }),

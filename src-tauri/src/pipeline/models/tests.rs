@@ -64,6 +64,7 @@ impl Rig {
         let events = Arc::new(RecordingSink::default());
         let reading = Arc::clone(&store);
         let asr = AsrWorker::spawn(AsrWorkerConfig {
+            accelerators: crate::pipeline::asr::AcceleratorPicker::without_gpu(),
             // Loads only while the store says Parakeet is installed, like the real adapter's file check.
             build: Arc::new(move |_: &EngineId| {
                 let engine = FakeAsrEngine::english();

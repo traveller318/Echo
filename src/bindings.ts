@@ -38,6 +38,10 @@ export const commands = {
 	metricsSummary: (input: MetricsSummaryInput) => typedError<MetricsSummary, AppError>(__TAURI_INVOKE("metrics_summary", { input })),
 	/**  Words and completed takes per local day for the last `days` days, today included, oldest first. */
 	metricsActivity: (input: MetricsActivityInput) => typedError<ActivityDay[], AppError>(__TAURI_INVOKE("metrics_activity", { input })),
+	/**  The speech engine's readiness and, once it is ready, the accelerator it runs on, why, and the timings. */
+	engineStatus: () => typedError<SpeechEngineStatus, AppError>(__TAURI_INVOKE("engine_status")),
+	/**  Forgets the remembered accelerator measurements of the selected engine; on automatic, measures again now. */
+	engineRemeasure: () => typedError<null, AppError>(__TAURI_INVOKE("engine_remeasure")),
 	/**
 	 *  Every engine that runs a model, with its status, selection, what it is doing and any running transfer,
 	 *  plus whether downloads may run now.
@@ -117,6 +121,60 @@ export const SETTING_TOKEN_MAX_CHARS = 128 as const;
 /**  Where inference runs. `gpu` means any DX12 adapter (DirectML), not one vendor. */
 export type Accelerator = "cpu" | "gpu";
 
+/**
+ *  One measurement of an engine on this machine: the timing of every accelerator that ran (a GPU that could not
+ *  start has none) and the accelerator it chose.
+ */
+export type AcceleratorBenchmark = {
+	chosen: Accelerator,
+	timings: AcceleratorTiming[],
+	measured_at: UnixMs,
+};
+
+/**  Where the loaded speech engine runs, why, and what that was based on. */
+export type AcceleratorChoice = {
+	engine_id: EngineId,
+	/**  The accelerator in use. */
+	accelerator: Accelerator,
+	reason: AcceleratorReason,
+	/**  The GPU that was considered (in use when `accelerator` is `gpu`); None when none was looked for or found. */
+	gpu: GpuAdapter | null,
+	/**  This load's own timing. */
+	bring_up: BringUpTiming,
+	/**  The measurement `auto` decided from (made now or remembered); None for a fixed choice. */
+	benchmark: AcceleratorBenchmark | null,
+};
+
+/**  Why the engine runs where it does. */
+export type AcceleratorReason = 
+/**  The engine declares one accelerator; there was nothing to choose. */
+{ kind: "only_option" } | 
+/**  The user picked this accelerator in Settings. */
+{ kind: "preference" } | 
+/**  The GPU was wanted but this PC has no DirectX 12 GPU. */
+{ kind: "no_gpu" } | 
+/**  The GPU was wanted but could not start or run the model; the CPU took over (05 A6). */
+{ kind: "gpu_failed" } | 
+/**  Automatic: runs on the CPU while the GPU is measured in the background (first start on this GPU and driver). */
+{ kind: "measuring" } | 
+/**  Automatic: both were measured just now and this one was faster. */
+{ kind: "measured" } | 
+/**  Automatic: the measurement made earlier for this GPU and driver was reused. */
+{ kind: "remembered" } | 
+/**  The GPU stopped working during a take (driver reset, device removed); the CPU took over for this run. */
+{ kind: "gpu_lost" };
+
+/**  How long one accelerator took on one engine, in ms. */
+export type AcceleratorTiming = {
+	accelerator: Accelerator,
+	/**  Opening the model on it. */
+	load_ms: number,
+	/**  The first inference (05 A8), which includes one-time graph and shader compilation. */
+	warm_up_ms: number,
+	/**  The best steady-state inference on the benchmark audio: what a take feels. */
+	run_ms: number,
+};
+
 /**  Words and completed takes on one local calendar day. */
 export type ActivityDay = {
 	/**  Local date, `YYYY-MM-DD`. */
@@ -155,6 +213,17 @@ export type AsrCaps = {
 	/**  Longest audio segment the engine accepts in one `transcribe` call, in seconds. */
 	max_segment_s: number,
 };
+
+/**  Whether a take started now could be transcribed, and by which engine. */
+export type AsrReadiness = 
+/**  No engine is loaded and none is loading. */
+{ kind: "unloaded" } | 
+/**  `engine_id` is loading and warming up; segments wait for it. */
+{ kind: "loading"; engine_id: EngineId } | 
+/**  `engine_id` is loaded, warm and running on `accelerator`. */
+{ kind: "ready"; engine_id: EngineId; accelerator: Accelerator } | 
+/**  `engine_id` could not be loaded (e.g. `ModelMissing`); segments fail with this error. */
+{ kind: "failed"; engine_id: EngineId; error: AppError };
 
 /**  Caps of an `AudioCapture` adapter. */
 export type AudioCaps = {
@@ -230,6 +299,12 @@ export type Backdrop =
 "mica" | 
 /**  No native material: the page paints `--color-bg`. */
 "solid";
+
+/**  Loading and warming the engine on the accelerator it runs on now, in ms. */
+export type BringUpTiming = {
+	load_ms: number,
+	warm_up_ms: number,
+};
 
 /**  A size or transfer amount in bytes. */
 export type ByteCount = number;
@@ -309,6 +384,22 @@ export type EnumOption = {
 
 /**  The options of an `Enum` setting: a fixed list, or a source resolved at runtime by the registry. */
 export type EnumOptions = { from: "fixed"; list: EnumOption[] } | { from: "runtime"; source: OptionSource };
+
+/**  A hardware graphics adapter that can run DirectX 12 compute (what DirectML needs). */
+export type GpuAdapter = {
+	/**  Position in the DXGI adapter enumeration: the device index DirectML opens. Not stable across hot-plug. */
+	ordinal: number,
+	/**  The name the driver reports, e.g. `Intel(R) UHD Graphics`. */
+	name: string,
+	/**  PCI vendor id (0x10DE NVIDIA, 0x1002 AMD, 0x8086 Intel). */
+	vendor_id: number,
+	/**  PCI device id. */
+	device_id: number,
+	/**  The user-mode driver version, e.g. `32.0.101.7076`. */
+	driver_version: string,
+	/**  Memory on the card itself; 0 or small on integrated GPUs, which share system memory. */
+	dedicated_memory: ByteCount,
+};
 
 /**  Why the history list changed. */
 export type HistoryChangeReason = "inserted" | "updated" | "deleted" | 
@@ -923,6 +1014,13 @@ export type Sha256Hex = string;
 
 /**  A key combination in accelerator syntax, e.g. `Ctrl+Alt+Space`. Parsed only by the hotkey adapter. */
 export type Shortcut = string;
+
+/**  What the speech engine is doing and, once one is ready, where it runs and why. */
+export type SpeechEngineStatus = {
+	readiness: AsrReadiness,
+	/**  Where the ready engine runs; None while no engine is ready. */
+	accelerator: AcceleratorChoice | null,
+};
 
 /**  One entry of a `Pairs` setting, e.g. a dictionary replacement. */
 export type TextPair = {

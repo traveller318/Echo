@@ -13,6 +13,7 @@ pub mod clipboard;
 pub mod consent;
 pub mod dialog;
 pub mod foreground;
+pub mod gpu;
 pub mod hotkey;
 pub mod inserter;
 pub mod launcher;

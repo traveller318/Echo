@@ -546,8 +546,8 @@ fn requirements_follow_the_selected_engine_and_the_adapters() {
         &SHIPPED
     ));
 
-    // The shipped engine runs on the CPU only (DirectML joins in step 22), with 25 languages.
-    assert!(!requirement_holds(
+    // The shipped engine runs on the CPU or a GPU (DirectML), with 25 languages.
+    assert!(requirement_holds(
         CapsRequirement::GpuAccelerator,
         &defaults(),
         &SHIPPED

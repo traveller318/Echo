@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: metrics registry, METRICS, LOG_METRICS, COMMAND_DURATION, dashboard metrics, time saved, speaking WPM, median latency, streak, activity, MEDIAN_LATENCY_TAKES
+ * SOURCE OF TRUTH KEYWORDS: metrics registry, METRICS, LOG_METRICS, COMMAND_DURATION, ACCELERATOR_BENCHMARK, dashboard metrics, time saved, speaking WPM, median latency, streak, activity, MEDIAN_LATENCY_TAKES
  * WHAT:  Every dashboard metric of 02 §7.4 with its label, help, unit, query (a summary aggregate or the daily
  *        activity series) and emphasis, plus lookups; and every log-only metric (LOG_METRICS, 02 §12), such as
  *        the command duration the factory records.
@@ -9,7 +9,7 @@
  * WHERE: Sent to the UI by `registry_get`; `summary_aggregates` tells `metrics_summary` what to compute;
  *        `inputs_changed` tells a settings write whether the dashboard must read again;
  *        `ACTIVITY_DAYS` is the chart's length (the UI asks `metrics_activity` for it through the activity entry);
- *        `MEDIAN_LATENCY_TAKES` bounds the median in pipeline/metrics; `COMMAND_DURATION` is recorded by
+ *        `MEDIAN_LATENCY_TAKES` bounds the median in pipeline/metrics; `ACCELERATOR_BENCHMARK` by pipeline/asr/accelerator.rs; `COMMAND_DURATION` is recorded by
  *        ipc/factory.rs.
  */
 
@@ -112,8 +112,17 @@ pub const COMMAND_DURATION: LogMetricSpec = LogMetricSpec {
     unit: MetricUnit::Ms,
 };
 
+/// One accelerator measured by `auto` (02 §8.1): its load, warm-up and best steady-state run, in ms.
+pub const ACCELERATOR_BENCHMARK: LogMetricSpec = LogMetricSpec {
+    id: MetricId::from_static("accelerator-benchmark"),
+    help: StaticStr::new(
+        "Load, warm-up and best steady-state inference of one accelerator while choosing where speech runs.",
+    ),
+    unit: MetricUnit::Ms,
+};
+
 /// Every metric written only to the local log (02 §12).
-pub const LOG_METRICS: &[LogMetricSpec] = &[COMMAND_DURATION];
+pub const LOG_METRICS: &[LogMetricSpec] = &[COMMAND_DURATION, ACCELERATOR_BENCHMARK];
 
 /// The metric `id`.
 pub fn find(id: &MetricId) -> Option<&'static MetricSpec> {
@@ -223,5 +232,6 @@ mod tests {
             assert!(spec.help.ends_with('.'), "{}", spec.id);
         }
         assert!(LOG_METRICS.contains(&COMMAND_DURATION));
+        assert!(LOG_METRICS.contains(&ACCELERATOR_BENCHMARK));
     }
 }

@@ -50,11 +50,11 @@ use crate::{
     },
     services::{self, Db, transcripts},
     types::{
-        Accelerator, AppError, AppEvent, AppPaths, AppTarget, AsrLoadRequest, AudioTransport,
-        CaptureFormat, DeliveryOutcome, EngineId, HistoryChangeReason, HistoryChanged, HotkeyCaps,
-        Permission, PortError, ResourceKind, SessionCue, SessionStatus, SessionView, SettingKey,
-        SettingValue, SettingsSnapshot, SharedSettings, StaticStr, TranscriptId, TranscriptStatus,
-        testing::TempDir,
+        Accelerator, AcceleratorRequest, AppError, AppEvent, AppPaths, AppTarget, AsrLoadRequest,
+        AudioTransport, CaptureFormat, DeliveryOutcome, EngineId, HistoryChangeReason,
+        HistoryChanged, HotkeyCaps, Permission, PortError, ResourceKind, SessionCue, SessionStatus,
+        SessionView, SettingKey, SettingValue, SettingsSnapshot, SharedSettings, StaticStr,
+        TranscriptId, TranscriptStatus, testing::TempDir,
     },
 };
 
@@ -155,6 +155,7 @@ impl Rig {
 
         let shared = Arc::clone(&engine);
         let asr = AsrWorker::spawn(AsrWorkerConfig {
+            accelerators: crate::pipeline::asr::AcceleratorPicker::without_gpu(),
             build: Arc::new(move |_: &EngineId| Ok(Arc::clone(&shared) as Arc<dyn AsrEngine>)),
             scheduler: Arc::new(FakeWorkerScheduler::default()),
             readiness: None,
@@ -167,7 +168,7 @@ impl Rig {
             .load(AsrLoadRequest {
                 engine_id: PARAKEET_TDT_V3,
                 model_dir: paths.model_dir(&registry::models::PARAKEET_TDT_V3),
-                accelerator: Accelerator::Cpu,
+                accelerator: AcceleratorRequest::Fixed(Accelerator::Cpu),
             })
             .recv_timeout(WAIT)
             .unwrap();

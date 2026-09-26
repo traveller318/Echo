@@ -1,13 +1,14 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: ParakeetOnnx, Parakeet TDT 0.6B v3, AsrEngine adapter, Parakeet caps, 25 languages, model files, ModelMissing, warm up
+ * SOURCE OF TRUTH KEYWORDS: ParakeetOnnx, Parakeet TDT 0.6B v3, AsrEngine adapter, Parakeet caps, 25 languages, model files, ModelMissing, warm up, DirectML GPU
  * WHAT:  ParakeetOnnx: the AsrEngine for NVIDIA Parakeet TDT 0.6B v3 (int8 ONNX export) on the bundled ONNX Runtime.
- *        `load` checks the four model files, opens the sessions (model.rs) on the CPU with 05 A9 threads; `warm_up`
+ *        `load` checks the four model files, opens the sessions (model.rs) with 05 A9 threads, the encoder on the
+ *        requested device (CPU, or a GPU through DirectML with a silent CPU fallback); `warm_up`
  *        transcribes 1 s of silence (05 A8); `transcribe` runs one segment; `unload` frees the sessions.
  * WHY:   The only code that knows Parakeet's files, tensors and decoding (00 constraint 4): the rest of Echo sees
  *        `Arc<dyn AsrEngine>` and CAPS. The caps are honest: the 25 European languages the model card lists, detected
  *        by the model itself (it takes no language hint, so the requested language is not passed on and no detected
- *        language is reported), punctuation and casing in the output, CPU only (the DirectML session is not built
- *        here, so GPU is not declared), and 30 s per call (the pipeline cuts at 20 s; full attention over 30 s fits
+ *        language is reported), punctuation and casing in the output, CPU and GPU (DirectML on any DirectX 12 GPU;
+ *        which is faster is measured by the pipeline, 05 A6), and 30 s per call (the pipeline cuts at 20 s; full attention over 30 s fits
  *        comfortably in memory). A missing file is `ModelMissing` before any session opens (05 A1), so onboarding
  *        can offer the download; the loaded model sits behind a mutex because ONNX sessions run through `&mut` while
  *        the port shares the engine as `&self` (the ASR worker is its only caller, so the lock never contends).
@@ -30,7 +31,7 @@ use crate::{
     adapters::onnx::SessionThreads,
     ports::AsrEngine,
     types::{
-        Accelerator, AppError, AppPaths, AsrCaps, AsrOutput, Language, ModelId,
+        Accelerator, AppError, AppPaths, AsrCaps, AsrOutput, ComputeDevice, Language, ModelId,
         PIPELINE_SAMPLE_RATE_HZ, PortError, PortResult, StaticList,
     },
 };
@@ -90,7 +91,7 @@ impl ParakeetOnnx {
         auto_language: true,
         punctuation: true,
         casing: true,
-        accelerators: StaticList::new(&[Accelerator::Cpu]),
+        accelerators: StaticList::new(&[Accelerator::Cpu, Accelerator::Gpu]),
         max_segment_s: 30,
     };
 
@@ -116,7 +117,8 @@ impl AsrEngine for ParakeetOnnx {
         Self::CAPS
     }
 
-    fn load(&self, model_dir: &Path, accelerator: Accelerator) -> PortResult<Accelerator> {
+    fn load(&self, model_dir: &Path, device: &ComputeDevice) -> PortResult<Accelerator> {
+        let accelerator = device.accelerator();
         if !Self::CAPS.supports_accelerator(accelerator) {
             return Err(PortError::new(AppError::Internal).with_detail(format!(
                 "Parakeet does not declare the {accelerator:?} accelerator"
@@ -135,13 +137,16 @@ impl AsrEngine for ParakeetOnnx {
         let mut model = self.model.lock();
         // Free the old sessions first, so a reload never holds two copies of the model.
         *model = None;
-        *model = Some(ParakeetModel::open(
+        let loaded = ParakeetModel::open(
             &self.paths,
             model_dir,
             &self.model_id,
             SessionThreads::for_asr(),
-        )?);
-        Ok(Accelerator::Cpu)
+            device,
+        )?;
+        let in_use = loaded.accelerator();
+        *model = Some(loaded);
+        Ok(in_use)
     }
 
     fn warm_up(&self) -> PortResult<()> {
@@ -186,12 +191,24 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::types::testing::{TempDir, installed_app_paths, source_resource_paths};
+    use crate::{
+        adapters::gpu::DxgiGraphicsAdapters,
+        ports::GraphicsAdapters,
+        types::{
+            ByteCount, GpuAdapter,
+            testing::{TempDir, installed_app_paths, source_resource_paths},
+        },
+    };
 
     const MODEL: ModelId = ModelId::from_static("parakeet-tdt-0.6b-v3");
 
-    /// A loaded engine on the installed model.
+    /// A loaded engine on the installed model, on the CPU.
     fn installed() -> ParakeetOnnx {
+        installed_on(&ComputeDevice::Cpu).0
+    }
+
+    /// A loaded engine on the installed model and the accelerator it runs on.
+    fn installed_on(device: &ComputeDevice) -> (ParakeetOnnx, Accelerator) {
         let paths = installed_app_paths();
         let dir = paths.model_dir(&MODEL);
         for file in ParakeetOnnx::FILES {
@@ -202,11 +219,8 @@ mod tests {
             );
         }
         let engine = ParakeetOnnx::new(paths, MODEL);
-        assert_eq!(
-            engine.load(&dir, Accelerator::Cpu).unwrap(),
-            Accelerator::Cpu
-        );
-        engine
+        let accelerator = engine.load(&dir, device).unwrap();
+        (engine, accelerator)
     }
 
     fn fixture() -> Vec<f32> {
@@ -236,6 +250,49 @@ mod tests {
         );
     }
 
+    /// A GPU no DXGI enumeration has: DirectML cannot open it.
+    fn unknown_gpu() -> GpuAdapter {
+        GpuAdapter {
+            ordinal: 63,
+            name: String::from("No such GPU"),
+            vendor_id: 0,
+            device_id: 0,
+            driver_version: String::from("0.0.0.0"),
+            dedicated_memory: ByteCount::new(0),
+        }
+    }
+
+    #[test]
+    fn a_gpu_that_cannot_start_falls_back_to_the_cpu_silently() {
+        let (engine, accelerator) = installed_on(&ComputeDevice::Gpu(unknown_gpu()));
+        assert_eq!(accelerator, Accelerator::Cpu);
+        assert_eq!(
+            engine.transcribe(&fixture(), None).unwrap().text,
+            "Hello there. This is a short test of voice activity detection."
+        );
+    }
+
+    /// On this machine's preferred DirectX 12 GPU (skipped in effect when it has none): DirectML runs the encoder, or
+    /// the engine falls back to the CPU, and either way the text is the CPU's.
+    #[test]
+    fn the_machine_gpu_transcribes_like_the_cpu() {
+        let Some(gpu) = DxgiGraphicsAdapters::new()
+            .list()
+            .unwrap()
+            .into_iter()
+            .next()
+        else {
+            return;
+        };
+        let (engine, accelerator) = installed_on(&ComputeDevice::Gpu(gpu));
+        engine.warm_up().unwrap();
+        assert_eq!(
+            engine.transcribe(&fixture(), None).unwrap().text,
+            "Hello there. This is a short test of voice activity detection.",
+            "on {accelerator:?}"
+        );
+    }
+
     #[test]
     fn silence_is_empty_text() {
         let engine = installed();
@@ -256,7 +313,7 @@ mod tests {
 ",
         )
         .unwrap();
-        let error = engine.load(data.path(), Accelerator::Cpu).err().unwrap();
+        let error = engine.load(data.path(), &ComputeDevice::Cpu).err().unwrap();
         assert_eq!(error.error(), &AppError::ModelMissing { model_id: MODEL });
         assert!(error.detail().unwrap().contains(ENCODER));
         assert!(!error.detail().unwrap().contains(VOCAB));
@@ -271,7 +328,7 @@ mod tests {
         let engine = ParakeetOnnx::new(source_resource_paths(data.path()), MODEL);
         assert_eq!(
             engine
-                .load(data.path(), Accelerator::Cpu)
+                .load(data.path(), &ComputeDevice::Cpu)
                 .err()
                 .map(PortError::into_app_error),
             Some(AppError::ModelCorrupt { model_id: MODEL })
@@ -285,13 +342,15 @@ mod tests {
     #[test]
     fn contract_violations_are_refused() {
         let engine = ParakeetOnnx::new(AppPaths::new("data", "resources"), MODEL);
-        assert_eq!(
-            engine
-                .load(Path::new("models"), Accelerator::Gpu)
-                .err()
-                .map(PortError::into_app_error),
-            Some(AppError::Internal),
-            "GPU is not declared"
+        assert!(
+            matches!(
+                engine
+                    .load(Path::new("models"), &ComputeDevice::Gpu(unknown_gpu()))
+                    .err()
+                    .map(PortError::into_app_error),
+                Some(AppError::ModelMissing { .. })
+            ),
+            "files are checked before any device is touched"
         );
         assert_eq!(
             engine

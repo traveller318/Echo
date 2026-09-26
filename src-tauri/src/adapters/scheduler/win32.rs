@@ -18,7 +18,7 @@ use windows::Win32::System::Threading::{
     GetCurrentProcess, GetCurrentThread, PROCESS_POWER_THROTTLING_CURRENT_VERSION,
     PROCESS_POWER_THROTTLING_EXECUTION_SPEED, PROCESS_POWER_THROTTLING_STATE,
     ProcessPowerThrottling, SetProcessInformation, SetThreadPriority, THREAD_PRIORITY,
-    THREAD_PRIORITY_ABOVE_NORMAL, THREAD_PRIORITY_NORMAL,
+    THREAD_PRIORITY_ABOVE_NORMAL, THREAD_PRIORITY_BELOW_NORMAL, THREAD_PRIORITY_NORMAL,
 };
 
 use crate::{
@@ -78,6 +78,7 @@ const FULL_SPEED: PROCESS_POWER_THROTTLING_STATE = PROCESS_POWER_THROTTLING_STAT
 
 fn win32_priority(priority: WorkerPriority) -> THREAD_PRIORITY {
     match priority {
+        WorkerPriority::BelowNormal => THREAD_PRIORITY_BELOW_NORMAL,
         WorkerPriority::Normal => THREAD_PRIORITY_NORMAL,
         WorkerPriority::AboveNormal => THREAD_PRIORITY_ABOVE_NORMAL,
     }
@@ -117,6 +118,10 @@ mod tests {
         assert_eq!(
             priority_after(WorkerPriority::Normal),
             THREAD_PRIORITY_NORMAL.0
+        );
+        assert_eq!(
+            priority_after(WorkerPriority::BelowNormal),
+            THREAD_PRIORITY_BELOW_NORMAL.0
         );
     }
 }

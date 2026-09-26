@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: ports layer, port traits, swappable interfaces, AsrEngine, AudioCapture, HotkeyService, ModelStore, FolderPicker, OverlayWindow, MainWindow, SystemLauncher, SoundPlayer, EventSink, fakes
+ * SOURCE OF TRUTH KEYWORDS: ports layer, port traits, swappable interfaces, AsrEngine, AudioCapture, HotkeyService, ModelStore, FolderPicker, GraphicsAdapters, OverlayWindow, MainWindow, SystemLauncher, SoundPlayer, EventSink, fakes
  * WHAT:  Layer 1: one trait per swappable concern (AI engines, audio, OS integrations, I/O), traits only,
  *        re-exported flat so callers write `use crate::ports::{AsrEngine, Clipboard}`. In test builds, `fakes`
  *        adds one in-memory double per port.
@@ -22,6 +22,7 @@ mod consent;
 mod event_sink;
 mod folder_picker;
 mod foreground;
+mod gpu;
 mod hotkey;
 mod inserter;
 mod launcher;
@@ -47,6 +48,7 @@ pub use consent::PrivacyConsent;
 pub use event_sink::EventSink;
 pub use folder_picker::FolderPicker;
 pub use foreground::ForegroundApp;
+pub use gpu::GraphicsAdapters;
 pub use hotkey::HotkeyService;
 pub use inserter::TextInserter;
 pub use launcher::SystemLauncher;
@@ -102,6 +104,7 @@ mod tests {
         shared::<dyn WorkerScheduler>();
         shared::<dyn SoundPlayer>();
         shared::<dyn FolderPicker>();
+        shared::<dyn GraphicsAdapters>();
         shared::<dyn EventSink<EndpointChange>>();
         shared::<dyn EventSink<Transparency>>();
         shared::<dyn EventSink<HotkeyEvent>>();

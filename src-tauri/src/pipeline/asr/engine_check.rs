@@ -91,6 +91,7 @@ mod tests {
 
     fn worker(engine: impl Fn() -> FakeAsrEngine + Send + Sync + 'static) -> AsrWorker {
         AsrWorker::spawn(AsrWorkerConfig {
+            accelerators: crate::pipeline::asr::AcceleratorPicker::without_gpu(),
             build: Arc::new(move |_: &EngineId| Ok(Arc::new(engine()) as Arc<dyn AsrEngine>)),
             scheduler: Arc::new(FakeWorkerScheduler::default()),
             readiness: None,

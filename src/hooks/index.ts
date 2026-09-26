@@ -1,8 +1,8 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: hooks barrel, useEchoQuery, useEchoInfiniteQuery, useEchoEvent, useEchoMutation, useRegistryView, useSessionView, useHistoryList, useMetricsSummary, useModels, useModelActions, useSettingValues, useSettingWrite, data hooks
+ * SOURCE OF TRUTH KEYWORDS: hooks barrel, useEchoQuery, useEchoInfiniteQuery, useEchoEvent, useEchoMutation, useRegistryView, useSessionView, useHistoryList, useMetricsSummary, useModels, useModelActions, useSpeechEngineStatus, useSettingValues, useSettingWrite, data hooks
  * WHAT:  Barrel for src/hooks: the data hooks every window uses to read commands (single and paged), run writes,
  *        follow Rust events, read the registry, follow the current take, read and act on History, read the
- *        Dashboard metrics, read and act on Models and read and act on Settings, plus the
+ *        Dashboard metrics, read and act on Models, read where the speech engine runs and read and act on Settings, plus the
  *        timing hooks for delayed indicators and live counters.
  * WHY:   One import path (`@/hooks`) for the data layer keeps components free of TanStack and Tauri details.
  * WHERE: Imported by the app shell, routes and (later) the pill.
@@ -50,6 +50,13 @@ export {
 } from "./use-models";
 export { useRunningClock, type RunningClockOptions } from "./use-running-clock";
 export { useSessionView, type UseSessionViewOptions } from "./use-session-view";
+export {
+  SPEECH_ENGINE_EVENTS,
+  SPEECH_ENGINE_QUERY,
+  useRemeasureAccelerator,
+  useSpeechEngineStatus,
+  type RemeasureAccelerator,
+} from "./use-speech-engine";
 export {
   AUDIO_DEVICES_QUERY,
   SETTINGS_AVAILABILITY_QUERY,

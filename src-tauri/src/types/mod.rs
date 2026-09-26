@@ -10,6 +10,7 @@
  * WHERE: Imported by every other layer (02 §3.2 matrix).
  */
 
+mod accelerator;
 mod appearance;
 mod asr;
 mod audio;
@@ -50,8 +51,13 @@ mod transcript;
 mod units;
 mod update;
 
+pub use accelerator::{
+    AcceleratorBenchmark, AcceleratorChoice, AcceleratorPolicy, AcceleratorReason,
+    AcceleratorRequest, AcceleratorTiming, BringUpOutcome, BringUpTiming, ComputeDevice,
+    GpuAdapter,
+};
 pub use appearance::{AppearanceView, Backdrop, ThemePreference, Transparency};
-pub use asr::{AsrEvent, AsrLoadRequest, AsrLoaded, AsrOutput, AsrReadiness};
+pub use asr::{AsrEvent, AsrLoadRequest, AsrOutput, AsrReadiness, SpeechEngineStatus};
 pub use audio::{
     AudioDevice, AudioTestLevelInput, AudioTransport, CaptureEvent, CaptureFormat, CaptureSummary,
     EndpointChange, MicCheck, MicVerdict, PIPELINE_SAMPLE_RATE_HZ, SegmentPolicy, SpeechSegment,

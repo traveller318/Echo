@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: ParakeetModel, Parakeet ONNX sessions, nemo128 preprocessor, encoder-model int8, decoder_joint, OnnxJoint, decoder state, model signature check
+ * SOURCE OF TRUTH KEYWORDS: ParakeetModel, Parakeet ONNX sessions, nemo128 preprocessor, encoder-model int8, decoder_joint, OnnxJoint, encoder on GPU, DirectML fallback, model signature check
  * WHAT:  ParakeetModel: the three ONNX Runtime sessions of the Parakeet TDT export (mel preprocessor, encoder,
  *        prediction + joint network) plus the vocabulary; `open` loads and checks them, `transcribe` turns 16 kHz
  *        mono samples into text (preprocess → encode → TDT greedy decode → detokenize).
@@ -13,6 +13,11 @@
  *        reference Parakeet pipelines do: the encoder needs left context before the first word or clips its onset.
  *        Errors while loading are `ModelCorrupt { model_id }` (except a broken ONNX Runtime bundle, `Internal`);
  *        errors while transcribing are `Asr`. Details name tensors and files, never text or audio (02 §10).
+ *        On a GPU only the encoder runs through DirectML: it is nearly all of the work, while the preprocessor is a
+ *        small signal-processing graph and the joint network runs once per decode step, where a GPU round trip per
+ *        step would cost more than it saves. An encoder that cannot start on the GPU (driver, missing DirectML,
+ *        unsupported operator) is logged and reopened on the CPU, so the engine still loads (05 A6); only a file
+ *        the CPU cannot open either is `ModelCorrupt`.
  * WHERE: Owned by ParakeetOnnx (parakeet_onnx/mod.rs) behind its mutex; decode loop in tdt.rs, tokens in vocab.rs.
  */
 
@@ -29,8 +34,11 @@ use super::{
     vocab::Vocabulary,
 };
 use crate::{
-    adapters::onnx::{SessionThreads, ensure_runtime, open_session},
-    types::{AppError, AppPaths, ModelId, PIPELINE_SAMPLE_RATE_HZ, PortError, PortResult},
+    adapters::onnx::{SessionThreads, ensure_runtime, open_session, open_session_on},
+    types::{
+        Accelerator, AppError, AppPaths, ComputeDevice, ModelId, PIPELINE_SAMPLE_RATE_HZ,
+        PortError, PortResult,
+    },
 };
 
 /// Silence prepended to every segment, in samples (250 ms at 16 kHz).
@@ -69,13 +77,16 @@ pub struct ParakeetModel {
     vocab: Vocabulary,
     /// Shape of each recurrent state tensor: [layers, batch 1, hidden].
     state_shape: [usize; 3],
+    /// Where the encoder runs.
+    accelerator: Accelerator,
 }
 
 impl ParakeetModel {
     /**
      * SOURCE OF TRUTH KEYWORDS: ParakeetModel::open, load Parakeet sessions, ModelCorrupt, signature check
      * WHAT:  Loads the bundled ONNX Runtime, the vocabulary and the three sessions from `dir`, and checks the export's
-     *        signature; `heavy` threads go to the preprocessor and encoder, the joint network runs single-threaded.
+     *        signature; `heavy` threads go to the preprocessor and encoder, the joint network runs single-threaded;
+     *        the encoder runs on `device`, or on the CPU when that GPU cannot start it.
      * WHY:   The joint network is tiny and runs once per decode step, where thread hand-offs cost more than they
      *        save; the encoder is where the cores pay off (05 A9). The caller has already checked every file exists.
      * WHERE: ParakeetOnnx::load.
@@ -85,6 +96,7 @@ impl ParakeetModel {
         dir: &Path,
         model_id: &ModelId,
         heavy: SessionThreads,
+        device: &ComputeDevice,
     ) -> PortResult<Self> {
         ensure_runtime(paths)?;
         let corrupt = |detail: String| {
@@ -107,7 +119,31 @@ impl ParakeetModel {
             Ok(session)
         };
         let preprocessor = open(PREPROCESSOR, heavy, &PREPROCESSOR_IO)?;
-        let encoder = open(ENCODER, heavy, &ENCODER_IO)?;
+        let (encoder, accelerator) = match device {
+            ComputeDevice::Cpu => (open(ENCODER, heavy, &ENCODER_IO)?, Accelerator::Cpu),
+            ComputeDevice::Gpu(gpu) => {
+                let on_gpu =
+                    open_session_on(paths, &dir.join(ENCODER), heavy, device).and_then(|session| {
+                        check_names(&session, &ENCODER_IO)
+                            .map(|()| session)
+                            .map_err(|detail| {
+                                PortError::new(AppError::Internal).with_detail(detail)
+                            })
+                    });
+                match on_gpu {
+                    Ok(session) => (session, Accelerator::Gpu),
+                    Err(error) => {
+                        tracing::warn!(
+                            gpu = %gpu.name,
+                            driver = %gpu.driver_version,
+                            detail = error.detail(),
+                            "the Parakeet encoder could not start on the GPU; using the CPU"
+                        );
+                        (open(ENCODER, heavy, &ENCODER_IO)?, Accelerator::Cpu)
+                    }
+                }
+            }
+        };
         let joint = open(JOINT, SessionThreads::SINGLE, &JOINT_IO)?;
         let state_shape = check_joint(&joint, vocab.len())
             .map_err(|detail| corrupt(format!("{JOINT}: {detail}")))?;
@@ -117,7 +153,13 @@ impl ParakeetModel {
             joint,
             vocab,
             state_shape,
+            accelerator,
         })
+    }
+
+    /// Where the encoder runs.
+    pub const fn accelerator(&self) -> Accelerator {
+        self.accelerator
     }
 
     /// Transcribes 16 kHz mono samples; empty audio is empty text.

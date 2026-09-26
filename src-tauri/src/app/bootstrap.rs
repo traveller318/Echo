@@ -4,7 +4,8 @@
  *        API, start local logging, open and migrate the database, settle the takes a crash left unfinished
  *        (pipeline/recovery.rs), resolve the stored settings over the registry defaults, start the appearance
  *        watcher and the microphone hot-plug watch (DeviceListRelay), start the (empty) ASR worker (its readiness
- *        relayed to the Models page and its load failures to the ModelWatch), build the allowlisted HTTP client
+ *        relayed to the Models page and its load failures to the ModelWatch; its accelerator picker over the DXGI
+ *        GPU list and the database), build the allowlisted HTTP client
  *        (network gate from the registry permission) and the model manager over HttpModelStore and the dialog
  *        plugin's folder picker, start the sound
  *        player, spawn the (idle) session actor over the same ports (with the sound cues) and point the
@@ -58,6 +59,7 @@ use crate::{
         consent::Win32PrivacyConsent,
         dialog::TauriFolderPicker,
         foreground::Win32ForegroundApp,
+        gpu::DxgiGraphicsAdapters,
         hotkey::LowLevelKeyboardHotkeys,
         inserter::Win32SendInputInserter,
         launcher::Win32ShellLauncher,
@@ -71,7 +73,7 @@ use crate::{
     ipc::{CommandCtx, CommandDeps},
     pipeline::{
         appearance::AppearanceRelay,
-        asr::{self, AsrWorker, AsrWorkerConfig},
+        asr::{self, AcceleratorPicker, AsrWorker, AsrWorkerConfig},
         audio_devices::{DEVICE_SETTLE, DeviceListRelay},
         delivery::{Delivery, DeliveryPorts},
         fan_out::FanOut,
@@ -89,7 +91,10 @@ use crate::{
     },
     registry::{self, engines::BuildCtx},
     services::{self, Db},
-    types::{AppEvent, AppPaths, Permission, PortError, RecoveryReport, SharedSettings},
+    types::{
+        AcceleratorPolicy, AppEvent, AppPaths, Permission, PortError, RecoveryReport,
+        SharedSettings,
+    },
 };
 
 /// Resolves paths, starts logging, opens the database, settles the takes a crash left unfinished and manages the
@@ -138,10 +143,17 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<RecoveryReport, Box<dyn Error>>
     }
     // The worker reports readiness to the Models page and its load failures to the model check (ModelWatch).
     let (readiness, load_failures) = ReadinessRelay::new(Arc::clone(&events));
+    // Where each engine runs: DXGI lists the GPUs, the database remembers `auto` measurements (02 §8.1).
+    let accelerators = AcceleratorPicker::new(
+        Arc::new(DxgiGraphicsAdapters::new()),
+        db.clone(),
+        AcceleratorPolicy::DEFAULT,
+    );
     let asr = AsrWorker::spawn(AsrWorkerConfig::registry(
         BuildCtx {
             paths: paths.clone(),
         },
+        accelerators,
         Arc::clone(&scheduler),
         Some(Arc::new(readiness)),
     ))

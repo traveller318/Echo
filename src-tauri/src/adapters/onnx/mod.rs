@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: onnx adapters, ONNX Runtime shared, bundled runtime, ensure_runtime, open_session, SessionThreads, onnx_failure, physical cores
+ * SOURCE OF TRUTH KEYWORDS: onnx adapters, ONNX Runtime shared, bundled runtime, ensure_runtime, open_session, open_session_on, DirectML, SessionThreads, onnx_failure, physical cores
  * WHAT:  What every ONNX-based adapter shares: loading the bundled ONNX Runtime once (runtime.rs), opening a
  *        session with chosen threads (session.rs) and the machine's physical core count those threads derive from
  *        (cpu.rs).
@@ -15,4 +15,4 @@ mod runtime;
 mod session;
 
 pub use runtime::ensure_runtime;
-pub use session::{SessionThreads, onnx_failure, open_session};
+pub use session::{SessionThreads, onnx_failure, open_session, open_session_on};

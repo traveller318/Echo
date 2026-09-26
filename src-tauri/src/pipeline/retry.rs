@@ -296,6 +296,7 @@ mod tests {
         let engine = Arc::new(FakeAsrEngine::english());
         let shared = Arc::clone(&engine);
         let asr = AsrWorker::spawn(AsrWorkerConfig {
+            accelerators: crate::pipeline::asr::AcceleratorPicker::without_gpu(),
             build: Arc::new(move |_: &EngineId| Ok(Arc::clone(&shared) as Arc<dyn AsrEngine>)),
             scheduler: Arc::new(FakeWorkerScheduler::default()),
             readiness: None,

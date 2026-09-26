@@ -8,12 +8,14 @@
  * WHERE: `catalog()` is read by app/bindings.rs; groups are filled step by step (session reads the take and sends
  *        the pill's stop and retries a stored take; history lists, reads, copies, deletes and pastes the last take;
  *        metrics computes the dashboard's summary and activity; models lists, downloads, cancels, imports,
- *        verifies, removes and activates models; audio lists devices and runs the
+ *        verifies, removes and activates models; engine reports where the speech engine runs and measures
+ *        it again; audio lists devices and runs the
  *        microphone check; system holds appearance, the logs / privacy openers and the page opener; pill takes the
  *        pill page's button areas and exit).
  */
 
 pub mod audio;
+pub mod engine;
 pub mod history;
 pub mod metrics;
 pub mod models;
@@ -40,6 +42,8 @@ pub fn catalog<R: Runtime>() -> Commands<R> {
         history::history_paste_last,
         metrics::metrics_summary,
         metrics::metrics_activity,
+        engine::engine_status,
+        engine::engine_remeasure,
         models::models_list,
         models::models_download,
         models::models_cancel_download,

@@ -1,13 +1,15 @@
 /*!
  * SOURCE OF TRUTH KEYWORDS: load_request, AsrLoadRequest from settings, effective_language, effective_accelerator, engine model folder, caps narrowing
  * WHAT:  `load_request` turns the current settings into the AsrLoadRequest for the selected engine (its registry id,
- *        the folder its model is installed in, the accelerator to ask for); `effective_accelerator` and
+ *        the folder its model is installed in, the accelerator to ask for: auto or one); `effective_accelerator` and
  *        `effective_language` narrow a stored preference to what an engine's caps offer.
  * WHY:   The worker loads whatever it is asked to, so the one place that reads settings, the registry and the data
  *        layout for it is here (00 constraint 4: nothing names a model). The model folder is `AppPaths::model_dir`,
  *        the folder the model manager installs into (02 §8.2); a missing model is the adapter's `ModelMissing` when
- *        it loads. `auto` (no preference) resolves to the CPU, which every engine supports; a preference the engine
- *        does not declare falls back the same way (05 A6), so an engine is never asked for an accelerator it lacks.
+ *        it loads. `auto` (no preference) stays Auto only for an engine that declares more than one accelerator:
+ *        the accelerator picker measures them when the load runs (pipeline/asr/accelerator.rs, 05 A6); with one
+ *        there is nothing to choose. A preference the engine does not declare falls back to the CPU, which every
+ *        engine supports, so an engine is never asked for an accelerator it lacks.
  *        A language the engine does not know falls back to auto-detect when it has one, otherwise to its first
  *        language, because `transcribe` accepts no language (None) only from engines with `auto_language`.
  * WHERE: app/bootstrap (startup load) and the engine switch call `load_request`; the ASR worker applies
@@ -17,8 +19,8 @@
 use crate::{
     registry,
     types::{
-        Accelerator, AppError, AppPaths, AsrCaps, AsrLoadRequest, EngineKind, Language, PortError,
-        PortResult, ResourceKind, SettingsSnapshot,
+        Accelerator, AcceleratorRequest, AppError, AppPaths, AsrCaps, AsrLoadRequest, EngineKind,
+        Language, PortError, PortResult, ResourceKind, SettingsSnapshot,
     },
 };
 
@@ -57,17 +59,26 @@ pub fn load_request(settings: &SettingsSnapshot, paths: &AppPaths) -> PortResult
     })
 }
 
-/// The accelerator to request: the preference when the engine declares it, otherwise the CPU (or, for an engine
-/// without a CPU path, the first it declares).
-pub fn effective_accelerator(preference: Option<Accelerator>, caps: &AsrCaps) -> Accelerator {
+/// The accelerator to request: the preference when the engine declares it; Auto when there is none and the engine
+/// declares a choice; otherwise the CPU (or, for an engine without a CPU path, the first it declares).
+pub fn effective_accelerator(
+    preference: Option<Accelerator>,
+    caps: &AsrCaps,
+) -> AcceleratorRequest {
     match preference {
-        Some(accelerator) if caps.supports_accelerator(accelerator) => accelerator,
-        _ if caps.supports_accelerator(Accelerator::Cpu) => Accelerator::Cpu,
-        _ => caps
-            .accelerators
-            .first()
-            .copied()
-            .unwrap_or(Accelerator::Cpu),
+        Some(accelerator) if caps.supports_accelerator(accelerator) => {
+            AcceleratorRequest::Fixed(accelerator)
+        }
+        None if caps.accelerators.len() > 1 => AcceleratorRequest::Auto,
+        _ if caps.supports_accelerator(Accelerator::Cpu) => {
+            AcceleratorRequest::Fixed(Accelerator::Cpu)
+        }
+        _ => AcceleratorRequest::Fixed(
+            caps.accelerators
+                .first()
+                .copied()
+                .unwrap_or(Accelerator::Cpu),
+        ),
     }
 }
 
@@ -108,7 +119,7 @@ mod tests {
     }
 
     #[test]
-    fn the_default_settings_load_parakeet_from_its_model_folder_on_the_cpu() {
+    fn the_default_settings_load_parakeet_from_its_model_folder_measuring_the_accelerator() {
         let paths = AppPaths::new("data", "resources");
         let request = load_request(&defaults(), &paths).unwrap();
         assert_eq!(request.engine_id, PARAKEET_TDT_V3);
@@ -116,7 +127,7 @@ mod tests {
             request.model_dir,
             paths.model_dir(&registry::models::PARAKEET_TDT_V3)
         );
-        assert_eq!(request.accelerator, Accelerator::Cpu);
+        assert_eq!(request.accelerator, AcceleratorRequest::Auto);
     }
 
     #[test]
@@ -144,18 +155,28 @@ mod tests {
         let both = caps(true, vec![Accelerator::Cpu, Accelerator::Gpu]);
         let cpu_only = caps(true, vec![Accelerator::Cpu]);
         let gpu_only = caps(true, vec![Accelerator::Gpu]);
+        let fixed = AcceleratorRequest::Fixed;
         assert_eq!(
             effective_accelerator(Some(Accelerator::Gpu), &both),
-            Accelerator::Gpu
+            fixed(Accelerator::Gpu)
         );
-        assert_eq!(effective_accelerator(None, &both), Accelerator::Cpu);
+        assert_eq!(
+            effective_accelerator(Some(Accelerator::Cpu), &both),
+            fixed(Accelerator::Cpu)
+        );
+        assert_eq!(effective_accelerator(None, &both), AcceleratorRequest::Auto);
+        assert_eq!(
+            effective_accelerator(None, &cpu_only),
+            fixed(Accelerator::Cpu),
+            "one accelerator: nothing to measure"
+        );
         assert_eq!(
             effective_accelerator(Some(Accelerator::Gpu), &cpu_only),
-            Accelerator::Cpu
+            fixed(Accelerator::Cpu)
         );
         assert_eq!(
             effective_accelerator(Some(Accelerator::Cpu), &gpu_only),
-            Accelerator::Gpu
+            fixed(Accelerator::Gpu)
         );
     }
 

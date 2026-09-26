@@ -69,6 +69,9 @@ ulid = { version = "=3.0.0", features = ["serde"] }
 windows = { version = "=0.61.3", features = [
     "Win32_Devices_Properties",
     "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D12",
+    "Win32_Graphics_Dxgi",
     "Win32_Graphics_Gdi",
     "Win32_Media_Audio",
     "Win32_Security",

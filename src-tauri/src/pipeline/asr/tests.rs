@@ -21,12 +21,15 @@ use super::*;
 use crate::{
     ports::{
         AsrEngine, EventSink,
-        fakes::{ChannelSink, EVENT_TIMEOUT, FakeAsrEngine, FakeWorkerScheduler},
+        fakes::{
+            ChannelSink, EVENT_TIMEOUT, FakeAsrEngine, FakeGraphicsAdapters, FakeWorkerScheduler,
+        },
     },
     types::{
-        Accelerator, AppError, AsrCaps, AsrEvent, AsrLoadRequest, AsrLoaded, AsrOutput,
-        AsrReadiness, EngineId, Language, ModelId, PortError, PortResult, SpeechSegment,
-        TranscriptId, WorkerPriority,
+        Accelerator, AcceleratorChoice, AcceleratorReason, AcceleratorRequest, AppError, AsrCaps,
+        AsrEvent, AsrLoadRequest, AsrOutput, AsrReadiness, ComputeDevice, EngineId, Language,
+        ModelId, PortError, PortResult, SpeechEngineStatus, SpeechSegment, TranscriptId,
+        WorkerPriority,
     },
 };
 
@@ -60,6 +63,14 @@ impl Rig {
         engines: HashMap<EngineId, Arc<FakeAsrEngine>>,
         custom: Option<AsrBuilder>,
     ) -> Self {
+        Self::with_picker(engines, custom, AcceleratorPicker::without_gpu())
+    }
+
+    fn with_picker(
+        engines: HashMap<EngineId, Arc<FakeAsrEngine>>,
+        custom: Option<AsrBuilder>,
+        accelerators: AcceleratorPicker,
+    ) -> Self {
         let readiness = Arc::new(ChannelSink::default());
         let scheduler = Arc::new(FakeWorkerScheduler::default());
         let gates: Arc<Mutex<HashMap<EngineId, Receiver<()>>>> = Arc::default();
@@ -83,6 +94,7 @@ impl Rig {
             }
         };
         let worker = AsrWorker::spawn(AsrWorkerConfig {
+            accelerators,
             build,
             scheduler: Arc::clone(&scheduler) as _,
             readiness: Some(Arc::clone(&readiness) as _),
@@ -108,7 +120,7 @@ impl Rig {
         open
     }
 
-    fn load(&self, id: EngineId) -> Receiver<PortResult<AsrLoaded>> {
+    fn load(&self, id: EngineId) -> Receiver<PortResult<AcceleratorChoice>> {
         self.worker.load(request(id))
     }
 
@@ -138,7 +150,7 @@ fn request(engine_id: EngineId) -> AsrLoadRequest {
     AsrLoadRequest {
         engine_id,
         model_dir: PathBuf::from("models").join("fake"),
-        accelerator: Accelerator::Cpu,
+        accelerator: AcceleratorRequest::Fixed(Accelerator::Cpu),
     }
 }
 
@@ -455,8 +467,8 @@ impl AsrEngine for Panicking {
     fn caps(&self) -> AsrCaps {
         FakeAsrEngine::english().caps()
     }
-    fn load(&self, _: &std::path::Path, accelerator: Accelerator) -> PortResult<Accelerator> {
-        Ok(accelerator)
+    fn load(&self, _: &std::path::Path, device: &ComputeDevice) -> PortResult<Accelerator> {
+        Ok(device.accelerator())
     }
     fn warm_up(&self) -> PortResult<()> {
         Ok(())
@@ -501,4 +513,230 @@ fn a_panicking_build_is_a_failed_load() {
         rig.worker.readiness(),
         AsrReadiness::Failed { .. }
     ));
+}
+
+#[test]
+fn the_status_names_where_the_ready_engine_runs() {
+    let rig = Rig::new();
+    assert_eq!(rig.worker.status(), SpeechEngineStatus::UNLOADED);
+    rig.load_ready(ENGINE_A);
+    let status = rig.worker.status();
+    assert!(status.readiness.is_ready());
+    let choice = status.accelerator.unwrap();
+    assert_eq!(choice.engine_id, ENGINE_A);
+    assert_eq!(
+        (choice.accelerator, choice.reason),
+        (Accelerator::Cpu, AcceleratorReason::Preference)
+    );
+    rig.worker.unload();
+    let (take, events) = rig.take();
+    take.finish();
+    assert_eq!(events.next(), Some(AsrEvent::Drained { take: take.id() }));
+    assert_eq!(rig.worker.status(), SpeechEngineStatus::UNLOADED);
+}
+
+/// 05 A6 at run time: a GPU that stops working mid-session fails that segment, then the engine is reloaded on the CPU
+/// once and later takes run there. Each build is a new engine, as the registry's is.
+#[test]
+fn a_gpu_that_stops_working_is_replaced_by_the_cpu() {
+    let on_gpu = Arc::new(FakeAsrEngine::english());
+    let on_cpu = Arc::new(FakeAsrEngine::english());
+    let rig = rig_with_gpu(&[&on_gpu, &on_cpu]);
+    let loaded = rig
+        .worker
+        .load(AsrLoadRequest {
+            accelerator: AcceleratorRequest::Fixed(Accelerator::Gpu),
+            ..request(ENGINE_A)
+        })
+        .recv_timeout(EVENT_TIMEOUT)
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.accelerator, Accelerator::Gpu);
+    assert_eq!(
+        rig.readiness.next(),
+        Some(AsrReadiness::Loading {
+            engine_id: ENGINE_A
+        })
+    );
+    assert_eq!(
+        rig.readiness.next(),
+        Some(AsrReadiness::Ready {
+            engine_id: ENGINE_A,
+            accelerator: Accelerator::Gpu
+        })
+    );
+
+    on_gpu.fail_inference_on(Some(Accelerator::Gpu));
+    let (lost, lost_events) = rig.take();
+    lost.emit(segment(0, 10));
+    lost.emit(segment(1, 10));
+    assert_eq!(failed_code(lost_events.next()), Some((0, AppError::Asr)));
+    assert_eq!(failed_code(lost_events.next()), Some((1, AppError::Asr)));
+    lost.finish();
+    assert_eq!(
+        lost_events.next(),
+        Some(AsrEvent::Drained { take: lost.id() })
+    );
+
+    assert_eq!(
+        rig.readiness.next(),
+        Some(AsrReadiness::Ready {
+            engine_id: ENGINE_A,
+            accelerator: Accelerator::Cpu
+        })
+    );
+    let status = rig.worker.status().accelerator.unwrap();
+    assert_eq!(status.reason, AcceleratorReason::GpuLost);
+    assert_eq!(
+        on_cpu.requested(),
+        [ComputeDevice::Cpu],
+        "two failed segments ask for one reload"
+    );
+    assert_eq!(on_gpu.loaded(), None, "the lost GPU engine is unloaded");
+
+    on_cpu.push_text("Back on the CPU.");
+    let (next, next_events) = rig.take();
+    next.emit(segment(0, 10));
+    assert_eq!(next_events.next(), Some(done(&next, 0, "Back on the CPU.")));
+}
+
+/// A worker whose builds hand out `engines` in order, on a machine with one integrated GPU.
+fn rig_with_gpu(engines: &[&Arc<FakeAsrEngine>]) -> Rig {
+    let builds = Arc::new(Mutex::new(
+        engines
+            .iter()
+            .rev()
+            .map(|engine| Arc::clone(engine))
+            .collect::<Vec<_>>(),
+    ));
+    let build: AsrBuilder = Arc::new(move |_: &EngineId| {
+        builds
+            .lock()
+            .unwrap()
+            .pop()
+            .map(|engine| engine as Arc<dyn AsrEngine>)
+            .ok_or_else(|| PortError::new(AppError::Internal).with_detail("one build too many"))
+    });
+    let gpus = Arc::new(FakeGraphicsAdapters::with(vec![
+        FakeGraphicsAdapters::integrated("1.0"),
+    ]));
+    Rig::with_picker(
+        HashMap::new(),
+        Some(build),
+        AcceleratorPicker::with_gpus(gpus),
+    )
+}
+
+fn auto_request() -> AsrLoadRequest {
+    AsrLoadRequest {
+        accelerator: AcceleratorRequest::Auto,
+        ..request(ENGINE_A)
+    }
+}
+
+/// 02 §8.1: the first auto load serves on the CPU at once; the GPU is measured on a second instance in the
+/// background and swapped in only because it is faster.
+#[test]
+fn a_first_auto_load_serves_on_the_cpu_then_swaps_to_a_faster_gpu() {
+    let serving = Arc::new(FakeAsrEngine::english());
+    let measuring = Arc::new(FakeAsrEngine::english());
+    for engine in [&serving, &measuring] {
+        engine.set_latency(Accelerator::Cpu, Duration::from_millis(60));
+        engine.push_text("");
+    }
+    let rig = rig_with_gpu(&[&serving, &measuring]);
+    let first = rig
+        .worker
+        .load(auto_request())
+        .recv_timeout(EVENT_TIMEOUT)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (first.accelerator, first.reason),
+        (Accelerator::Cpu, AcceleratorReason::Measuring)
+    );
+    assert_eq!(
+        rig.readiness.next(),
+        Some(AsrReadiness::Loading {
+            engine_id: ENGINE_A
+        })
+    );
+    assert_eq!(
+        rig.readiness.next(),
+        Some(AsrReadiness::Ready {
+            engine_id: ENGINE_A,
+            accelerator: Accelerator::Cpu
+        })
+    );
+    assert_eq!(
+        rig.readiness.next(),
+        Some(AsrReadiness::Ready {
+            engine_id: ENGINE_A,
+            accelerator: Accelerator::Gpu
+        }),
+        "the faster GPU instance is swapped in"
+    );
+    let status = rig.worker.status().accelerator.unwrap();
+    assert_eq!(status.reason, AcceleratorReason::Measured);
+    assert_eq!(status.benchmark.unwrap().timings.len(), 2);
+    let (take, events) = rig.take();
+    take.finish();
+    assert_eq!(events.next(), Some(AsrEvent::Drained { take: take.id() }));
+    assert_eq!(serving.loaded(), None, "the CPU instance retired");
+    assert_eq!(
+        measuring.requested(),
+        [ComputeDevice::Gpu(FakeGraphicsAdapters::integrated("1.0"))]
+    );
+    let requests = rig.scheduler.requests();
+    let loader = Some("echo-asr-load".to_owned());
+    assert!(
+        requests.contains(&(loader.clone(), WorkerPriority::Normal)),
+        "{requests:?}"
+    );
+    assert!(
+        requests.contains(&(loader, WorkerPriority::BelowNormal)),
+        "the background measurement never competes with a take: {requests:?}"
+    );
+}
+
+#[test]
+fn a_slower_gpu_leaves_the_cpu_engine_serving_and_says_so() {
+    let serving = Arc::new(FakeAsrEngine::english());
+    let measuring = Arc::new(FakeAsrEngine::english());
+    measuring.set_latency(Accelerator::Gpu, Duration::from_millis(60));
+    for engine in [&serving, &measuring] {
+        engine.push_text("");
+    }
+    let rig = rig_with_gpu(&[&serving, &measuring]);
+    rig.worker
+        .load(auto_request())
+        .recv_timeout(EVENT_TIMEOUT)
+        .unwrap()
+        .unwrap();
+    assert!(rig.readiness.next().is_some(), "loading");
+    assert!(rig.readiness.next().is_some(), "ready on the CPU");
+    let kept = AsrReadiness::Ready {
+        engine_id: ENGINE_A,
+        accelerator: Accelerator::Cpu,
+    };
+    assert_eq!(
+        rig.readiness.next(),
+        Some(kept.clone()),
+        "the new reason is announced though readiness stays the same"
+    );
+    let status = rig.worker.status();
+    assert_eq!(status.readiness, kept);
+    assert_eq!(
+        status.accelerator.unwrap().reason,
+        AcceleratorReason::Measured
+    );
+    assert_eq!(
+        measuring.loaded(),
+        None,
+        "the losing GPU instance was unloaded"
+    );
+    serving.push_text("Still the CPU.");
+    let (take, events) = rig.take();
+    take.emit(segment(0, 10));
+    assert_eq!(events.next(), Some(done(&take, 0, "Still the CPU.")));
 }
