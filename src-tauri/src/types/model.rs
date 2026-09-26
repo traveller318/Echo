@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: ModelManifest, ModelFile, ModelStatus, ModelPhase, Sha256Hex, ModelEntry, ModelsView, EngineSelection, EngineRuntime, ModelTransferOutcome
+ * SOURCE OF TRUTH KEYWORDS: ModelManifest, ModelFile, ModelKind, ModelStatus, ModelPhase, Sha256Hex, ModelEntry, ModelsView, EngineSelection, EngineRuntime, ModelTransferOutcome
  * WHAT:  The model-manager shapes: a model's manifest (ModelManifest with its ModelFile list and SHA-256 digests),
  *        whether it is installed (ModelStatus), the phases a download or import goes through (ModelPhase), how a
  *        transfer ended (ModelTransferOutcome), the models command inputs (ModelInput, EngineInput) and the Models
@@ -7,7 +7,9 @@
  * WHY:   The manifest is data the registry declares (02 §3.3 `models`) and the ModelStore adapter needs to fetch
  *        and verify files, yet adapters may not import the registry (02 §3.2), so the shape lives here and the
  *        registry hands the entry to the port. `revision` pins the exact upstream commit the hashes were computed
- *        from (05 §6), never a moving branch. `total_bytes` is derived from the files so it cannot drift.
+ *        from (05 §6), never a moving branch. `total_bytes` is derived from the files so it cannot drift. A manifest
+ *        may arrive as one archive (`archive`, a release zip) of which only the listed files are kept, and may
+ *        `require` other manifests (an LLM needs its llama.cpp runtime): the model manager treats the set as one card.
  *        Download and import-from-disk share one progress stream (02 §8.2): bytes move, hashes are checked, then
  *        the `.partial` folder is renamed into place. A terminal phase tells the UI the stream has ended without
  *        polling; the failure detail comes back as the command's AppError. ModelStatus carries no filesystem
@@ -43,30 +45,63 @@ pub struct ModelFile {
     pub bytes: ByteCount,
 }
 
+/**
+ * SOURCE OF TRUTH KEYWORDS: ModelKind, model or runtime, runtimes folder, sidecar runtime manifest, install root
+ * WHAT:  What a manifest installs: model weights an engine loads, or a runtime program an engine runs as a
+ *        sidecar (llama-server).
+ * WHY:   Both are pinned, hashed downloads through the same model manager (02 §8.2), but they live in different
+ *        folders (`models/<id>/` and `runtimes/<id>/`, 02 §7.1) and a runtime can serve several models, so the
+ *        kind is data on the manifest and AppPaths turns it into the folder; nothing branches on a model's name.
+ * WHERE: ModelManifest; AppPaths::install_dir and the ModelStore adapter's layout.
+ */
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelKind {
+    /// Weights an engine loads, installed in `models/<id>/`.
+    Model,
+    /// A program an engine starts as a sidecar, installed in `runtimes/<id>/`.
+    Runtime,
+}
+
 /// Everything needed to fetch, verify and credit a model.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct ModelManifest {
     pub id: ModelId,
     pub label: StaticStr,
+    pub kind: ModelKind,
     /// SPDX license id, e.g. `CC-BY-4.0`, listed in About → Models & licenses (05 A15).
     pub license: StaticStr,
     /// Credit line the license requires; None when it requires none.
     pub attribution: Option<StaticStr>,
-    /// Upstream revision (commit hash) the digests were computed from.
+    /// Upstream revision (commit hash, or the release tag of a runtime) the digests were computed from.
     pub revision: StaticStr,
+    /// The installed files, each with the size and digest it has on disk.
     pub files: StaticList<ModelFile>,
+    /// When set, `files` are not fetched one by one: this one archive (a zip) is downloaded and verified, and only
+    /// the listed files are unpacked from it (each checked against its own digest); the archive itself is not kept.
+    pub archive: Option<ModelFile>,
+    /// Other manifests this one needs installed to run (the runtime an LLM runs on); the model manager downloads,
+    /// imports, checks and counts them together with this one, requirements first.
+    pub requires: StaticList<ModelId>,
     /// Ships inside the installer's resources, so it is never downloaded.
     pub bundled: bool,
 }
 
 impl ModelManifest {
-    /// Sum of every file's size.
+    /// Sum of every installed file's size (what the model takes on disk).
     pub fn total_bytes(&self) -> ByteCount {
         ByteCount::new(
             self.files
                 .iter()
                 .fold(0_u64, |total, file| total.saturating_add(file.bytes.get())),
         )
+    }
+
+    /// The bytes a download or import moves: the archive when there is one, else every file.
+    pub fn transfer_bytes(&self) -> ByteCount {
+        self.archive
+            .as_ref()
+            .map_or_else(|| self.total_bytes(), |archive| archive.bytes)
     }
 }
 
@@ -191,6 +226,12 @@ pub enum EngineRuntime {
 pub struct ModelEntry {
     pub engine: EngineSpec,
     pub model: ModelManifest,
+    /// The manifests the model needs to run (its runtime), installed with it, in install order.
+    pub requires: Vec<ModelManifest>,
+    /// What a download of the model and everything it requires moves (the card's size).
+    pub download_bytes: ByteCount,
+    /// The model and its requirements together: `Installed` only when all are; a missing requirement makes an
+    /// installed model `Partial` (the next download fetches only what is missing), a damaged one `Corrupt`.
     pub status: ModelStatus,
     pub selection: EngineSelection,
     /// What the engine is doing, when the settings select it and it has been asked to load.
@@ -236,16 +277,35 @@ mod tests {
     const MANIFEST: ModelManifest = ModelManifest {
         id: ModelId::from_static("test-model"),
         label: StaticStr::new("Test model"),
+        kind: ModelKind::Model,
         license: StaticStr::new("MIT"),
         attribution: None,
         revision: StaticStr::new("abc123"),
         files: StaticList::new(FILES),
+        archive: None,
+        requires: StaticList::new(&[]),
         bundled: false,
     };
 
     #[test]
     fn manifests_are_const_and_sum_their_files() {
         assert_eq!(MANIFEST.total_bytes(), ByteCount::new(670));
+        assert_eq!(MANIFEST.transfer_bytes(), ByteCount::new(670));
+        let packed = ModelManifest {
+            kind: ModelKind::Runtime,
+            archive: Some(ModelFile {
+                name: StaticStr::new("release.zip"),
+                bytes: ByteCount::new(300),
+                ..FILES[0].clone()
+            }),
+            ..MANIFEST.clone()
+        };
+        assert_eq!(packed.total_bytes(), ByteCount::new(670));
+        assert_eq!(packed.transfer_bytes(), ByteCount::new(300));
+        assert_eq!(
+            serde_json::to_value(ModelKind::Runtime).unwrap(),
+            json!("runtime")
+        );
         let value = serde_json::to_value(&MANIFEST).unwrap();
         assert_eq!(value["files"][1]["name"], json!("vocab.txt"));
         assert_eq!(

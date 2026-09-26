@@ -2,17 +2,21 @@
  * SOURCE OF TRUTH KEYWORDS: SettingsPage test, settings route test, registry-generated settings test, hidden setting test, caps-gated setting test, settings write test
  * WHAT:  Verifies the Settings page against mocked commands: one card per registry section with its heading, only
  *        visible settings whose caps requirement holds, rows showing the effective values, a change sent through
- *        `settings_set`, a reset through `settings_reset`, and a refused hotkey shown inline; plus the pure grouping
- *        rule on its own.
+ *        `settings_set`, a reset through `settings_reset`, a refused hotkey shown inline, and the notice for a selected
+ *        engine whose model is not ready (grammar polish downloading); plus the pure grouping and notice-copy rules.
  * WHY:   The page wires the registry, the settings reads and SettingField together; this is the one place that
  *        whole flow runs short of Rust.
  * WHERE: Runs in the `web` Vitest project with `@/bindings` mocked.
  */
 import { QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   CapsRequirement,
+  ModelEntry,
+  ModelProgress,
+  ModelsView,
   NavItem,
   RegistryView,
   SettingEntry,
@@ -21,9 +25,47 @@ import type {
 } from "@/bindings";
 import { RegistryContext } from "@/hooks";
 import { createEchoQueryClient } from "@/lib/query-client";
+import { setupNoticeCopy } from "./_components/model-setup-copy";
 import { settingsBySection } from "./_components/settings-layout";
 
 const NAV: NavItem = { id: "settings", label: "Settings", icon: "settings", route: "/settings", order: 3 };
+const MODELS_NAV: NavItem = { id: "models", label: "Models", icon: "boxes", route: "/models", order: 2 };
+
+const MB = 1_048_576;
+
+/** The grammar polish card: Qwen3 and the llama.cpp runtime it requires. */
+function grammarModel(overrides: Partial<ModelEntry> = {}): ModelEntry {
+  const manifest = {
+    kind: "model" as const,
+    license: "Apache-2.0",
+    attribution: null,
+    revision: "abc",
+    files: [],
+    archive: null,
+    requires: [],
+    bundled: false,
+  };
+  return {
+    engine: {
+      id: "qwen3-1.7b",
+      label: "Qwen3 1.7B grammar polish",
+      model_id: "qwen3-1.7b-q4-k-m",
+      caps: { kind: "polisher", latency_class: "slow", languages: { kind: "any" }, needs_model: true },
+    },
+    model: { ...manifest, id: "qwen3-1.7b-q4-k-m", label: "Qwen3 1.7B (Q4_K_M)", requires: ["llama-cpp-vulkan"] },
+    requires: [{ ...manifest, id: "llama-cpp-vulkan", label: "llama.cpp runtime", kind: "runtime", license: "MIT" }],
+    download_bytes: 1_300 * MB,
+    status: { kind: "not_installed" },
+    selection: { kind: "selectable", active: true },
+    runtime: null,
+    transfer: null,
+    ...overrides,
+  };
+}
+
+function modelsView(entries: ModelEntry[]): ModelsView {
+  return { entries, network: "granted" };
+}
 
 function setting(overrides: Partial<SettingSpec> & Pick<SettingSpec, "key" | "section" | "label">): SettingSpec {
   return {
@@ -58,7 +100,7 @@ const REGISTRY: RegistryView = {
     { section: "updates", label: "Updates" },
   ],
   hotkeys: [],
-  nav: [NAV],
+  nav: [NAV, MODELS_NAV],
   engines: [],
   metrics: [],
 };
@@ -78,13 +120,27 @@ const mocks = vi.hoisted(() => ({
   settingsSet: vi.fn(),
   settingsReset: vi.fn(),
   audioListDevices: vi.fn(),
+  modelsList: vi.fn(),
+}));
+
+const progressEvent = vi.hoisted(() => ({
+  handler: null as ((event: { payload: unknown }) => void) | null,
 }));
 
 vi.mock("@/bindings", () => ({
   SETTING_TOKEN_MAX_CHARS: 128,
   commands: mocks,
-  // No Rust events in this test: the page is rendered without the invalidation bridge.
-  events: {},
+  // Only live model progress is followed; the page is rendered without the invalidation bridge.
+  events: {
+    modelProgress: {
+      listen: (handler: (event: { payload: unknown }) => void) => {
+        progressEvent.handler = handler;
+        return Promise.resolve(() => {
+          progressEvent.handler = null;
+        });
+      },
+    },
+  },
 }));
 
 const { default: SettingsPage } = await import("./index");
@@ -95,6 +151,7 @@ beforeEach(() => {
   mocks.settingsSet.mockImplementation((input: SettingEntry) => Promise.resolve({ status: "ok", data: input }));
   mocks.settingsReset.mockResolvedValue({ status: "ok", data: VALUES[0] });
   mocks.audioListDevices.mockResolvedValue({ status: "ok", data: [] });
+  mocks.modelsList.mockResolvedValue({ status: "ok", data: modelsView([grammarModel({ status: { kind: "installed" } })]) });
 });
 
 afterEach(() => {
@@ -105,7 +162,9 @@ function renderPage() {
   return render(
     <QueryClientProvider client={createEchoQueryClient()}>
       <RegistryContext value={REGISTRY}>
-        <SettingsPage nav={NAV} />
+        <MemoryRouter>
+          <SettingsPage nav={NAV} />
+        </MemoryRouter>
       </RegistryContext>
     </QueryClientProvider>,
   );
@@ -190,5 +249,54 @@ describe("settingsBySection", () => {
       ["hotkeys", ["hotkeys.record"]],
       ["updates", ["updates.auto_check"]],
     ]);
+  });
+});
+
+describe("model setup notices", () => {
+  it("say when grammar polish is on but its model is not installed, and follow a download live", async () => {
+    mocks.modelsList.mockResolvedValue({ status: "ok", data: modelsView([grammarModel()]) });
+    renderPage();
+    expect(await screen.findByText("Qwen3 1.7B grammar polish: Not installed")).toBeInTheDocument();
+    expect(screen.getByText("Download it on the Models page to use it.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Models" })).toBeInTheDocument();
+    await vi.waitFor(() => {
+      expect(progressEvent.handler).not.toBeNull();
+    });
+    const progress: ModelProgress = {
+      model_id: "qwen3-1.7b-q4-k-m",
+      bytes: 312 * MB,
+      total: 1_300 * MB,
+      phase: "transferring",
+    };
+    act(() => {
+      progressEvent.handler?.({ payload: progress });
+    });
+    expect(await screen.findByText("Qwen3 1.7B grammar polish: Downloading")).toBeInTheDocument();
+  });
+
+  it("stay away while every selected model is installed", async () => {
+    renderPage();
+    expect(await screen.findByRole("region", { name: "General" })).toBeInTheDocument();
+    await vi.waitFor(() => {
+      expect(mocks.modelsList).toHaveBeenCalled();
+    });
+    expect(screen.queryByRole("button", { name: "Open Models" })).not.toBeInTheDocument();
+  });
+});
+
+describe("setupNoticeCopy", () => {
+  it("speaks only for a selected engine that is not ready", () => {
+    expect(setupNoticeCopy(grammarModel({ selection: { kind: "selectable", active: false } }), null)).toBeNull();
+    expect(setupNoticeCopy(grammarModel({ selection: { kind: "built_in" } }), null)).toBeNull();
+    expect(setupNoticeCopy(grammarModel({ status: { kind: "installed" } }), null)).toBeNull();
+    expect(setupNoticeCopy(grammarModel(), null)).toBe("Download it on the Models page to use it.");
+    expect(setupNoticeCopy(grammarModel({ status: { kind: "partial", bytes: MB } }), null)).toBe(
+      "The download stopped. Resume it on the Models page.",
+    );
+    expect(setupNoticeCopy(grammarModel({ status: { kind: "corrupt" } }), null)).toBe(
+      "Its files are damaged. Download it again on the Models page.",
+    );
+    const waiting: ModelProgress = { model_id: "qwen3-1.7b-q4-k-m", bytes: MB, total: 2 * MB, phase: "waiting" };
+    expect(setupNoticeCopy(grammarModel(), waiting)).toMatch(/resuming shortly/);
   });
 });

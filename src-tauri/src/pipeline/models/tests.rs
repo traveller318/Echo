@@ -1,9 +1,11 @@
 /*!
  * SOURCE OF TRUTH KEYWORDS: model manager tests, download retry test, cancel download test, import picker test, damaged model test, activation test, readiness relay test
- * WHAT:  ModelManager over FakeModelStore, FakeFolderPicker and a real ASR worker whose fake engines load only
- *        while the store says the model is installed: the list view, downloads (resume after a network drop,
- *        retries running out, cancel, Busy), import, verify and damage, removal, activation and the check after a
- *        failed load; ReadinessRelay's forwarding.
+ * WHAT:  ModelManager over FakeModelStore, FakeFolderPicker, a real ASR worker whose fake engines load only
+ *        while the store says the model is installed, and a polish chain whose LLM stage is a fake: the list view,
+ *        downloads (resume after a network drop, retries running out, cancel, Busy), import, verify and damage,
+ *        removal, activation, the check after a failed load, install sets (the LLM and its runtime as one card),
+ *        releasing the LLM stage before its files change and the download when grammar polish is switched on;
+ *        ReadinessRelay's forwarding.
  * WHY:   02 §8.2's orchestration promises (progress ends with a terminal phase, a dropped connection costs no click,
  *        installing loads the engine, removing it makes the next press say "Model not installed") are pipeline
  *        behaviour, proven here without network or disk.
@@ -19,17 +21,20 @@ use std::{
 
 use super::{ModelDeps, ModelManager, ModelPolicy, ModelWatch, ReadinessRelay};
 use crate::{
-    pipeline::asr::{AsrWorker, AsrWorkerConfig},
+    pipeline::{
+        asr::{AsrWorker, AsrWorkerConfig},
+        polish::PolishChains,
+    },
     ports::{
-        AsrEngine, EventSink, ModelStore,
+        AsrEngine, EventSink, ModelStore, TextPolisher,
         fakes::{
-            FakeAsrEngine, FakeFolderPicker, FakeModelStore, FakePrivacyConsent,
-            FakeWorkerScheduler, RecordingSink, poll_once,
+            FakeAsrEngine, FakeFolderPicker, FakeModelStore, FakePolish, FakePrivacyConsent,
+            FakeTextPolisher, FakeWorkerScheduler, RecordingSink, poll_once,
         },
     },
     registry::{
-        engines::{PARAKEET_TDT_V3 as PARAKEET_ENGINE, SILERO_VAD},
-        models::{self, PARAKEET_TDT_V3, SILERO_VAD_V5},
+        engines::{PARAKEET_TDT_V3 as PARAKEET_ENGINE, QWEN3_POLISHER, SILERO_VAD},
+        models::{self, LLAMA_CPP_VULKAN, PARAKEET_TDT_V3, QWEN3_1_7B_Q4, SILERO_VAD_V5},
         settings::{self, keys},
     },
     types::{
@@ -51,6 +56,9 @@ struct Rig {
     asr: AsrWorker,
     settings: SharedSettings,
     events: Arc<RecordingSink<AppEvent>>,
+    polish: PolishChains,
+    /// The grammar polish stage the chain builds for the LLM entry.
+    llm: Arc<FakeTextPolisher>,
 }
 
 impl Rig {
@@ -85,11 +93,21 @@ impl Rig {
         .unwrap();
         let settings = SharedSettings::new(settings::defaults());
         let root = std::env::temp_dir().join("echo-model-manager");
+        let llm = Arc::new(FakeTextPolisher::slow(FakePolish::Map(str::to_owned)));
+        let stage = Arc::clone(&llm);
+        let polish = PolishChains::new(Arc::new(move |id: &EngineId| {
+            Ok(if *id == QWEN3_POLISHER {
+                Arc::clone(&stage) as Arc<dyn TextPolisher>
+            } else {
+                Arc::new(FakeTextPolisher::instant(FakePolish::Map(str::to_owned))) as _
+            })
+        }));
         let manager = ModelManager::new(
             ModelDeps {
                 store: Arc::clone(&store) as _,
                 picker: Arc::clone(&picker) as _,
                 asr: asr.clone(),
+                polish: polish.clone(),
                 settings: settings.clone(),
                 consent: Arc::new(FakePrivacyConsent::granted()),
                 paths: AppPaths::new(root.join("data"), root.join("resources")),
@@ -104,7 +122,25 @@ impl Rig {
             asr,
             settings,
             events,
+            polish,
+            llm,
         }
+    }
+
+    /// The card of engine `id`.
+    fn entry(&self, id: &EngineId) -> crate::types::ModelEntry {
+        self.manager
+            .list()
+            .unwrap()
+            .entries
+            .into_iter()
+            .find(|entry| entry.engine.id == *id)
+            .unwrap()
+    }
+
+    /// The store's own status of one manifest.
+    fn stored(&self, id: &ModelId) -> ModelStatus {
+        self.store.status(models::find(id).unwrap()).unwrap()
     }
 
     /// Every ModelProgress phase emitted so far for `id`.
@@ -171,7 +207,7 @@ fn the_list_has_a_card_per_engine_with_a_model_and_follows_offline_mode() {
     let rig = Rig::new();
     let view = rig.manager.list().unwrap();
     let ids: Vec<&EngineId> = view.entries.iter().map(|entry| &entry.engine.id).collect();
-    assert_eq!(ids, [&PARAKEET_ENGINE, &SILERO_VAD]);
+    assert_eq!(ids, [&PARAKEET_ENGINE, &SILERO_VAD, &QWEN3_POLISHER]);
     assert_eq!(view.entries[0].status, ModelStatus::NotInstalled);
     assert_eq!(
         view.entries[0].selection,
@@ -473,4 +509,200 @@ fn the_readiness_relay_refreshes_the_page_and_queues_real_failures() {
     drop(relay);
     block_on(ModelWatch::new(rig.manager.clone(), failures).run());
     assert_eq!(rig.status(&PARAKEET_TDT_V3), ModelStatus::Corrupt);
+}
+
+fn grammar_polish_on() -> crate::types::SettingsSnapshot {
+    settings::resolve([(keys::LLM_ENABLED, SettingValue::Bool(true))])
+}
+
+#[test]
+fn an_llm_and_its_runtime_are_one_card_with_one_download() {
+    let rig = Rig::new();
+    let runtime = models::find(&LLAMA_CPP_VULKAN).unwrap();
+    let model = models::find(&QWEN3_1_7B_Q4).unwrap();
+    let card = rig.entry(&QWEN3_POLISHER);
+    assert_eq!(card.model.id, QWEN3_1_7B_Q4);
+    assert_eq!(card.requires.len(), 1);
+    assert_eq!(&card.requires[0], runtime);
+    let total = runtime.transfer_bytes().get() + model.transfer_bytes().get();
+    assert_eq!(card.download_bytes.get(), total);
+    assert_eq!(card.status, ModelStatus::NotInstalled);
+    assert_eq!(
+        card.selection,
+        EngineSelection::Selectable { active: false }
+    );
+
+    assert_eq!(
+        block_on(rig.manager.download(&QWEN3_1_7B_Q4)).unwrap(),
+        ModelTransferOutcome::Completed
+    );
+    assert_eq!(rig.stored(&LLAMA_CPP_VULKAN), ModelStatus::Installed);
+    assert_eq!(rig.stored(&QWEN3_1_7B_Q4), ModelStatus::Installed);
+    assert_eq!(rig.entry(&QWEN3_POLISHER).status, ModelStatus::Installed);
+    // One stream under the card's id, never under the runtime's, and the bar only moves forward.
+    let progress: Vec<(u64, u64, ModelPhase)> = rig
+        .events
+        .events()
+        .into_iter()
+        .filter_map(|event| match event {
+            AppEvent::ModelProgress(progress) => {
+                assert_eq!(progress.model_id, QWEN3_1_7B_Q4);
+                Some((progress.bytes.get(), progress.total.get(), progress.phase))
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(
+        progress
+            .iter()
+            .all(|(_, card_total, _)| *card_total == total)
+    );
+    assert!(progress.windows(2).all(|pair| pair[0].0 <= pair[1].0));
+    assert_eq!(progress.last(), Some(&(total, total, ModelPhase::Ready)));
+    let phases: Vec<ModelPhase> = progress.iter().map(|(_, _, phase)| *phase).collect();
+    let first_check = phases
+        .iter()
+        .position(|phase| *phase == ModelPhase::Verifying);
+    assert!(
+        first_check.is_some_and(|at| phases[..at]
+            .iter()
+            .all(|phase| *phase == ModelPhase::Transferring)),
+        "the runtime's own checking never shows half-way: {phases:?}"
+    );
+}
+
+#[test]
+fn a_model_whose_runtime_is_missing_is_partial_and_resuming_fetches_the_runtime() {
+    let rig = Rig::new();
+    rig.store.install(&QWEN3_1_7B_Q4);
+    let model = models::find(&QWEN3_1_7B_Q4).unwrap();
+    assert_eq!(
+        rig.entry(&QWEN3_POLISHER).status,
+        ModelStatus::Partial {
+            bytes: model.transfer_bytes()
+        }
+    );
+    assert_eq!(
+        app_error(rig.manager.activation(&QWEN3_POLISHER)),
+        AppError::ModelMissing {
+            model_id: QWEN3_1_7B_Q4
+        }
+    );
+    block_on(rig.manager.download(&QWEN3_1_7B_Q4)).unwrap();
+    assert_eq!(rig.stored(&LLAMA_CPP_VULKAN), ModelStatus::Installed);
+    assert_eq!(rig.entry(&QWEN3_POLISHER).status, ModelStatus::Installed);
+    let writes = rig.manager.activation(&QWEN3_POLISHER).unwrap();
+    assert!(writes.contains(&(keys::LLM_ENABLED, SettingValue::Bool(true))));
+}
+
+#[test]
+fn a_damaged_runtime_damages_the_card_and_a_check_names_it() {
+    let rig = Rig::new();
+    rig.store.install(&LLAMA_CPP_VULKAN);
+    rig.store.install(&QWEN3_1_7B_Q4);
+    rig.store.corrupt(&LLAMA_CPP_VULKAN);
+    assert_eq!(
+        app_error(block_on(rig.manager.verify(&QWEN3_1_7B_Q4))),
+        AppError::ModelCorrupt {
+            model_id: LLAMA_CPP_VULKAN
+        }
+    );
+    assert_eq!(rig.entry(&QWEN3_POLISHER).status, ModelStatus::Corrupt);
+    assert_eq!(
+        app_error(rig.manager.activation(&QWEN3_POLISHER)),
+        AppError::ModelCorrupt {
+            model_id: QWEN3_1_7B_Q4
+        }
+    );
+    rig.store.repair(&LLAMA_CPP_VULKAN);
+    block_on(rig.manager.download(&QWEN3_1_7B_Q4)).unwrap();
+    assert_eq!(rig.entry(&QWEN3_POLISHER).status, ModelStatus::Installed);
+}
+
+#[test]
+fn removing_the_llm_stops_its_stage_first_and_takes_its_runtime_along() {
+    let rig = Rig::new();
+    rig.settings.replace(grammar_polish_on());
+    // The chain the session would hold, with the LLM stage built.
+    block_on(async {
+        rig.polish.for_settings(&rig.settings.current());
+    });
+    rig.store.install(&LLAMA_CPP_VULKAN);
+    rig.store.install(&QWEN3_1_7B_Q4);
+    rig.manager.remove(&QWEN3_1_7B_Q4).unwrap();
+    assert_eq!(
+        rig.llm.unloads(),
+        1,
+        "the sidecar lets go of its files before they are deleted"
+    );
+    assert_eq!(rig.stored(&QWEN3_1_7B_Q4), ModelStatus::NotInstalled);
+    assert_eq!(rig.stored(&LLAMA_CPP_VULKAN), ModelStatus::NotInstalled);
+    assert_eq!(rig.entry(&QWEN3_POLISHER).status, ModelStatus::NotInstalled);
+}
+
+#[test]
+fn installing_the_selected_llm_warms_the_polish_chain() {
+    let rig = Rig::new();
+    rig.settings.replace(grammar_polish_on());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        rig.polish.for_settings(&rig.settings.current());
+        rig.manager.download(&QWEN3_1_7B_Q4).await.unwrap();
+        // The warm-up runs on a task; let it run.
+        for _ in 0..20 {
+            if rig.llm.prepares() > 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    });
+    assert!(rig.llm.prepares() >= 1);
+}
+
+#[test]
+fn switching_grammar_polish_on_downloads_its_model_unless_offline() {
+    let rig = Rig::new();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap();
+    let offline = settings::resolve([
+        (keys::LLM_ENABLED, SettingValue::Bool(true)),
+        (keys::OFFLINE_MODE, SettingValue::Bool(true)),
+    ]);
+    runtime.block_on(async {
+        rig.manager
+            .fetch_newly_selected(&settings::defaults(), &offline);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    });
+    assert!(
+        rig.phases(&QWEN3_1_7B_Q4).is_empty(),
+        "offline mode downloads nothing"
+    );
+
+    runtime.block_on(async {
+        rig.manager
+            .fetch_newly_selected(&settings::defaults(), &grammar_polish_on());
+        for _ in 0..100 {
+            if rig.stored(&QWEN3_1_7B_Q4).is_installed() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    });
+    assert_eq!(rig.stored(&LLAMA_CPP_VULKAN), ModelStatus::Installed);
+    assert_eq!(rig.stored(&QWEN3_1_7B_Q4), ModelStatus::Installed);
+    assert_eq!(rig.phases(&QWEN3_1_7B_Q4).last(), Some(&ModelPhase::Ready));
+
+    // Already on: another write (or the same state again) starts nothing.
+    let before = rig.events.events().len();
+    runtime.block_on(async {
+        rig.manager
+            .fetch_newly_selected(&grammar_polish_on(), &grammar_polish_on());
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    });
+    assert_eq!(rig.events.events().len(), before);
 }

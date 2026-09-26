@@ -223,7 +223,8 @@ fn adapter_caps(ctx: &CommandCtx) -> AdapterCaps {
 /**
  * SOURCE OF TRUTH KEYWORDS: announce setting change, SettingsChanged emit, apply settings effects
  * WHAT:  Emits SettingsChanged with the effective value of `key`, lets SettingsEffects apply whatever the change
- *        affects (appearance, retention, speech engine, dashboard), and returns the entry.
+ *        affects (appearance, retention, speech engine, polish chain, polish model download, dashboard), and returns
+ *        the entry.
  * WHY:   Which running state a setting feeds is decided by its owner in the pipeline, never by matching a key
  *        here. `before` is the snapshot the write replaced (always present after a successful update).
  * WHERE: `write`.
@@ -246,6 +247,8 @@ fn announce(
             appearance: ctx.appearance(),
             retention: ctx.retention(),
             asr: ctx.asr(),
+            polish: ctx.polish(),
+            models: ctx.models(),
             paths: ctx.paths(),
             events: ctx.events(),
         }

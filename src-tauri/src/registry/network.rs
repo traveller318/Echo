@@ -69,7 +69,8 @@ mod tests {
     fn every_downloadable_model_file_is_on_the_allowlist() {
         let allowlist = download_allowlist();
         for manifest in MODELS.iter().filter(|manifest| !manifest.bundled) {
-            for file in manifest.files.iter() {
+            // A runtime's archive is what is downloaded; its files name the same URL.
+            for file in manifest.files.iter().chain(&manifest.archive) {
                 let (scheme, host) = scheme_and_host(file.url.as_str());
                 assert!(allowlist.allows(scheme, host), "{}", file.url);
             }

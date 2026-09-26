@@ -13,7 +13,8 @@
  *        one, ends a stalled transfer (HttpPolicy), and every failure is `Network` with the cause chain as log
  *        detail (never a URL query: CDN URLs carry signatures). No cookies, no referer, a fixed user agent.
  * WHERE: Built by app/bootstrap with registry/network.rs's allowlist and policy and the network gate; owned by
- *        HttpModelStore (adapters/net/model_store). The llama.cpp runtime download (step 23) uses the same client.
+ *        HttpModelStore (adapters/net/model_store), which also downloads the llama.cpp runtime archive; the
+ *        loopback client (loopback.rs) shares its TLS provider install.
  */
 
 use std::{error::Error as StdError, time::Duration};
@@ -178,7 +179,7 @@ impl HttpBody {
 }
 
 /// Makes `ring` the process's rustls provider; a provider installed earlier (this or another client) is kept.
-fn install_crypto_provider() -> PortResult<()> {
+pub(super) fn install_crypto_provider() -> PortResult<()> {
     // Err means a provider is already installed, which is exactly what is needed.
     let _ = rustls::crypto::ring::default_provider().install_default();
     if rustls::crypto::CryptoProvider::get_default().is_some() {

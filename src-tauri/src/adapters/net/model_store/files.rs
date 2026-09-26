@@ -1,15 +1,16 @@
 /*!
  * SOURCE OF TRUTH KEYWORDS: model file digest, SHA-256 streaming, hash prefix, block copy, Progress reporter, ModelProgress emit, yield between blocks
  * WHAT:  What download, import and verify share: Progress (emits ModelProgress for one manifest with cumulative
- *        bytes), `hash_prefix` (SHA-256 of a file's first bytes, reporting as it goes), `copy_hashed` (copy a file
- *        while hashing it) and `digest_hex`/`matches` (compare with the manifest's digest).
+ *        bytes over the operation's total), `hash_prefix` (SHA-256 of a file's first bytes, reporting as it goes),
+ *        `copy_hashed` / `write_hashed` (copy a file, or any reader such as an archive member, while hashing it) and
+ *        `digest_hex`/`matches` (compare with the manifest's digest).
  * WHY:   Every byte of a model is hashed exactly once per transfer: while it arrives, or while it is copied, or
  *        (on resume) the part already on disk (02 §8.2). Work is done in 1 MiB blocks on the calling task with a
  *        yield between blocks: a block takes about a millisecond, so the runtime's other tasks keep running, and
  *        cancelling (dropping the future) stops at the next block with no blocking thread left behind and no
  *        progress sink to smuggle across threads. Progress is reported per block; the pipeline throttles it to
  *        10 Hz (ports/model_store.rs).
- * WHERE: download.rs (resume prefix), copy.rs (import copy, verify).
+ * WHERE: download.rs (resume prefix), copy.rs (import copy, verify), archive.rs (unpacking).
  */
 
 use std::{
@@ -29,10 +30,12 @@ use crate::{
 /// Bytes read, hashed or written per step.
 pub(super) const BLOCK: usize = 1 << 20;
 
-/// Reports one manifest's progress as cumulative bytes over its total.
+/// Reports one manifest's progress as cumulative bytes over the total the operation moves (the archive for an
+/// archive download, the files for a file download, import or check).
 pub(super) struct Progress<'a> {
     pub sink: &'a dyn EventSink<ModelProgress>,
     pub manifest: &'a ModelManifest,
+    pub total: ByteCount,
 }
 
 impl Progress<'_> {
@@ -40,7 +43,7 @@ impl Progress<'_> {
         self.sink.emit(ModelProgress {
             model_id: self.manifest.id.clone(),
             bytes: ByteCount::new(bytes),
-            total: self.manifest.total_bytes(),
+            total: self.total,
             phase,
         });
     }
@@ -92,10 +95,29 @@ pub(super) async fn hash_prefix(
 pub(super) async fn copy_hashed(
     from: &Path,
     to: &Path,
-    mut on_block: impl FnMut(u64),
+    on_block: impl FnMut(u64),
 ) -> PortResult<Sha256> {
     let mut source =
         File::open(from).map_err(|error| storage("opening a model file", from, &error))?;
+    write_hashed(&mut source, from, to, u64::MAX, on_block).await
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: write_hashed, stream to file with hash, bounded copy, archive member copy
+ * WHAT:  Writes what `source` yields (named `from` in errors) to a new file `to` while hashing it, in blocks with a
+ *        yield between them, and returns the hasher; it stops once more than `limit` bytes were written, leaving the
+ *        oversized file for the caller's size or hash check to reject.
+ * WHY:   A file copy and an archive member being unpacked are the same loop; the limit keeps a member that inflates
+ *        past its manifest size from filling the disk.
+ * WHERE: copy_hashed (import); archive.rs (unpacking a release archive).
+ */
+pub(super) async fn write_hashed(
+    source: &mut impl Read,
+    from: &Path,
+    to: &Path,
+    limit: u64,
+    mut on_block: impl FnMut(u64),
+) -> PortResult<Sha256> {
     let mut target =
         File::create(to).map_err(|error| storage("creating a model file", to, &error))?;
     let mut hasher = Sha256::new();
@@ -114,6 +136,9 @@ pub(super) async fn copy_hashed(
         hasher.update(block);
         done += read as u64;
         on_block(done);
+        if done > limit {
+            break;
+        }
         tokio::task::yield_now().await;
     }
     target

@@ -2,7 +2,8 @@
  * SOURCE OF TRUTH KEYWORDS: HttpModelStore tests, loopback HTTP server, Range resume test, dropped connection test, redirect allowlist test, offline gate test, import verify remove tests
  * WHAT:  HttpModelStore against a small HTTP/1.1 server on 127.0.0.1 (full downloads, Range resume, a connection
  *        that drops mid-file, a server that ignores Range, wrong bytes, redirects inside and outside the allowlist,
- *        offline mode switched on mid-download) and against local folders (import, verify, remove, status).
+ *        offline mode switched on mid-download, a runtime release archive unpacked into `runtimes/`) and against
+ *        local folders (import of files or of the archive, verify, remove, status).
  * WHY:   02 §8.2 and §10 are promises about bytes on the wire and on disk, so they are tested with real sockets and
  *        real files; the server is test code on loopback (the allowlist here admits only `127.0.0.1` over http),
  *        so the gate never needs the internet and never touches the user's models.
@@ -30,9 +31,9 @@ use crate::{
     ports::{ModelStore, fakes::RecordingSink},
     types::{
         AllowedHost, AppError, AppPaths, ByteCount, HostAllowlist, HttpPolicy, ModelFile, ModelId,
-        ModelManifest, ModelPhase, ModelProgress, ModelStatus, Permission, PermissionGate,
-        PermissionState, PortError, PortResult, ResourceKind, Sha256Hex, StaticList, StaticStr,
-        testing::TempDir,
+        ModelKind, ModelManifest, ModelPhase, ModelProgress, ModelStatus, Permission,
+        PermissionGate, PermissionState, PortError, PortResult, ResourceKind, Sha256Hex,
+        StaticList, StaticStr, testing::TempDir,
     },
 };
 
@@ -195,6 +196,7 @@ fn manifest(server: &TestServer, files: &[(&str, &[u8])]) -> ModelManifest {
     ModelManifest {
         id: ModelId::from_static("test-model"),
         label: StaticStr::new("Test model"),
+        kind: ModelKind::Model,
         license: StaticStr::new("MIT"),
         attribution: None,
         revision: StaticStr::new("abc"),
@@ -209,6 +211,51 @@ fn manifest(server: &TestServer, files: &[(&str, &[u8])]) -> ModelManifest {
                 })
                 .collect::<Vec<_>>(),
         ),
+        archive: None,
+        requires: StaticList::new(&[]),
+        bundled: false,
+    }
+}
+
+/// A zip of `entries`, every one Deflated like a llama.cpp release.
+fn zip_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    for (name, bytes) in entries {
+        writer.start_file(*name, options).unwrap();
+        writer.write_all(bytes).unwrap();
+    }
+    writer.finish().unwrap().into_inner()
+}
+
+/// A runtime manifest: `kept` unpacked from `archive`, served at `/release/tool.zip`.
+fn runtime_manifest(server: &TestServer, archive: &[u8], kept: &[(&str, &[u8])]) -> ModelManifest {
+    let url = server.url("/release/tool.zip");
+    ModelManifest {
+        id: ModelId::from_static("test-runtime"),
+        label: StaticStr::new("Test runtime"),
+        kind: ModelKind::Runtime,
+        license: StaticStr::new("MIT"),
+        attribution: None,
+        revision: StaticStr::new("v1"),
+        files: StaticList::from(
+            kept.iter()
+                .map(|(name, bytes)| ModelFile {
+                    name: StaticStr::from((*name).to_owned()),
+                    url: StaticStr::from(url.clone()),
+                    sha256: Sha256Hex::from(sha256_hex(bytes)),
+                    bytes: ByteCount::new(bytes.len() as u64),
+                })
+                .collect::<Vec<_>>(),
+        ),
+        archive: Some(ModelFile {
+            name: StaticStr::new("tool.zip"),
+            url: StaticStr::from(url),
+            sha256: Sha256Hex::from(sha256_hex(archive)),
+            bytes: ByteCount::new(archive.len() as u64),
+        }),
+        requires: StaticList::new(&[]),
         bundled: false,
     }
 }
@@ -687,4 +734,193 @@ fn remove_deletes_the_install_and_the_partial_and_keeps_bundled_models() {
         app_error(rig.download(&bundled).0),
         AppError::Validation { .. }
     ));
+}
+
+/// The archive rig: a tool, a library and a readme in one zip, of which the tool and the library are kept.
+struct Release {
+    tool: Vec<u8>,
+    library: Vec<u8>,
+    archive: Vec<u8>,
+}
+
+impl Release {
+    fn new() -> Self {
+        let tool = content(21, BIG);
+        let library = content(22, 5_000);
+        let archive = zip_of(&[
+            ("tool.exe", &tool),
+            ("readme.txt", b"not kept"),
+            ("library.dll", &library),
+        ]);
+        Self {
+            tool,
+            library,
+            archive,
+        }
+    }
+
+    fn manifest(&self, server: &TestServer) -> ModelManifest {
+        runtime_manifest(
+            server,
+            &self.archive,
+            &[("tool.exe", &self.tool), ("library.dll", &self.library)],
+        )
+    }
+}
+
+impl Rig {
+    fn serve_release(&self, release: &Release) -> ModelManifest {
+        self.server.route(
+            "/release/tool.zip",
+            Route {
+                body: release.archive.clone(),
+                ..Route::default()
+            },
+        );
+        release.manifest(&self.server)
+    }
+
+    fn runtime_dir(&self, manifest: &ModelManifest) -> std::path::PathBuf {
+        self.paths.install_dir(ModelKind::Runtime, &manifest.id)
+    }
+}
+
+#[test]
+fn an_archive_download_keeps_only_the_listed_files_in_the_runtimes_folder() {
+    let rig = Rig::new();
+    let release = Release::new();
+    let manifest = rig.serve_release(&release);
+    let (result, progress) = rig.download(&manifest);
+    result.unwrap();
+    assert_eq!(rig.store.status(&manifest).unwrap(), ModelStatus::Installed);
+    let folder = rig.runtime_dir(&manifest);
+    assert_eq!(fs::read(folder.join("tool.exe")).unwrap(), release.tool);
+    assert_eq!(
+        fs::read(folder.join("library.dll")).unwrap(),
+        release.library
+    );
+    assert!(
+        !folder.join("readme.txt").exists(),
+        "unlisted files stay in the archive"
+    );
+    assert!(!folder.join("tool.zip").exists(), "the archive is not kept");
+    assert!(
+        !rig.paths.model_dir(&manifest.id).exists(),
+        "runtimes never land in models/"
+    );
+    assert!(
+        !rig.paths
+            .install_partial_dir(ModelKind::Runtime, &manifest.id)
+            .exists()
+    );
+    assert_eq!(rig.store.locate(&manifest).unwrap(), Some(folder));
+    let archive_bytes = release.archive.len() as u64;
+    assert!(
+        progress
+            .iter()
+            .all(|event| event.total.get() == archive_bytes)
+    );
+    assert_eq!(
+        progress
+            .last()
+            .map(|event| (event.bytes.get(), event.phase)),
+        Some((archive_bytes, ModelPhase::Installing))
+    );
+    let sink = RecordingSink::default();
+    block_on(rig.store.verify(&manifest, &sink)).unwrap();
+    rig.store.remove(&manifest).unwrap();
+    assert_eq!(
+        rig.store.status(&manifest).unwrap(),
+        ModelStatus::NotInstalled
+    );
+}
+
+#[test]
+fn an_archive_member_that_is_absent_or_different_fails_the_install() {
+    let rig = Rig::new();
+    let release = Release::new();
+    let mut manifest = rig.serve_release(&release);
+    let mut files = manifest.files.to_vec();
+    files[1].sha256 = Sha256Hex::from(sha256_hex(b"something else"));
+    manifest.files = StaticList::from(files);
+    let (result, _) = rig.download(&manifest);
+    assert_eq!(
+        app_error(result),
+        AppError::ModelCorrupt {
+            model_id: manifest.id.clone()
+        }
+    );
+    assert_ne!(rig.store.status(&manifest).unwrap(), ModelStatus::Installed);
+    let absent = runtime_manifest(
+        &rig.server,
+        &release.archive,
+        &[
+            ("tool.exe", &release.tool),
+            ("absent.dll", &release.library),
+        ],
+    );
+    assert!(matches!(
+        app_error(rig.download(&absent).0),
+        AppError::ModelCorrupt { .. }
+    ));
+}
+
+#[test]
+fn an_interrupted_archive_download_is_partial_and_resumes() {
+    let rig = Rig::new();
+    let release = Release::new();
+    let manifest = release.manifest(&rig.server);
+    // Half the archive arrives before the connection drops.
+    let half = release.archive.len() / 2;
+    rig.server.route(
+        "/release/tool.zip",
+        Route {
+            body: release.archive.clone(),
+            cuts: 1,
+            cut_at: half,
+            ..Route::default()
+        },
+    );
+    assert_eq!(app_error(rig.download(&manifest).0), AppError::Network);
+    assert_eq!(
+        rig.store.status(&manifest).unwrap(),
+        ModelStatus::Partial {
+            bytes: ByteCount::new(half as u64)
+        }
+    );
+    rig.download(&manifest).0.unwrap();
+    assert_eq!(rig.store.status(&manifest).unwrap(), ModelStatus::Installed);
+    assert_eq!(
+        rig.server.requests().last(),
+        Some(&("/release/tool.zip".to_owned(), Some(half as u64)))
+    );
+}
+
+#[test]
+fn a_runtime_imports_from_a_folder_with_its_archive_or_its_files() {
+    let rig = Rig::new();
+    let release = Release::new();
+    let manifest = release.manifest(&rig.server);
+    rig.online.store(false, Ordering::SeqCst);
+    let sink = RecordingSink::default();
+    let with_archive = folder_with(rig.data.path(), &[("tool.zip", &release.archive)]);
+    block_on(rig.store.import(&manifest, &with_archive, &sink)).unwrap();
+    assert_eq!(rig.store.status(&manifest).unwrap(), ModelStatus::Installed);
+    assert!(!rig.runtime_dir(&manifest).join("tool.zip").exists());
+    rig.store.remove(&manifest).unwrap();
+    let unpacked = rig.data.path().join("unpacked");
+    fs::create_dir_all(&unpacked).unwrap();
+    fs::write(unpacked.join("tool.exe"), &release.tool).unwrap();
+    fs::write(unpacked.join("library.dll"), &release.library).unwrap();
+    block_on(rig.store.import(&manifest, &unpacked, &sink)).unwrap();
+    assert_eq!(rig.store.status(&manifest).unwrap(), ModelStatus::Installed);
+    let empty = rig.data.path().join("empty");
+    fs::create_dir_all(&empty).unwrap();
+    assert_eq!(
+        app_error(block_on(rig.store.import(&manifest, &empty, &sink))),
+        AppError::NotFound {
+            resource: ResourceKind::Model
+        }
+    );
+    assert!(rig.server.requests().is_empty());
 }

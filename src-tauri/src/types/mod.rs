@@ -26,6 +26,7 @@ mod future;
 mod hotkey;
 mod ids;
 mod launcher;
+mod llm;
 mod metrics;
 mod model;
 mod nav;
@@ -89,14 +90,18 @@ pub use ids::{
     SettingKey, TranscriptId, is_registry_id,
 };
 pub use launcher::SettingsPage;
+pub use llm::{
+    GpuOffload, LlamaServerSetup, LlmPolishProfile, LlmSafety, SidecarFiles, SidecarPolicy,
+    ThinkingControl,
+};
 pub use metrics::{
     ActivityDay, LogMetricSpec, MetricAggregate, MetricEmphasis, MetricQuery, MetricSpec,
     MetricUnit, MetricValue, MetricsActivityInput, MetricsRange, MetricsSummary,
     MetricsSummaryInput, TranscriptTotals,
 };
 pub use model::{
-    EngineInput, EngineRuntime, EngineSelection, ModelEntry, ModelFile, ModelInput, ModelManifest,
-    ModelPhase, ModelStatus, ModelTransferOutcome, ModelsView, Sha256Hex,
+    EngineInput, EngineRuntime, EngineSelection, ModelEntry, ModelFile, ModelInput, ModelKind,
+    ModelManifest, ModelPhase, ModelStatus, ModelTransferOutcome, ModelsView, Sha256Hex,
 };
 pub use nav::{NavIcon, NavId, NavItem, OpenPageInput};
 pub use network::{AllowedHost, HostAllowlist, HttpPolicy};

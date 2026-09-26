@@ -122,12 +122,12 @@ const APP_ERROR_COPY: { readonly [C in AppErrorCode]: (error: AppErrorOf<C>) => 
   }),
   NotFound: (error) => NOT_FOUND_COPY[error.resource],
   ModelMissing: () => ({
-    title: "Speech model not installed",
+    title: "Model not installed",
     body: "Set it up on the Models page.",
     action: ACTIONS.open_models,
   }),
   ModelCorrupt: () => ({
-    title: "Speech model is damaged",
+    title: "Model is damaged",
     body: "Download it again from the Models page.",
     action: ACTIONS.open_models,
   }),

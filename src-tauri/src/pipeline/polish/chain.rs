@@ -107,6 +107,25 @@ impl PolishChain {
         self.stages.iter().map(|stage| &stage.id)
     }
 
+    /// Asks stage `id` to release what it holds (a sidecar, open model files); false when the chain has no such
+    /// stage.
+    pub fn unload_stage(&self, id: &EngineId) -> bool {
+        self.stages
+            .iter()
+            .find(|stage| stage.id == *id)
+            .map(|stage| stage.polisher.unload())
+            .is_some()
+    }
+
+    /// Unloads every stage of this chain that `next` does not run (a stage the settings turned off).
+    pub fn unload_stages_missing_from(&self, next: &Self) {
+        for stage in &self.stages {
+            if !next.stages.iter().any(|kept| kept.id == stage.id) {
+                stage.polisher.unload();
+            }
+        }
+    }
+
     /// Readies every stage; the stages that failed, with why (they stay in the chain and fall back per take).
     pub async fn prepare(&self) -> Vec<PolishFallback> {
         let mut failed = Vec::new();

@@ -26,6 +26,7 @@ use crate::{
         delivery::Delivery,
         models::ModelManager,
         pill::PillPresenter,
+        polish::PolishChains,
         retention::RetentionHandle,
         retry::RetryDeps,
         session::{SessionEngines, SessionHandle},
@@ -235,6 +236,11 @@ impl CommandCtx {
             db: self.db.clone(),
             events: Arc::clone(&self.events),
         }
+    }
+
+    /// The app's one polish chain (shared with the session and retry).
+    pub fn polish(&self) -> &PolishChains {
+        &self.engines.polish
     }
 
     /// The event sink, for pipeline calls that announce their own changes.
@@ -449,6 +455,7 @@ pub mod testing {
                 store: Arc::clone(&model_store) as _,
                 picker: Arc::clone(&folder_picker) as _,
                 asr: asr.clone(),
+                polish: engines.polish.clone(),
                 settings: settings.clone(),
                 consent: Arc::clone(&consent) as _,
                 paths: paths.clone(),

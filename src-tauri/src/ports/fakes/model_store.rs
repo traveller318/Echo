@@ -88,7 +88,7 @@ impl FakeModelStore {
         ModelProgress {
             model_id: manifest.id.clone(),
             bytes: ByteCount::new(bytes),
-            total: manifest.total_bytes(),
+            total: manifest.transfer_bytes(),
             phase,
         }
     }
@@ -116,7 +116,7 @@ impl FakeModelStore {
         }
         drop(state);
         Box::pin(async move {
-            let total = manifest.total_bytes().get();
+            let total = manifest.transfer_bytes().get();
             let mut state = lock(&self.state);
             let start = if resume {
                 state.partial.get(&manifest.id).copied().unwrap_or(0)
@@ -208,8 +208,14 @@ impl ModelStore for FakeModelStore {
                 }
                 .into());
             }
-            let total = manifest.total_bytes().get();
-            progress.emit(Self::progress(manifest, total, ModelPhase::Verifying));
+            // A check reads the installed files, so it counts them, not the download's archive.
+            let total = manifest.total_bytes();
+            progress.emit(ModelProgress {
+                model_id: manifest.id.clone(),
+                bytes: total,
+                total,
+                phase: ModelPhase::Verifying,
+            });
             if state.corrupt.contains(&manifest.id) {
                 return Err(AppError::ModelCorrupt {
                     model_id: manifest.id.clone(),
@@ -254,10 +260,13 @@ mod tests {
     const MODEL: ModelManifest = ModelManifest {
         id: ModelId::from_static("fake-model"),
         label: StaticStr::new("Fake model"),
+        kind: crate::types::ModelKind::Model,
         license: StaticStr::new("MIT"),
         attribution: None,
         revision: StaticStr::new("abc"),
         files: StaticList::new(FILES),
+        archive: None,
+        requires: StaticList::new(&[]),
         bundled: false,
     };
 

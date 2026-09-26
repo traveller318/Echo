@@ -78,6 +78,7 @@ windows = { version = "=0.61.3", features = [
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
     "Win32_System_DataExchange",
+    "Win32_System_JobObjects",
     "Win32_System_LibraryLoader",
     "Win32_System_Registry",
     "Win32_System_SystemInformation",
@@ -92,6 +93,9 @@ windows = { version = "=0.61.3", features = [
 # The crate `windows` re-exports; named directly only because the COM `#[implement]` macro (the audio device watch's
 # IMMNotificationClient) expands to `::windows_core` paths. Same version `windows` already links.
 windows-core = "=0.61.2"
+# Reads the pinned llama.cpp release archive (a zip of Deflate entries) into `runtimes/` (02 §8.2). Only the Deflate codec,
+# through flate2 on the pure-Rust zlib-rs backend (no C build, 05 W24); every other codec and encryption is off.
+zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [dev-dependencies]
 # `test` adds the mock runtime used to call commands end to end (dev builds only; resolver 3 keeps it out of the app).

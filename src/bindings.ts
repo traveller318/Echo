@@ -627,6 +627,14 @@ export type MicVerdict =
 export type ModelEntry = {
 	engine: EngineSpec,
 	model: ModelManifest,
+	/**  The manifests the model needs to run (its runtime), installed with it, in install order. */
+	requires: ModelManifest[],
+	/**  What a download of the model and everything it requires moves (the card's size). */
+	download_bytes: ByteCount,
+	/**
+	 *  The model and its requirements together: `Installed` only when all are; a missing requirement makes an
+	 *  installed model `Partial` (the next download fetches only what is missing), a damaged one `Corrupt`.
+	 */
 	status: ModelStatus,
 	selection: EngineSelection,
 	/**  What the engine is doing, when the settings select it and it has been asked to load. */
@@ -663,17 +671,46 @@ export type ModelInput = {
 	model_id: ModelId,
 };
 
+/**
+ * 
+ *  * SOURCE OF TRUTH KEYWORDS: ModelKind, model or runtime, runtimes folder, sidecar runtime manifest, install root
+ *  * WHAT:  What a manifest installs: model weights an engine loads, or a runtime program an engine runs as a
+ *  *        sidecar (llama-server).
+ *  * WHY:   Both are pinned, hashed downloads through the same model manager (02 §8.2), but they live in different
+ *  *        folders (`models/<id>/` and `runtimes/<id>/`, 02 §7.1) and a runtime can serve several models, so the
+ *  *        kind is data on the manifest and AppPaths turns it into the folder; nothing branches on a model's name.
+ *  * WHERE: ModelManifest; AppPaths::install_dir and the ModelStore adapter's layout.
+ *  
+ */
+export type ModelKind = 
+/**  Weights an engine loads, installed in `models/<id>/`. */
+"model" | 
+/**  A program an engine starts as a sidecar, installed in `runtimes/<id>/`. */
+"runtime";
+
 /**  Everything needed to fetch, verify and credit a model. */
 export type ModelManifest = {
 	id: ModelId,
 	label: string,
+	kind: ModelKind,
 	/**  SPDX license id, e.g. `CC-BY-4.0`, listed in About → Models & licenses (05 A15). */
 	license: string,
 	/**  Credit line the license requires; None when it requires none. */
 	attribution: string | null,
-	/**  Upstream revision (commit hash) the digests were computed from. */
+	/**  Upstream revision (commit hash, or the release tag of a runtime) the digests were computed from. */
 	revision: string,
+	/**  The installed files, each with the size and digest it has on disk. */
 	files: ModelFile[],
+	/**
+	 *  When set, `files` are not fetched one by one: this one archive (a zip) is downloaded and verified, and only
+	 *  the listed files are unpacked from it (each checked against its own digest); the archive itself is not kept.
+	 */
+	archive: ModelFile | null,
+	/**
+	 *  Other manifests this one needs installed to run (the runtime an LLM runs on); the model manager downloads,
+	 *  imports, checks and counts them together with this one, requirements first.
+	 */
+	requires: ModelId[],
 	/**  Ships inside the installer's resources, so it is never downloaded. */
 	bundled: boolean,
 };

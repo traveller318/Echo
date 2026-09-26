@@ -1,7 +1,7 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: registry layer, single source of truth, settings registry, engines registry, models, nav, network allowlist, hotkeys, metrics, permissions, events, sounds, notices
- * WHAT:  Layer 4: declarative entries for everything the app has (engines, models, settings, hotkeys, nav,
- *        metrics, permissions, events, sound cues, one-time notices), exported through specta so the UI renders from them. Each module holds
+ * SOURCE OF TRUTH KEYWORDS: registry layer, single source of truth, settings registry, engines registry, models, llm profiles, nav, network allowlist, hotkeys, metrics, permissions, events, sounds, notices
+ * WHAT:  Layer 4: declarative entries for everything the app has (engines, models, LLM polish profiles, settings,
+ *        hotkeys, nav, metrics, permissions, events, sound cues, one-time notices), exported through specta so the UI renders from them. Each module holds
  *        one `const` list plus lookups; entries that need behaviour (engine builders, permission checks) carry a
  *        plain fn pointer.
  * WHY:   Adding a feature is an entry here, not a new pattern; a `match` on a feature name anywhere else is a
@@ -14,6 +14,7 @@
 pub mod engines;
 pub mod events;
 pub mod hotkeys;
+pub mod llm;
 pub mod metrics;
 pub mod models;
 pub mod nav;

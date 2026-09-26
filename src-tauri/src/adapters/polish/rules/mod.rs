@@ -97,6 +97,8 @@ impl TextPolisher for RulePolisher {
         Box::pin(async { Ok(()) })
     }
 
+    fn unload(&self) {}
+
     fn polish<'a>(
         &'a self,
         text: &'a str,

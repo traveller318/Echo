@@ -1,14 +1,17 @@
 /*!
  * SOURCE OF TRUTH KEYWORDS: HttpModelStore, ModelStore adapter, model manager storage, download verify import remove, models folder
- * WHAT:  HttpModelStore: the ModelStore over the allowlisted HttpClient and the `models/` folder of AppPaths.
- *        `status`/`locate`/`remove` are on-disk (layout.rs), `download` fetches with resume (download.rs),
- *        `import` and `verify` copy and hash (copy.rs); files.rs holds what they share.
+ * WHAT:  HttpModelStore: the ModelStore over the allowlisted HttpClient and the `models/` and `runtimes/` folders
+ *        of AppPaths. `status`/`locate`/`remove` are on-disk (layout.rs), `download` fetches with resume
+ *        (download.rs), `import` and `verify` copy and hash (copy.rs), a release archive is unpacked by
+ *        archive.rs; files.rs holds what they share.
  * WHY:   02 §8.2 in one adapter behind the port, so the pipeline never touches a model file or a URL. Split by
  *        responsibility (the on-disk layout, the network path, the local path) like the other multi-part adapters.
- *        Model folders are exactly `AppPaths::model_dir`, the folder engines load from (pipeline/asr load_request).
+ *        Model folders are exactly `AppPaths::install_dir` (`model_dir` for models), the folder engines load from
+ *        (pipeline/asr load_request, the LLM polisher's build fn).
  * WHERE: Built by app/bootstrap; held by pipeline/models (ModelManager) as `Arc<dyn ModelStore>`.
  */
 
+mod archive;
 mod copy;
 mod download;
 mod files;
@@ -57,6 +60,7 @@ impl ModelStore for HttpModelStore {
             let progress = Progress {
                 sink: progress,
                 manifest,
+                total: manifest.transfer_bytes(),
             };
             download::download(&self.http, &self.paths, manifest, &progress).await
         })
@@ -68,13 +72,7 @@ impl ModelStore for HttpModelStore {
         source: &'a Path,
         progress: &'a dyn EventSink<ModelProgress>,
     ) -> BoxFuture<'a, PortResult<()>> {
-        Box::pin(async move {
-            let progress = Progress {
-                sink: progress,
-                manifest,
-            };
-            copy::import(&self.paths, manifest, source, &progress).await
-        })
+        Box::pin(copy::import(&self.paths, manifest, source, progress))
     }
 
     fn verify<'a>(
@@ -86,6 +84,7 @@ impl ModelStore for HttpModelStore {
             let progress = Progress {
                 sink: progress,
                 manifest,
+                total: manifest.total_bytes(),
             };
             copy::verify(&self.paths, manifest, &progress).await
         })

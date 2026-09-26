@@ -6,7 +6,8 @@
  *        later a missing microphone permission in onboarding): a toast would vanish while the state stays. The
  *        content comes in as slots, so the notice carries no copy or behaviour of its own; the glyph carries the
  *        tone (never colour alone, 04 §7), the text keeps --color-fg.
- * WHERE: routes/models (offline mode); onboarding steps (step 24). Exported through components/global.
+ * WHERE: routes/models (offline mode); routes/settings (a selected model that is missing or downloading); onboarding
+ *        steps (step 24). Exported through components/global.
  */
 import type { ComponentProps, ReactNode } from "react";
 import { cn } from "@/lib/cn";

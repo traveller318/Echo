@@ -158,6 +158,10 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<RecoveryReport, Box<dyn Error>>
         Some(Arc::new(readiness)),
     ))
     .map_err(startup_failure)?;
+    // Built before the model manager, which releases and warms the polish chain around its installs.
+    let engines = SessionEngines::registry(BuildCtx {
+        paths: paths.clone(),
+    });
     let http = HttpClient::new(
         registry::network::download_allowlist(),
         registry::network::HTTP_POLICY,
@@ -169,6 +173,7 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<RecoveryReport, Box<dyn Error>>
             store: Arc::new(HttpModelStore::new(http, paths.clone())),
             picker: Arc::new(TauriFolderPicker::new(app.handle().clone(), MAIN_WINDOW)),
             asr: asr.clone(),
+            polish: engines.polish.clone(),
             settings: settings.clone(),
             consent: Arc::clone(&consent),
             paths: paths.clone(),
@@ -190,9 +195,6 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<RecoveryReport, Box<dyn Error>>
     let hotkeys: Arc<dyn HotkeyService> = Arc::new(LowLevelKeyboardHotkeys::new());
     let (session, inbox) = SessionHandle::new();
     panics::report_to_session(session.panic_reporter());
-    let engines = SessionEngines::registry(BuildCtx {
-        paths: paths.clone(),
-    });
     let actor = SessionActor::new(
         SessionConfig {
             settings: settings.clone(),

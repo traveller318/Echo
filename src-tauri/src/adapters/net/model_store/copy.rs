@@ -1,7 +1,8 @@
 /*!
  * SOURCE OF TRUTH KEYWORDS: import model from folder, offline import, verify model hashes, hash check on demand, ModelCorrupt, ModelMissing
- * WHAT:  `import`: copies a manifest's files from a folder the user picked into `models/<id>.partial/`, hashing
- *        them as they are copied, then installs the folder; `verify`: re-hashes an installed (or bundled) model.
+ * WHAT:  `import`: copies a manifest's files (or, for a runtime, its release archive, then unpacks it) from a folder
+ *        the user picked into its `.partial` folder, hashing them as they are copied, then installs the folder;
+ *        `verify`: re-hashes an installed (or bundled) model.
  * WHY:   02 §8.2: import works fully offline and is held to the same SHA-256 as a download, so a file from another
  *        model or version can never be installed. The source folder is checked (every file present with its size)
  *        before the partial download is cleared, so picking the wrong folder costs nothing; picking the staging
@@ -14,24 +15,37 @@
 use std::{fs, path::Path};
 
 use super::{
+    archive,
     files::{Progress, copy_hashed, hash_prefix, matches},
     layout::{self, file_len, remove_file, storage},
 };
-use crate::types::{
-    AppError, AppPaths, ModelFile, ModelManifest, ModelPhase, PortError, PortResult, ResourceKind,
+use crate::{
+    ports::EventSink,
+    types::{
+        AppError, AppPaths, ByteCount, ModelFile, ModelManifest, ModelPhase, ModelProgress,
+        PortError, PortResult, ResourceKind,
+    },
 };
 
-/// Copies `manifest` from `source`, verifying every file, and installs it.
+/// What the chosen folder holds for a manifest.
+enum Source<'a> {
+    /// Every file, each with its manifest size.
+    Files,
+    /// The manifest's archive (a release zip the user downloaded), with its size.
+    Archive(&'a ModelFile),
+}
+
+/// Copies `manifest` from `source` (its files, or its archive), verifying every file, and installs it.
 pub(super) async fn import(
     paths: &AppPaths,
     manifest: &ModelManifest,
     source: &Path,
-    progress: &Progress<'_>,
+    sink: &dyn EventSink<ModelProgress>,
 ) -> PortResult<()> {
     if manifest.bundled {
         return Err(layout::bundled());
     }
-    let staging = paths.model_partial_dir(&manifest.id);
+    let staging = paths.install_partial_dir(manifest.kind, &manifest.id);
     if same_folder(source, &staging) {
         return Err(AppError::validation(
             "folder",
@@ -39,6 +53,91 @@ pub(super) async fn import(
         )
         .into());
     }
+    let found = find_source(manifest, source)?;
+    if staging.exists() {
+        fs::remove_dir_all(&staging)
+            .map_err(|error| storage("clearing the download folder", &staging, &error))?;
+    }
+    fs::create_dir_all(&staging)
+        .map_err(|error| storage("creating the download folder", &staging, &error))?;
+    let copied = match found {
+        Source::Files => ModelFileList::Files(&manifest.files),
+        Source::Archive(archive) => ModelFileList::Archive(archive),
+    };
+    let progress = Progress {
+        sink,
+        manifest,
+        total: copied.total(),
+    };
+    let mut done = 0_u64;
+    for file in copied.iter() {
+        let target = staging.join(file.name.as_str());
+        let hasher = copy_hashed(&source.join(file.name.as_str()), &target, |bytes| {
+            progress.report(done + bytes, ModelPhase::Transferring);
+        })
+        .await?;
+        if !matches(hasher, file) {
+            remove_file(&target)?;
+            return Err(corrupt(manifest, file, "does not match its SHA-256"));
+        }
+        done += file.bytes.get();
+    }
+    progress.report(done, ModelPhase::Verifying);
+    if let Source::Archive(archive) = found {
+        let packed = staging.join(archive.name.as_str());
+        archive::unpack(&packed, &staging, manifest, |_| {}).await?;
+        remove_file(&packed)?;
+    }
+    progress.report(done, ModelPhase::Installing);
+    layout::install(paths, manifest)
+}
+
+/// The files an import copies: the manifest's files, or its one archive.
+enum ModelFileList<'a> {
+    Files(&'a [ModelFile]),
+    Archive(&'a ModelFile),
+}
+
+impl ModelFileList<'_> {
+    fn iter(&self) -> impl Iterator<Item = &ModelFile> {
+        match self {
+            Self::Files(files) => files.iter(),
+            Self::Archive(archive) => std::slice::from_ref(*archive).iter(),
+        }
+    }
+
+    fn total(&self) -> ByteCount {
+        ByteCount::new(
+            self.iter()
+                .fold(0_u64, |total, file| total.saturating_add(file.bytes.get())),
+        )
+    }
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: import source check, files or archive in folder, wrong folder, wrong size
+ * WHAT:  Decides what the chosen folder offers: every file with its manifest size (`Files`), or, for a manifest
+ *        that arrives as an archive, that archive with its size (`Archive`). A missing file is `NotFound { model }`
+ *        and a file of another size is `ModelCorrupt`, reported for the files (the usual layout).
+ * WHY:   Checked before the partial download is cleared, so picking the wrong folder costs nothing; accepting the
+ *        release archive lets a user import a runtime fully offline with the file they downloaded themselves.
+ * WHERE: `import`.
+ */
+fn find_source<'a>(manifest: &'a ModelManifest, source: &Path) -> PortResult<Source<'a>> {
+    let files = check_files(manifest, source);
+    if files.is_ok() {
+        return Ok(Source::Files);
+    }
+    if let Some(archive) = &manifest.archive
+        && file_len(&source.join(archive.name.as_str()))? == Some(archive.bytes.get())
+    {
+        return Ok(Source::Archive(archive));
+    }
+    files.map(|()| Source::Files)
+}
+
+/// Every manifest file is in `source` with its manifest size.
+fn check_files(manifest: &ModelManifest, source: &Path) -> PortResult<()> {
     for file in manifest.files.iter() {
         match file_len(&source.join(file.name.as_str()))? {
             None => {
@@ -57,28 +156,7 @@ pub(super) async fn import(
             Some(_) => {}
         }
     }
-    if staging.exists() {
-        fs::remove_dir_all(&staging)
-            .map_err(|error| storage("clearing the download folder", &staging, &error))?;
-    }
-    fs::create_dir_all(&staging)
-        .map_err(|error| storage("creating the download folder", &staging, &error))?;
-    let mut done = 0_u64;
-    for file in manifest.files.iter() {
-        let target = staging.join(file.name.as_str());
-        let hasher = copy_hashed(&source.join(file.name.as_str()), &target, |bytes| {
-            progress.report(done + bytes, ModelPhase::Transferring);
-        })
-        .await?;
-        if !matches(hasher, file) {
-            remove_file(&target)?;
-            return Err(corrupt(manifest, file, "does not match its SHA-256"));
-        }
-        done += file.bytes.get();
-    }
-    progress.report(done, ModelPhase::Verifying);
-    progress.report(done, ModelPhase::Installing);
-    layout::install(paths, manifest)
+    Ok(())
 }
 
 /// Re-hashes every file of the installed (or bundled) model.

@@ -1,7 +1,7 @@
 /*!
  * SOURCE OF TRUTH KEYWORDS: FakeTextPolisher, FakePolish, fake polisher, hanging polisher, polish timeout test, polish failure
  * WHAT:  FakeTextPolisher: a TextPolisher whose behaviour (FakePolish) is a pure text function, a failure, or a
- *        future that never completes; it records every input and `prepare` call.
+ *        future that never completes; it records every input and every `prepare` and `unload` call.
  * WHY:   The polish chain's guarantees are about misbehaving stages: a slow LLM must time out and fall back to the
  *        rule output, a failing one must not block delivery (02 §8.3). `Hang` exercises the timeout path without
  *        sleeping; `Map` keeps normal-path tests deterministic.
@@ -33,6 +33,7 @@ pub enum FakePolish {
 struct PolishLog {
     inputs: Vec<String>,
     prepares: usize,
+    unloads: usize,
     next_prepare_error: Option<PortError>,
 }
 
@@ -92,6 +93,10 @@ impl FakeTextPolisher {
     pub fn prepares(&self) -> usize {
         lock(&self.log).prepares
     }
+
+    pub fn unloads(&self) -> usize {
+        lock(&self.log).unloads
+    }
 }
 
 impl TextPolisher for FakeTextPolisher {
@@ -118,6 +123,10 @@ impl TextPolisher for FakeTextPolisher {
             FakePolish::Fail(error) => Box::pin(future::ready(Err(error))),
             FakePolish::Hang => Box::pin(future::pending()),
         }
+    }
+
+    fn unload(&self) {
+        lock(&self.log).unloads += 1;
     }
 }
 

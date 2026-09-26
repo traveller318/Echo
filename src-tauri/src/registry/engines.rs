@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: engine registry, EngineEntry, EnginePort, BuildCtx, build_asr, build_polisher, build_vad, PARAKEET_TDT_V3, SILERO_VAD, RULE_POLISHER, default_vad, always_on_polishers, lazy adapter construction
+ * SOURCE OF TRUTH KEYWORDS: engine registry, EngineEntry, EnginePort, BuildCtx, build_asr, build_polisher, build_vad, PARAKEET_TDT_V3, SILERO_VAD, RULE_POLISHER, QWEN3_POLISHER, default_vad, always_on_polishers, lazy adapter construction
  * WHAT:  The list of every local AI engine (ASR, polisher, VAD): id, label, model, declared caps and a lazy
  *        `build` fn; lookups by id and kind; the IPC view (EngineSpec); and the typed builders the composition
  *        root and pipeline call. BuildCtx is what a build fn may use.
@@ -10,7 +10,8 @@
  *        are stateful per stream (05 A11). A build fn only constructs: an ASR engine receives its model folder
  *        later through `AsrEngine::load`, so BuildCtx carries paths, not the model store (the pipeline locates
  *        models). BuildCtx lives here with the entries that take it. Concrete entries arrive with their adapters:
- *        Parakeet TDT v3 (the default ASR), Silero VAD and the rule polisher are here; Qwen3 (step 23) follows.
+ *        Parakeet TDT v3 (the default ASR), Silero VAD, the rule polisher and Qwen3 1.7B grammar polish (the
+ *        llama.cpp sidecar, configured by registry/llm.rs).
  *        Polishers split by caps, never by name: one that needs no model is always on, one that needs a model is
  *        the opt-in stage `polish.llm_engine` picks.
  * WHERE: Built through by the ASR worker's loader (pipeline/asr, startup load and engine switch) and the session
@@ -20,9 +21,13 @@
 
 use std::sync::Arc;
 
-use super::{models, settings};
+use super::{llm, models, settings};
 use crate::{
-    adapters::{asr::ParakeetOnnx, polish::RulePolisher, vad::SileroVad},
+    adapters::{
+        asr::ParakeetOnnx,
+        polish::{LlamaServerPolisher, RulePolisher},
+        vad::SileroVad,
+    },
     ports::{AsrEngine, TextPolisher, VoiceActivity},
     types::{
         AppError, AppPaths, AsrCaps, EngineCaps, EngineId, EngineKind, EngineSelection, EngineSpec,
@@ -175,6 +180,9 @@ pub const SILERO_VAD: EngineId = EngineId::from_static("silero-vad-v5");
 /// Registry id of the always-on rule polisher.
 pub const RULE_POLISHER: EngineId = EngineId::from_static("rules");
 
+/// Registry id of the Qwen3 1.7B grammar polisher (the `polish.llm_engine` default).
+pub const QWEN3_POLISHER: EngineId = EngineId::from_static("qwen3-1.7b");
+
 /// Every engine, in the order the Models page lists them.
 pub const ENGINES: &[EngineEntry] = &[
     EngineEntry {
@@ -202,6 +210,15 @@ pub const ENGINES: &[EngineEntry] = &[
         port: EnginePort::Polisher {
             caps: RulePolisher::CAPS,
             build: build_rule_polisher,
+        },
+    },
+    EngineEntry {
+        id: QWEN3_POLISHER,
+        label: StaticStr::new("Qwen3 1.7B grammar polish"),
+        model_id: Some(models::QWEN3_1_7B_Q4),
+        port: EnginePort::Polisher {
+            caps: LlamaServerPolisher::CAPS,
+            build: build_qwen3_polisher,
         },
     },
 ];
@@ -244,6 +261,12 @@ fn build_parakeet(ctx: &BuildCtx) -> PortResult<Arc<dyn AsrEngine>> {
 /// The rule polisher: no model, nothing to load.
 fn build_rule_polisher(_: &BuildCtx) -> PortResult<Arc<dyn TextPolisher>> {
     Ok(Arc::new(RulePolisher::new()))
+}
+
+/// Qwen3 1.7B on the llama.cpp sidecar, not started: the polish chain prepares it (05 A13).
+fn build_qwen3_polisher(ctx: &BuildCtx) -> PortResult<Arc<dyn TextPolisher>> {
+    let setup = llm::llama_server_setup(&ctx.paths, &models::QWEN3_1_7B_Q4, llm::QWEN3_POLISH)?;
+    Ok(Arc::new(LlamaServerPolisher::new(setup)?))
 }
 
 /// Silero VAD v5 on the bundled model (05 A11).
@@ -591,6 +614,41 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn qwen_is_the_default_model_polisher_and_builds_without_starting() {
+        let entry = find(&QWEN3_POLISHER).unwrap();
+        assert!(entry.is_model_polisher());
+        assert_eq!(
+            entry.manifest().map(|manifest| &manifest.id),
+            Some(&models::QWEN3_1_7B_Q4)
+        );
+        // `polish.llm_engine` defaults to this entry.
+        assert_eq!(
+            settings::defaults().enum_value(&settings::keys::LLM_ENGINE),
+            Some(QWEN3_POLISHER.as_str())
+        );
+        let data = TempDir::new("engines-llm");
+        let ctx = BuildCtx {
+            paths: AppPaths::new(data.path().join("data"), data.path().join("resources")),
+        };
+        let polisher = build_polisher(&QWEN3_POLISHER, &ctx).unwrap();
+        assert_eq!(polisher.caps(), LlamaServerPolisher::CAPS);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        assert_eq!(
+            runtime
+                .block_on(polisher.prepare())
+                .err()
+                .map(PortError::into_app_error),
+            Some(AppError::ModelMissing {
+                model_id: models::LLAMA_CPP_VULKAN
+            }),
+            "nothing is installed in a fresh folder"
+        );
+    }
+
+    #[test]
     fn activation_writes_the_setting_that_selection_reads_back() {
         let asr = &SAMPLE_ENGINES[0];
         let llm = &SAMPLE_ENGINES[1];
@@ -635,7 +693,7 @@ pub(super) mod tests {
     #[test]
     fn models_page_lists_every_engine_with_a_registered_model() {
         let listed: Vec<&EngineId> = with_models().map(|(entry, _)| &entry.id).collect();
-        assert_eq!(listed, [&PARAKEET_TDT_V3, &SILERO_VAD]);
+        assert_eq!(listed, [&PARAKEET_TDT_V3, &SILERO_VAD, &QWEN3_POLISHER]);
         for (entry, manifest) in with_models() {
             assert_eq!(entry.model_id.as_ref(), Some(&manifest.id));
         }

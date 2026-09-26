@@ -1,16 +1,22 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: PolishChains, shared polish chain, PolisherBuilder, chain per settings, rebuild on plan change, one LLM sidecar, warm rebuilt chain
+ * SOURCE OF TRUTH KEYWORDS: PolishChains, shared polish chain, PolisherBuilder, chain per settings, rebuild on plan change, one LLM sidecar, warm rebuilt chain, refresh_on_change, unload stage, prepare_now
  * WHAT:  PolishChains: the one polish chain of the app, shared by every path that polishes text. `for_settings`
  *        returns the chain for the settings in effect, rebuilding it (reusing unchanged stages) only when
- *        `polish_plan` changed, and warming a rebuilt chain in the background.
+ *        `polish_plan` changed, warming a rebuilt chain in the background and unloading the stages it dropped;
+ *        `refresh_on_change` does that at once after a settings write; `prepare_now` warms the current chain again
+ *        (a model was just installed); `unload_stage` makes one stage let go of its files.
  * WHY:   A live take and a History retry must polish through the same stages (02 §8.3), and a stage can own an
  *        expensive resource (the LLM sidecar, 05 A13): two chains would start two sidecars. Cloning shares the one
  *        chain, and the lock only guards the swap, never a polish run (the chain is handed out as an Arc). A
  *        rebuilt stage (the LLM just switched on) starts warming at once; a take that runs before it is ready falls
  *        back (chain.rs). The first build is warmed by the session's prepare on RunEvent::Ready. Stages are built by
- *        a PolisherBuilder: the registry in the app, fakes in tests.
- * WHERE: Held in SessionEngines (pipeline/session/actor.rs), shared by the session runner (deliver, prepare) and
- *        CommandCtx (session_retry through pipeline/retry.rs).
+ *        a PolisherBuilder: the registry in the app, fakes in tests. Switching grammar polish off must stop the
+ *        sidecar now, not when the last take lets go of the old chain, so a dropped stage is unloaded as soon as the
+ *        chain is rebuilt (05 A13: started when enabled, stopped when disabled). Warming needs the async runtime; a
+ *        caller without one (a unit test) gets the chain unwarmed, and the next take warms it.
+ * WHERE: Held in SessionEngines (pipeline/session/actor.rs), shared by the session runner (deliver, prepare),
+ *        CommandCtx (session_retry through pipeline/retry.rs), SettingsEffects (`refresh_on_change`) and the model
+ *        manager (`unload_stage`, `prepare_now` around installs and removals).
  */
 
 use std::sync::Arc;
@@ -49,7 +55,7 @@ impl PolishChains {
         }
     }
 
-    /// The chain for `settings`; must be called inside a tokio runtime (a rebuilt chain warms on a task).
+    /// The chain for `settings`; a rebuilt chain warms on the async runtime when there is one.
     pub fn for_settings(&self, settings: &SettingsSnapshot) -> Arc<PolishChain> {
         let plan = polish_plan(settings);
         let mut current = self.inner.current.lock();
@@ -58,21 +64,51 @@ impl PolishChains {
         {
             return Arc::clone(chain);
         }
-        let rebuilt = current.is_some();
         let build = &self.inner.build;
         let chain = Arc::new(PolishChain::build_with(plan, current.as_deref(), |id| {
             build(id)
         }));
-        *current = Some(Arc::clone(&chain));
+        let previous = current.replace(Arc::clone(&chain));
         drop(current);
-        if rebuilt {
+        if let Some(previous) = previous {
+            previous.unload_stages_missing_from(&chain);
             // A new stage (the LLM sidecar) starts warming now; a take that runs first falls back.
-            let warming = Arc::clone(&chain);
-            tokio::spawn(async move {
-                warming.prepare().await;
-            });
+            warm(Arc::clone(&chain));
         }
         chain
+    }
+
+    /// Rebuilds the chain now when a settings write changed what it runs (starting or stopping the LLM stage).
+    pub fn refresh_on_change(&self, before: &SettingsSnapshot, after: &SettingsSnapshot) {
+        if polish_plan(before) != polish_plan(after) {
+            self.for_settings(after);
+        }
+    }
+
+    /// Warms the chain for `settings` in the background (a stage whose model just arrived starts now).
+    pub fn prepare_now(&self, settings: &SettingsSnapshot) {
+        warm(self.for_settings(settings));
+    }
+
+    /// Asks stage `id` of the current chain to release its files; false when the chain does not run it.
+    pub fn unload_stage(&self, id: &EngineId) -> bool {
+        self.inner
+            .current
+            .lock()
+            .as_ref()
+            .is_some_and(|chain| chain.unload_stage(id))
+    }
+}
+
+/// Prepares `chain` on the async runtime; without one it stays unwarmed until its first take.
+fn warm(chain: Arc<PolishChain>) {
+    match tokio::runtime::Handle::try_current() {
+        Ok(runtime) => {
+            runtime.spawn(async move {
+                chain.prepare().await;
+            });
+        }
+        Err(_) => tracing::debug!("no async runtime; the polish chain warms on its first take"),
     }
 }
 

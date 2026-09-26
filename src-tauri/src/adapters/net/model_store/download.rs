@@ -1,7 +1,8 @@
 /*!
  * SOURCE OF TRUTH KEYWORDS: model download, Range resume, resume partial download, SHA-256 per file, download_file, truncated download, server ignores range
- * WHAT:  `download`: fetches every file of a manifest into `models/<id>.partial/`, resuming each from the bytes
- *        already there, checks each file's SHA-256 as it arrives, then installs the folder (layout::install).
+ * WHAT:  `download`: fetches every file of a manifest (or its one archive) into its `.partial` folder, resuming each
+ *        from the bytes already there, checks each file's SHA-256 as it arrives, unpacks an archive's listed files
+ *        (archive.rs, each checked again) and deletes the archive, then installs the folder (layout::install).
  * WHY:   02 §8.2. A resumed file is re-hashed from disk first (the hash state cannot be saved), then only the rest
  *        is requested with `Range`; a file already complete is only checked. A server that ignores the range
  *        (200) restarts that file, a 416 (the local copy is longer than the file) discards it and starts over.
@@ -22,6 +23,7 @@ use std::{
 use sha2::{Digest, Sha256};
 
 use super::{
+    archive,
     files::{BLOCK, Progress, hash_prefix, matches},
     layout::{self, file_len, remove_file, storage},
 };
@@ -30,7 +32,7 @@ use crate::{
     types::{AppError, AppPaths, ModelFile, ModelManifest, ModelPhase, PortError, PortResult},
 };
 
-/// Downloads, verifies and installs every file of `manifest`.
+/// Downloads, verifies and installs every file of `manifest` (from its archive when it has one).
 pub(super) async fn download(
     http: &HttpClient,
     paths: &AppPaths,
@@ -40,15 +42,29 @@ pub(super) async fn download(
     if manifest.bundled {
         return Err(layout::bundled());
     }
-    let staging = paths.model_partial_dir(&manifest.id);
+    let staging = paths.install_partial_dir(manifest.kind, &manifest.id);
     std::fs::create_dir_all(&staging)
         .map_err(|error| storage("creating the download folder", &staging, &error))?;
-    let mut done = 0_u64;
-    for file in manifest.files.iter() {
-        done = download_file(http, &staging, manifest, file, done, progress).await?;
-    }
-    // Each digest was checked as its file completed.
-    progress.report(done, ModelPhase::Verifying);
+    let done = match &manifest.archive {
+        None => {
+            let mut done = 0_u64;
+            for file in manifest.files.iter() {
+                done = download_file(http, &staging, manifest, file, done, progress).await?;
+            }
+            // Each digest was checked as its file completed.
+            progress.report(done, ModelPhase::Verifying);
+            done
+        }
+        Some(archive) => {
+            let done = download_file(http, &staging, manifest, archive, 0, progress).await?;
+            // The archive's digest was checked as it completed; each unpacked file is checked against its own.
+            progress.report(done, ModelPhase::Verifying);
+            let packed = staging.join(archive.name.as_str());
+            archive::unpack(&packed, &staging, manifest, |_| {}).await?;
+            remove_file(&packed)?;
+            done
+        }
+    };
     progress.report(done, ModelPhase::Installing);
     layout::install(paths, manifest)
 }

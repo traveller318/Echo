@@ -1,13 +1,15 @@
 /**
  * SOURCE OF TRUTH KEYWORDS: ModelCard, model card, engine card, model status badge, download progress bar, model facts, license, languages, actions slot
- * WHAT:  One engine that runs a model, as a glass card: name and kind, status badge, facts (size, license,
- *        languages, what it runs on), the license's credit line, the running transfer's bar and summary, why it
- *        could not load, and an `actions` slot for the buttons.
+ * WHAT:  One engine that runs a model, as a glass card: name and kind, status badge, facts (download size, license,
+ *        languages, what it runs on, what it comes with), the credit lines of the model and what it requires, the
+ *        running transfer's bar and summary, why it could not load, and an `actions` slot for the buttons.
  * WHY:   04 §5 "one card per engine from the registry": everything comes from the ModelEntry Rust built, so a new
  *        engine is a registry entry with no change here. The card owns presentation only; which actions a page
  *        offers (Models page vs. onboarding's single "Download") come in through the slot. The bar is determinate
  *        while bytes move and indeterminate while installing; numbers are tabular (04 §3.6). A load failure shows
- *        the AppError copy of the error Rust reported, the same words a toast would use.
+ *        the AppError copy of the error Rust reported, the same words a toast would use. The size is what a download
+ *        moves for the whole card (the model and its runtime, 02 §8.2), computed in Rust, so the card never adds
+ *        manifests itself.
  * WHERE: routes/models (every entry); onboarding's model step (step 24). Exported through components/global.
  */
 import { useId, type ReactNode } from "react";
@@ -40,6 +42,9 @@ export function ModelCard({ entry, transfer, actions, className }: ModelCardProp
   const languages = languagesSummary(entry.engine.caps);
   const failure = entry.runtime?.kind === "failed" ? describeAppError(entry.runtime.error) : null;
   const runsOn = entry.runtime?.kind === "ready" && entry.runtime.accelerator !== null ? entry.runtime.accelerator : null;
+  const credits = [entry.model, ...entry.requires].flatMap((manifest) =>
+    manifest.attribution === null ? [] : [manifest.attribution],
+  );
   const Icon = look.icon;
   return (
     <GlassSurface asChild className={cn("flex flex-col gap-4 p-5", className)}>
@@ -58,7 +63,7 @@ export function ModelCard({ entry, transfer, actions, className }: ModelCardProp
         </header>
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-callout">
           <dt className="text-fg-secondary">Size</dt>
-          <dd className={cn("text-fg", NUMERIC_CLASS)}>{formatBytes(totalBytes(entry))}</dd>
+          <dd className={cn("text-fg", NUMERIC_CLASS)}>{formatBytes(entry.download_bytes)}</dd>
           <dt className="text-fg-secondary">License</dt>
           <dd className="text-fg">{entry.model.license}</dd>
           {languages === null ? null : (
@@ -73,10 +78,18 @@ export function ModelCard({ entry, transfer, actions, className }: ModelCardProp
               <dd className="text-fg">{ACCELERATOR_LABEL[runsOn]}</dd>
             </>
           )}
+          {entry.requires.length === 0 ? null : (
+            <>
+              <dt className="text-fg-secondary">Includes</dt>
+              <dd className="text-fg">{entry.requires.map((required) => required.label).join(", ")}</dd>
+            </>
+          )}
         </dl>
-        {entry.model.attribution === null ? null : (
-          <p className="text-caption text-fg-secondary">{entry.model.attribution}</p>
-        )}
+        {credits.map((credit) => (
+          <p key={credit} className="text-caption text-fg-secondary">
+            {credit}
+          </p>
+        ))}
         {transfer === null ? null : (
           <div className="flex flex-col gap-2" data-slot="model-card-transfer">
             <ProgressBar
@@ -104,7 +117,3 @@ export function ModelCard({ entry, transfer, actions, className }: ModelCardProp
   );
 }
 
-/** The model's size from its manifest files (what a download fetches). */
-function totalBytes(entry: ModelEntry): number {
-  return entry.model.files.reduce((total, file) => total + file.bytes, 0);
-}

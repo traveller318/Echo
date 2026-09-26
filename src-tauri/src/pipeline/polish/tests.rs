@@ -31,8 +31,7 @@ use crate::{
     types::{
         AppError, AppPaths, AsrCaps, EngineId, Language, LanguageSupport, LatencyClass,
         PolishContext, PolishFallback, PolishFallbackReason, PolishPlan, PolishPolicy,
-        PolisherCaps, PortError, PortResult, ResourceKind, SettingValue, StaticList, StaticStr,
-        TextPair,
+        PolisherCaps, PortError, PortResult, SettingValue, StaticList, StaticStr, TextPair,
     },
 };
 
@@ -320,18 +319,25 @@ fn the_registry_chain_cleans_joined_segments() {
     assert!(outcome.fallbacks.is_empty());
 }
 
+/// Grammar polish switched on before its model and runtime are installed: the registry builds the stage, the
+/// stage says what is missing, and the take keeps the rule output (02 §8.3).
 #[test]
-fn grammar_polish_without_its_engine_keeps_the_rule_output() {
+fn grammar_polish_without_its_model_keeps_the_rule_output() {
     let settings = resolve([(keys::LLM_ENABLED, SettingValue::Bool(true))]);
     let chain = registry_chain(&settings);
+    assert_eq!(
+        chain.stage_ids().map(|id| id.as_str()).collect::<Vec<_>>(),
+        [RULE_POLISHER.as_str(), QWEN]
+    );
     let outcome = block_on(chain.run("Um, hello.", &context(None)));
     assert_eq!(outcome.text, "Hello. ");
+    assert_eq!(outcome.polisher_ids, [RULE_POLISHER]);
     assert_eq!(
         reasons(&outcome.fallbacks),
         [(
             QWEN,
-            &PolishFallbackReason::Unavailable(AppError::NotFound {
-                resource: ResourceKind::Engine
+            &PolishFallbackReason::Failed(AppError::ModelMissing {
+                model_id: crate::registry::models::LLAMA_CPP_VULKAN
             })
         )]
     );

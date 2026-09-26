@@ -6,7 +6,7 @@
  *        the two roots once and hands this value down. Every file and folder name under them is spelled here
  *        only, so the database, journal, model manager and log sink cannot drift apart. Model folders are
  *        `models/<id>/` with downloads staged in `models/<id>.partial/` and removals in `models/<id>.removing/`
- *        (02 §8.2); journals are
+ *        (02 §8.2), and downloaded runtimes (llama-server) follow the same pattern under `runtimes/`; journals are
  *        `recordings/<transcript id>.wav` (02 §7.3), and the row stores only that file name; the pre-migration
  *        copy is `echo.db.bak-<from_version>` (02 §7.2). Resources mirror `src-tauri/resources/` (the bundle
  *        maps each file to the same relative path): `onnxruntime/` holds ONNX Runtime, DirectML and the C++ runtime
@@ -18,7 +18,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{ModelId, TranscriptId};
+use super::{ModelId, ModelKind, TranscriptId};
 
 /**
  * SOURCE OF TRUTH KEYWORDS: ONNX_RUNTIME_LOAD_ORDER, OnnxRuntimeLibrary, bundled DLL load order, DirectML preload, app-local C++ runtime
@@ -151,18 +151,51 @@ impl AppPaths {
 
     /// Where a download or import is staged until it is verified and renamed into place.
     pub fn model_partial_dir(&self, id: &ModelId) -> PathBuf {
-        self.models_dir().join(format!("{id}.partial"))
+        self.install_partial_dir(ModelKind::Model, id)
     }
 
     /// Where an installed model is moved before it is deleted (a removal, or a re-download replacing it), so the
     /// model folder disappears in one rename and a delete that fails half-way never leaves a broken install.
     pub fn model_removal_dir(&self, id: &ModelId) -> PathBuf {
-        self.models_dir().join(format!("{id}.removing"))
+        self.install_removal_dir(ModelKind::Model, id)
     }
 
-    /// Downloaded sidecar runtimes (llama-server).
+    /// Downloaded sidecar runtimes (llama-server), one folder per runtime manifest id.
     pub fn runtimes_dir(&self) -> PathBuf {
         self.data_dir.join("runtimes")
+    }
+
+    /**
+     * SOURCE OF TRUTH KEYWORDS: install_dir, install_root, install_partial_dir, install_removal_dir, runtime folder, ModelKind folder
+     * WHAT:  The folder a manifest of `kind` installs into (`models/` or `runtimes/`), and its staging (`.partial`)
+     *        and removal (`.removing`) siblings.
+     * WHY:   A runtime is fetched, verified, installed and removed exactly like a model (02 §8.2), only under another
+     *        root (02 §7.1), so the model store works from these and the `model_*` helpers are the `Model` case.
+     * WHERE: The ModelStore adapter's layout; the registry's LLM build fn (the runtime's executable).
+     */
+    pub fn install_root(&self, kind: ModelKind) -> PathBuf {
+        match kind {
+            ModelKind::Model => self.models_dir(),
+            ModelKind::Runtime => self.runtimes_dir(),
+        }
+    }
+
+    pub fn install_dir(&self, kind: ModelKind, id: &ModelId) -> PathBuf {
+        self.install_root(kind).join(id.as_str())
+    }
+
+    pub fn install_partial_dir(&self, kind: ModelKind, id: &ModelId) -> PathBuf {
+        self.install_root(kind).join(format!("{id}.partial"))
+    }
+
+    pub fn install_removal_dir(&self, kind: ModelKind, id: &ModelId) -> PathBuf {
+        self.install_root(kind).join(format!("{id}.removing"))
+    }
+
+    /// The app-local Visual C++ runtime shipped with ONNX Runtime (05 W32), which a downloaded sidecar built with
+    /// MSVC also needs on a machine without the redistributable (05 A20).
+    pub fn cpp_runtime_dir(&self) -> PathBuf {
+        self.onnx_runtime_dir()
     }
 
     /// Rolling local log files, named `<LOG_FILE_PREFIX>.<date>.<LOG_FILE_SUFFIX>`.
@@ -212,6 +245,27 @@ mod tests {
             data.join("models").join("parakeet-tdt-0.6b-v3.removing")
         );
         assert_eq!(paths.runtimes_dir(), data.join("runtimes"));
+        let runtime = ModelId::from_static("llama-cpp-vulkan");
+        assert_eq!(
+            paths.install_dir(ModelKind::Runtime, &runtime),
+            data.join("runtimes").join("llama-cpp-vulkan")
+        );
+        assert_eq!(
+            paths.install_partial_dir(ModelKind::Runtime, &runtime),
+            data.join("runtimes").join("llama-cpp-vulkan.partial")
+        );
+        assert_eq!(
+            paths.install_removal_dir(ModelKind::Runtime, &runtime),
+            data.join("runtimes").join("llama-cpp-vulkan.removing")
+        );
+        assert_eq!(
+            paths.install_dir(ModelKind::Model, &model),
+            paths.model_dir(&model)
+        );
+        assert_eq!(
+            paths.cpp_runtime_dir(),
+            Path::new("resources").join("onnxruntime")
+        );
         assert_eq!(paths.logs_dir(), data.join("logs"));
         assert_eq!(paths.resources_dir(), Path::new("resources"));
         assert_eq!(

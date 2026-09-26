@@ -1,6 +1,7 @@
 /*!
  * SOURCE OF TRUTH KEYWORDS: model folder layout, model status size check, install model atomically, remove model, partial folder, removing folder, Corrupt status
- * WHAT:  The on-disk side of the model store: `status` (the cheap size check), `locate`, `install` (the verified
+ * WHAT:  The on-disk side of the model store (models in `models/`, runtimes in `runtimes/`, by ModelKind):
+ *        `status` (the cheap size check), `locate`, `install` (the verified
  *        `.partial` folder renamed into place, replacing an old install) and `remove`, plus small file helpers
  *        shared by download and import.
  * WHY:   02 §8.2: files are staged in `models/<id>.partial/` and become the model in one rename, so a model folder
@@ -9,7 +10,9 @@
  *        file) leaves only a leftover that the next install or removal clears. Status is by size only; hashes are
  *        checked on demand (verify) or after a failed load (02 §8.2). An install folder with a missing or wrongly
  *        sized file is `Corrupt`, not "not installed", so the page offers a fresh download instead of hiding it;
- *        a download in progress wins over it (`Partial`), because that is what the next click resumes.
+ *        a download in progress wins over it (`Partial`), because that is what the next click resumes. A manifest
+ *        that arrives as an archive keeps only the archive in its `.partial` folder until it is unpacked, so that
+ *        file's length is what a resume keeps.
  * WHERE: HttpModelStore (mod.rs), download.rs and copy.rs.
  */
 
@@ -27,7 +30,7 @@ pub(super) fn model_dir(paths: &AppPaths, manifest: &ModelManifest) -> PathBuf {
     if manifest.bundled {
         paths.bundled_models_dir()
     } else {
-        paths.model_dir(&manifest.id)
+        paths.install_dir(manifest.kind, &manifest.id)
     }
 }
 
@@ -36,12 +39,12 @@ pub(super) fn status(paths: &AppPaths, manifest: &ModelManifest) -> PortResult<M
     if manifest.bundled {
         return Ok(ModelStatus::Installed);
     }
-    let installed = paths.model_dir(&manifest.id);
+    let installed = paths.install_dir(manifest.kind, &manifest.id);
     let install_exists = is_dir(&installed)?;
     if install_exists && sizes_match(&installed, manifest)? {
         return Ok(ModelStatus::Installed);
     }
-    let partial = paths.model_partial_dir(&manifest.id);
+    let partial = paths.install_partial_dir(manifest.kind, &manifest.id);
     if is_dir(&partial)? {
         return Ok(ModelStatus::Partial {
             bytes: ByteCount::new(partial_bytes(&partial, manifest)?),
@@ -70,13 +73,16 @@ pub(super) fn locate(paths: &AppPaths, manifest: &ModelManifest) -> PortResult<O
  * WHERE: download.rs and copy.rs (import) once every file is verified.
  */
 pub(super) fn install(paths: &AppPaths, manifest: &ModelManifest) -> PortResult<()> {
-    let target = paths.model_dir(&manifest.id);
-    let removing = paths.model_removal_dir(&manifest.id);
+    let target = paths.install_dir(manifest.kind, &manifest.id);
+    let removing = paths.install_removal_dir(manifest.kind, &manifest.id);
     if is_dir(&target)? {
         move_aside(&target, &removing, "replacing the old model")?;
     }
-    fs::rename(paths.model_partial_dir(&manifest.id), &target)
-        .map_err(|error| storage("installing the model", &target, &error))?;
+    fs::rename(
+        paths.install_partial_dir(manifest.kind, &manifest.id),
+        &target,
+    )
+    .map_err(|error| storage("installing the model", &target, &error))?;
     clear_leftover(&removing);
     Ok(())
 }
@@ -86,13 +92,13 @@ pub(super) fn remove(paths: &AppPaths, manifest: &ModelManifest) -> PortResult<(
     if manifest.bundled {
         return Err(bundled());
     }
-    let target = paths.model_dir(&manifest.id);
-    let removing = paths.model_removal_dir(&manifest.id);
+    let target = paths.install_dir(manifest.kind, &manifest.id);
+    let removing = paths.install_removal_dir(manifest.kind, &manifest.id);
     if is_dir(&target)? {
         move_aside(&target, &removing, "removing the model")?;
         clear_leftover(&removing);
     }
-    let partial = paths.model_partial_dir(&manifest.id);
+    let partial = paths.install_partial_dir(manifest.kind, &manifest.id);
     if is_dir(&partial)? {
         fs::remove_dir_all(&partial)
             .map_err(|error| storage("removing the partial download", &partial, &error))?;
@@ -148,8 +154,13 @@ fn sizes_match(dir: &Path, manifest: &ModelManifest) -> PortResult<bool> {
     Ok(true)
 }
 
-/// Bytes a resumed download would keep: each file's length, capped at its manifest size.
+/// Bytes a resumed download would keep: the archive's length, or each file's, capped at its manifest size.
 fn partial_bytes(dir: &Path, manifest: &ModelManifest) -> PortResult<u64> {
+    if let Some(archive) = &manifest.archive {
+        return Ok(file_len(&dir.join(archive.name.as_str()))?
+            .unwrap_or(0)
+            .min(archive.bytes.get()));
+    }
     manifest.files.iter().try_fold(0_u64, |total, file| {
         let kept = file_len(&dir.join(file.name.as_str()))?
             .unwrap_or(0)

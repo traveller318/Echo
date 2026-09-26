@@ -108,7 +108,7 @@ describe("app shell", () => {
     act(() => {
       showAppErrorToast({ code: "ModelMissing", model_id: "parakeet-tdt-0.6b-v3" });
     });
-    expect(await screen.findByText("Speech model not installed")).toBeInTheDocument();
+    expect(await screen.findByText("Model not installed")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open Models" }));
     expect(await screen.findByRole("heading", { level: 1, name: "Models" })).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/models");

@@ -1,10 +1,13 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: ModelManager, model manager orchestration, download retries, resume after network drop, import from folder, verify model, remove model, activation, ModelsView, damaged model
+ * SOURCE OF TRUTH KEYWORDS: ModelManager, model manager orchestration, download retries, resume after network drop, import from folder, verify model, remove model, activation, ModelsView, damaged model, install set, model requirements, fetch on enable
  * WHAT:  ModelManager: everything the `models_*` commands do. `list` builds the Models page view; `download`
  *        (with automatic resume after a dropped connection), `import` (a folder the user picks) and `verify` run
- *        one transfer per model through the ModelStore with throttled ModelProgress and a terminal phase; `cancel`
+ *        one transfer per card through the ModelStore with throttled ModelProgress and a terminal phase; `cancel`
  *        stops one; `remove` deletes a model; `activation` checks an engine can be used and returns the setting
- *        writes that select it. After an install or removal the selected speech engine is loaded again.
+ *        writes that select it; `fetch_newly_selected` starts the download of a model polisher the settings just
+ *        switched on. A card's transfer covers its install set: the model and what it requires (the LLM's llama.cpp
+ *        runtime), requirements first. After an install or removal the engines that run it are loaded or warmed
+ *        again.
  * WHY:   02 §8.2 orchestration lives in the pipeline so the adapter only moves and hashes bytes. A dropped
  *        connection (`Network`) is retried after a growing wait, resuming from what arrived (the "Wi-Fi off and on"
  *        case needs no click); the wait resets whenever an attempt moved bytes, so a long download survives many
@@ -13,21 +16,27 @@
  *        list, `ModelCorrupt` for activation) until it is downloaded, imported or removed, because its sizes still
  *        look right. Installing the selected engine's model loads it (so the pill's "Set up" path ends in a ready
  *        engine without a restart), removing it unloads it and asks for a load that answers `ModelMissing`, so the
- *        next press shows "Model not installed" instead of failing a take. Selection and activation come from the
- *        registry entry (`activation` / `selection`), never from an engine name.
- * WHERE: Built by app/bootstrap into CommandCtx; called by ipc/commands/models.rs; watch.rs calls
- *        `check_after_failed_load`.
+ *        next press shows "Model not installed" instead of failing a take. A model polisher holds its files open
+ *        through its sidecar, and Windows cannot delete or replace an open file, so its stage is unloaded before
+ *        its files are removed or replaced and warmed after a new install. A requirement is removed with the last
+ *        installed model that needs it. Turning grammar polish on fetches its model and runtime at once (the user
+ *        asked for the feature; the Settings page and the Models card show the download), unless offline mode is
+ *        on. Selection and activation come from the registry entry (`activation` / `selection`), never from an
+ *        engine name.
+ * WHERE: Built by app/bootstrap into CommandCtx; called by ipc/commands/models.rs and pipeline/settings_effects.rs;
+ *        watch.rs calls `check_after_failed_load`.
  */
 
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use parking_lot::Mutex;
 
-use super::transfer::{ProgressRelay, TransferSlots};
+use super::transfer::{PartProgress, ProgressRelay, TransferSlots};
 use crate::{
     pipeline::{
         asr::{AsrWorker, request_load},
         cancel::until_cancelled,
+        polish::PolishChains,
     },
     ports::{EventSink, FolderPicker, ModelStore, PrivacyConsent},
     registry::{
@@ -36,10 +45,10 @@ use crate::{
         permissions::{self, PermissionCtx},
     },
     types::{
-        AppError, AppEvent, AppPaths, AsrReadiness, EngineId, EngineKind, EngineRuntime,
+        AppError, AppEvent, AppPaths, AsrReadiness, ByteCount, EngineId, EngineKind, EngineRuntime,
         EngineSelection, ModelEntry, ModelId, ModelManifest, ModelPhase, ModelStatus,
-        ModelTransferOutcome, ModelsChanged, ModelsView, Permission, PortError, PortResult,
-        ResourceKind, SettingKey, SettingValue, SharedSettings,
+        ModelTransferOutcome, ModelsChanged, ModelsView, Permission, PermissionState, PortError,
+        PortResult, ResourceKind, SettingKey, SettingValue, SettingsSnapshot, SharedSettings,
     },
 };
 
@@ -50,6 +59,8 @@ pub struct ModelDeps {
     pub picker: Arc<dyn FolderPicker>,
     /// The speech engine owner, loaded again when its model is installed or removed.
     pub asr: AsrWorker,
+    /// The polish chain, whose model stage is unloaded before its files change and warmed after an install.
+    pub polish: PolishChains,
     pub settings: SharedSettings,
     /// For the network permission state the page shows (offline mode).
     pub consent: Arc<dyn PrivacyConsent>,
@@ -127,9 +138,10 @@ impl ModelManager {
     }
 
     /**
-     * SOURCE OF TRUTH KEYWORDS: models_list view, ModelsView build, engine runtime from readiness
-     * WHAT:  One entry per registry engine that runs a model (status with damage overlaid, selection, runtime,
-     *        running transfer) and whether downloads may run now.
+     * SOURCE OF TRUTH KEYWORDS: models_list view, ModelsView build, engine runtime from readiness, combined status
+     * WHAT:  One entry per registry engine that runs a model (its install set's combined status with damage
+     *        overlaid, what it requires, its download size, selection, runtime, running transfer) and whether
+     *        downloads may run now.
      * WHY:   The page renders from this alone; reading disk sizes is a handful of metadata calls.
      * WHERE: `models_list` (on the blocking pool).
      */
@@ -139,82 +151,97 @@ impl ModelManager {
         let readiness = inner.deps.asr.readiness();
         let entries = registry::engines::with_models()
             .map(|(entry, manifest)| {
+                let set = registry::models::install_set(manifest)?;
                 let selection = entry.selection(&settings);
                 Ok(ModelEntry {
                     engine: entry.spec(),
                     model: manifest.clone(),
-                    status: inner.status(manifest)?,
+                    requires: requirements(&set)
+                        .map(|required| (*required).clone())
+                        .collect(),
+                    download_bytes: transfer_total(&set),
+                    status: inner.set_status(&set)?,
                     runtime: runtime(entry, selection, &readiness),
                     selection,
                     transfer: inner.transfers.latest(&manifest.id),
                 })
             })
             .collect::<PortResult<Vec<_>>>()?;
-        let network = permissions::check(
-            Permission::Network,
-            &PermissionCtx {
-                settings: &settings,
-                consent: inner.deps.consent.as_ref(),
-            },
-        )?;
-        Ok(ModelsView { entries, network })
+        Ok(ModelsView {
+            entries,
+            network: inner.network(&settings)?,
+        })
     }
 
-    /// Downloads `id` (resuming what an earlier try left), unless it is already installed and undamaged.
+    /// Downloads `id` and what it requires (resuming what an earlier try left), unless all are installed and
+    /// undamaged.
     pub async fn download(&self, id: &ModelId) -> PortResult<ModelTransferOutcome> {
         let inner = &*self.inner;
         let manifest = transferable(id)?;
-        let resume_from = match inner.status(manifest)? {
+        let set = registry::models::install_set(manifest)?;
+        let resume_from = match inner.set_status(&set)? {
             ModelStatus::Installed => return Ok(ModelTransferOutcome::Completed),
             ModelStatus::Partial { bytes } => bytes.get(),
             ModelStatus::NotInstalled | ModelStatus::Corrupt => 0,
         };
-        let guard = inner.transfers.begin(&manifest.id)?;
-        let relay = inner.relay(manifest);
+        let guard = inner
+            .transfers
+            .begin_set(&manifest.id, &requirement_ids(&set))?;
+        let relay = inner.relay(manifest, transfer_total(&set));
         relay.start(ModelPhase::Transferring, resume_from);
-        let result = until_cancelled(
-            guard.cancellation(),
-            inner.download_with_retries(manifest, &relay),
-        )
-        .await;
+        inner.release_replaced(&set)?;
+        let result = until_cancelled(guard.cancellation(), inner.download_set(&set, &relay)).await;
         drop(guard);
-        inner.settle(manifest, &relay, TransferKind::Download, result)
+        inner.settle(manifest, &set, &relay, TransferKind::Download, result)
     }
 
-    /// Asks the user for a folder and imports `id` from it; closing the picker is `Cancelled`.
+    /// Asks the user for a folder and imports `id` and what it requires from it; closing the picker is `Cancelled`.
     pub async fn import(&self, id: &ModelId) -> PortResult<ModelTransferOutcome> {
         let inner = &*self.inner;
         let manifest = transferable(id)?;
+        let set = registry::models::install_set(manifest)?;
         let title = format!("Choose the folder with the {} files", manifest.label);
         let Some(folder) = inner.deps.picker.pick_folder(&title).await? else {
             return Ok(ModelTransferOutcome::Cancelled);
         };
-        let guard = inner.transfers.begin(&manifest.id)?;
-        let relay = inner.relay(manifest);
+        let guard = inner
+            .transfers
+            .begin_set(&manifest.id, &requirement_ids(&set))?;
+        let relay = inner.relay(manifest, transfer_total(&set));
         relay.start(ModelPhase::Transferring, 0);
-        let result = until_cancelled(
-            guard.cancellation(),
-            inner.deps.store.import(manifest, &folder, &relay),
-        )
+        inner.release_replaced(&set)?;
+        let result = until_cancelled(guard.cancellation(), async {
+            let mut offset = 0_u64;
+            for (index, member) in set.iter().enumerate() {
+                let budget = member.transfer_bytes().get();
+                // A requirement already installed is kept; the model itself is always imported.
+                if index + 1 == set.len() || inner.status(member)? != ModelStatus::Installed {
+                    let part = part(&relay, offset, budget, index + 1 == set.len());
+                    inner.deps.store.import(member, &folder, &part).await?;
+                }
+                offset += budget;
+            }
+            Ok(())
+        })
         .await;
         drop(guard);
-        inner.settle(manifest, &relay, TransferKind::Import, result)
+        inner.settle(manifest, &set, &relay, TransferKind::Import, result)
     }
 
-    /// Re-hashes `id`; a mismatch marks it damaged and is `ModelCorrupt`.
+    /// Re-hashes `id` and what it requires; a mismatch marks that manifest damaged and is `ModelCorrupt`.
     pub async fn verify(&self, id: &ModelId) -> PortResult<ModelTransferOutcome> {
         let inner = &*self.inner;
         let manifest = registered(id)?;
-        let guard = inner.transfers.begin(&manifest.id)?;
-        let relay = inner.relay(manifest);
+        let set = registry::models::install_set(manifest)?;
+        let guard = inner
+            .transfers
+            .begin_set(&manifest.id, &requirement_ids(&set))?;
+        let total = set.iter().map(|member| member.total_bytes().get()).sum();
+        let relay = inner.relay(manifest, ByteCount::new(total));
         relay.start(ModelPhase::Verifying, 0);
-        let result = until_cancelled(
-            guard.cancellation(),
-            inner.deps.store.verify(manifest, &relay),
-        )
-        .await;
+        let result = until_cancelled(guard.cancellation(), inner.verify_set(&set, &relay)).await;
         drop(guard);
-        inner.settle(manifest, &relay, TransferKind::Verify, result)
+        inner.settle(manifest, &set, &relay, TransferKind::Verify, result)
     }
 
     /// Stops `id`'s running download, import or check; false when none runs.
@@ -222,25 +249,37 @@ impl ModelManager {
         self.inner.transfers.cancel(id)
     }
 
-    /// Deletes `id` and its partial download; the selected engine that ran it then answers `ModelMissing`.
+    /// Deletes `id`, its partial download and every requirement no other installed model needs; the selected
+    /// engine that ran it then answers `ModelMissing`.
     pub fn remove(&self, id: &ModelId) -> PortResult<()> {
         let inner = &*self.inner;
         let manifest = transferable(id)?;
-        if inner.transfers.is_running(&manifest.id) {
+        let set = registry::models::install_set(manifest)?;
+        if set
+            .iter()
+            .any(|member| inner.transfers.is_running(&member.id))
+        {
             return Err(PortError::new(AppError::Busy)
                 .with_detail(format!("`{id}` is being transferred; cancel it first")));
         }
+        inner.release_stages(&set);
         inner.deps.store.remove(manifest)?;
         inner.forget(&manifest.id);
+        for required in requirements(&set) {
+            if !inner.needed_by_another(required, manifest)? {
+                inner.deps.store.remove(required)?;
+                inner.forget(&required.id);
+            }
+        }
         inner.announce_changed();
-        inner.reload_selected_engines(manifest, true);
+        inner.reload_engines(&set, true);
         Ok(())
     }
 
     /**
      * SOURCE OF TRUTH KEYWORDS: engine activation check, models_set_active, use engine, activation writes
      * WHAT:  The setting writes that select `engine_id`, after checking it is registered, chosen by a setting and
-     *        its model is installed and undamaged.
+     *        its model and requirements are installed and undamaged.
      * WHY:   Selecting an engine whose model is missing would make every take fail; refusing here gives the page
      *        one clear error (ModelMissing / ModelCorrupt) instead. The writes themselves go through the settings
      *        write path, which swaps the engine live (02 §8.1).
@@ -258,7 +297,8 @@ impl ModelManager {
             return Err(AppError::validation("engine_id", "This engine is always on.").into());
         }
         if let Some(manifest) = entry.manifest() {
-            match self.inner.status(manifest)? {
+            let set = registry::models::install_set(manifest)?;
+            match self.inner.set_status(&set)? {
                 ModelStatus::Installed => {}
                 ModelStatus::Corrupt => {
                     return Err(AppError::ModelCorrupt {
@@ -275,6 +315,71 @@ impl ModelManager {
             }
         }
         Ok(writes)
+    }
+
+    /**
+     * SOURCE OF TRUTH KEYWORDS: fetch_newly_selected, download on enable, grammar polish download, auto download LLM
+     * WHAT:  When a settings write newly selects a model polisher (grammar polish switched on, or another polish
+     *        model chosen while it is on) whose model or runtime is not installed, starts downloading them in the
+     *        background; returns at once.
+     * WHY:   02 §2.5: the LLM and its runtime are downloaded when the user enables grammar polish, with no second
+     *        click. Offline mode skips it (the Settings notice and the Models card say what is missing), a
+     *        transfer already running is left alone, and the outcome is only logged: progress and failures reach
+     *        the page as ModelProgress like any download. Speech engines are not fetched here: a missing speech model
+     *        is set up from the pill or the Models page (02 §8.2).
+     * WHERE: pipeline/settings_effects.rs after every settings write.
+     */
+    pub fn fetch_newly_selected(&self, before: &SettingsSnapshot, after: &SettingsSnapshot) {
+        let inner = &*self.inner;
+        for (entry, manifest) in registry::engines::with_models() {
+            let active = EngineSelection::Selectable { active: true };
+            if !entry.is_model_polisher()
+                || entry.selection(after) != active
+                || entry.selection(before) == active
+            {
+                continue;
+            }
+            match inner.network(after) {
+                Ok(PermissionState::Granted) => {}
+                Ok(_) => {
+                    tracing::info!(model = %manifest.id, "offline mode is on; the polish model is not downloaded");
+                    continue;
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        detail = error.detail(),
+                        "the network permission could not be read"
+                    );
+                    continue;
+                }
+            }
+            let installed = registry::models::install_set(manifest)
+                .and_then(|set| inner.set_status(&set))
+                .is_ok_and(ModelStatus::is_installed);
+            if installed || inner.transfers.is_running(&manifest.id) {
+                continue;
+            }
+            let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+                tracing::warn!(model = %manifest.id, "no async runtime; the polish model is not downloaded");
+                continue;
+            };
+            let manager = self.clone();
+            let id = manifest.id.clone();
+            tracing::info!(model = %id, "grammar polish was switched on; downloading its model");
+            runtime.spawn(async move {
+                match manager.download(&id).await {
+                    Ok(outcome) => {
+                        tracing::info!(model = %id, ?outcome, "the polish model download ended");
+                    }
+                    Err(error) => tracing::warn!(
+                        model = %id,
+                        code = error.error().code().as_str(),
+                        detail = error.detail(),
+                        "the polish model could not be downloaded"
+                    ),
+                }
+            });
+        }
     }
 
     /**
@@ -304,15 +409,12 @@ impl ModelManager {
             return;
         };
         tracing::info!(model = %manifest.id, "checking the model after its engine failed to load");
-        let relay = inner.relay(manifest);
+        let set = vec![manifest];
+        let relay = inner.relay(manifest, manifest.total_bytes());
         relay.start(ModelPhase::Verifying, 0);
-        let result = until_cancelled(
-            guard.cancellation(),
-            inner.deps.store.verify(manifest, &relay),
-        )
-        .await;
+        let result = until_cancelled(guard.cancellation(), inner.verify_set(&set, &relay)).await;
         drop(guard);
-        if let Err(error) = inner.settle(manifest, &relay, TransferKind::Verify, result) {
+        if let Err(error) = inner.settle(manifest, &set, &relay, TransferKind::Verify, result) {
             tracing::warn!(
                 model = %manifest.id,
                 code = error.error().code().as_str(),
@@ -336,31 +438,120 @@ impl Inner {
         )
     }
 
-    fn relay<'a>(&'a self, manifest: &'a ModelManifest) -> ProgressRelay<'a> {
+    /**
+     * SOURCE OF TRUTH KEYWORDS: set_status, combined install status, missing requirement partial
+     * WHAT:  One status for a card's install set: Installed when every manifest is; Corrupt when any is damaged;
+     *        Partial (bytes already on disk, in transfer units) when anything is there; NotInstalled otherwise.
+     * WHY:   The card offers one action for the set: an installed model whose runtime is missing is "Paused" and
+     *        its Resume fetches only the runtime; a damaged runtime makes the card "Damaged" so Download again
+     *        replaces only what is damaged. A one-manifest set keeps exactly its own status.
+     * WHERE: list, download, activation, fetch_newly_selected.
+     */
+    fn set_status(&self, set: &[&ModelManifest]) -> PortResult<ModelStatus> {
+        let mut installed = 0_usize;
+        let mut corrupt = false;
+        let mut present = false;
+        let mut kept = 0_u64;
+        for member in set {
+            match self.status(member)? {
+                ModelStatus::Installed => {
+                    installed += 1;
+                    present = true;
+                    kept = kept.saturating_add(member.transfer_bytes().get());
+                }
+                ModelStatus::Partial { bytes } => {
+                    present = true;
+                    kept = kept.saturating_add(bytes.get());
+                }
+                ModelStatus::Corrupt => corrupt = true,
+                ModelStatus::NotInstalled => {}
+            }
+        }
+        Ok(if installed == set.len() {
+            ModelStatus::Installed
+        } else if corrupt {
+            ModelStatus::Corrupt
+        } else if present {
+            ModelStatus::Partial {
+                bytes: ByteCount::new(kept),
+            }
+        } else {
+            ModelStatus::NotInstalled
+        })
+    }
+
+    /// Whether downloads may run under `settings` (offline mode denies them).
+    fn network(&self, settings: &SettingsSnapshot) -> PortResult<PermissionState> {
+        permissions::check(
+            Permission::Network,
+            &PermissionCtx {
+                settings,
+                consent: self.deps.consent.as_ref(),
+            },
+        )
+    }
+
+    fn relay<'a>(&'a self, manifest: &ModelManifest, total: ByteCount) -> ProgressRelay<'a> {
         ProgressRelay::new(
             &self.transfers,
             self.deps.events.as_ref(),
-            manifest,
+            manifest.id.clone(),
+            total,
             self.policy.progress_interval,
         )
     }
 
+    /// Downloads every manifest of `set` that is not installed and undamaged, in order.
+    async fn download_set(
+        &self,
+        set: &[&'static ModelManifest],
+        relay: &ProgressRelay<'_>,
+    ) -> PortResult<()> {
+        let mut offset = 0_u64;
+        for (index, member) in set.iter().enumerate() {
+            let budget = member.transfer_bytes().get();
+            if self.status(member)? != ModelStatus::Installed {
+                let part = part(relay, offset, budget, index + 1 == set.len());
+                self.download_with_retries(member, &part, relay).await?;
+            }
+            offset += budget;
+        }
+        Ok(())
+    }
+
+    /// Re-hashes every manifest of `set`, in order, stopping at the first mismatch.
+    async fn verify_set(
+        &self,
+        set: &[&'static ModelManifest],
+        relay: &ProgressRelay<'_>,
+    ) -> PortResult<()> {
+        let mut offset = 0_u64;
+        for (index, member) in set.iter().enumerate() {
+            let budget = member.total_bytes().get();
+            let part = part(relay, offset, budget, index + 1 == set.len());
+            self.deps.store.verify(member, &part).await?;
+            offset += budget;
+        }
+        Ok(())
+    }
+
     /**
      * SOURCE OF TRUTH KEYWORDS: download retry loop, resume after dropped connection, waiting phase
-     * WHAT:  Downloads until it succeeds, fails with something other than `Network`, or the waits run out; each
-     *        attempt resumes where the last stopped.
+     * WHAT:  Downloads one manifest until it succeeds, fails with something other than `Network`, or the waits run
+     *        out; each attempt resumes where the last stopped.
      * WHY:   See the file header: a network drop is expected on a laptop and costs no click.
-     * WHERE: ModelManager::download.
+     * WHERE: download_set.
      */
     async fn download_with_retries(
         &self,
         manifest: &ModelManifest,
+        part: &PartProgress<'_, '_>,
         relay: &ProgressRelay<'_>,
     ) -> PortResult<()> {
         let mut delays = self.policy.retry_delays.iter();
         loop {
             let reached = relay.bytes();
-            let error = match self.deps.store.download(manifest, relay).await {
+            let error = match self.deps.store.download(manifest, part).await {
                 Ok(()) => return Ok(()),
                 Err(error) if *error.error() == AppError::Network => error,
                 Err(error) => return Err(error),
@@ -385,15 +576,17 @@ impl Inner {
     /**
      * SOURCE OF TRUTH KEYWORDS: settle transfer, terminal ModelProgress, ModelsChanged after transfer, after install hook
      * WHAT:  Ends a transfer: announces its terminal phase (ready, cancelled, failed), updates what is known about
-     *        the model, tells the page the list changed and loads the selected engine after an install.
+     *        the set's manifests, tells the page the list changed and loads or warms the engines that run it after an
+     *        install.
      * WHY:   One ending for every transfer kind, so the page always sees the stream end and the list refresh.
-     *        A `ModelCorrupt` from a check marks the install damaged; from a download or import it only means the
-     *        new files were discarded (an existing install is untouched).
+     *        A `ModelCorrupt` from a check marks the manifest it names damaged; from a download or import it only
+     *        means the new files were discarded (an existing install is untouched).
      * WHERE: download, import, verify and check_after_failed_load.
      */
     fn settle(
         &self,
         manifest: &ModelManifest,
+        set: &[&'static ModelManifest],
         relay: &ProgressRelay<'_>,
         kind: TransferKind,
         result: Option<PortResult<()>>,
@@ -401,9 +594,11 @@ impl Inner {
         let outcome = match result {
             Some(Ok(())) => {
                 relay.announce(ModelPhase::Ready);
-                self.damaged.lock().remove(&manifest.id);
-                if kind != TransferKind::Verify {
-                    self.checked.lock().remove(&manifest.id);
+                for member in set {
+                    self.damaged.lock().remove(&member.id);
+                    if kind != TransferKind::Verify {
+                        self.checked.lock().remove(&member.id);
+                    }
                 }
                 Ok(ModelTransferOutcome::Completed)
             }
@@ -413,17 +608,18 @@ impl Inner {
             }
             Some(Err(error)) => {
                 if kind == TransferKind::Verify
-                    && matches!(error.error(), AppError::ModelCorrupt { .. })
+                    && let AppError::ModelCorrupt { model_id } = error.error()
                 {
-                    self.damaged.lock().insert(manifest.id.clone());
+                    self.damaged.lock().insert(model_id.clone());
                 }
                 relay.announce(ModelPhase::Failed);
                 Err(error)
             }
         };
+        tracing::debug!(model = %manifest.id, ?kind, ok = outcome.is_ok(), "model transfer settled");
         self.announce_changed();
         if kind != TransferKind::Verify && matches!(outcome, Ok(ModelTransferOutcome::Completed)) {
-            self.reload_selected_engines(manifest, false);
+            self.reload_engines(set, false);
         }
         outcome
     }
@@ -438,15 +634,77 @@ impl Inner {
         self.deps.events.emit(ModelsChanged {}.into());
     }
 
-    /// Loads the selected speech engine again when it runs `manifest` (after `unload` when the model was removed).
-    fn reload_selected_engines(&self, manifest: &ModelManifest, unload_first: bool) {
+    /// Whether a registered model other than `except` needs `required` and has anything on disk.
+    fn needed_by_another(
+        &self,
+        required: &ModelManifest,
+        except: &ModelManifest,
+    ) -> PortResult<bool> {
+        for other in registry::models::required_by(&required.id) {
+            if other.id != except.id && self.deps.store.status(other)? != ModelStatus::NotInstalled
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /**
+     * SOURCE OF TRUTH KEYWORDS: release model files, unload polisher before remove, open file on Windows
+     * WHAT:  Asks every model polisher whose install set shares a manifest with `set` to release its files (stop
+     *        its sidecar).
+     * WHY:   Windows refuses to delete or rename a file another process has open, and llama-server maps its model;
+     *        the stage starts again on its next use, once the files are back.
+     * WHERE: remove; download and import through `release_replaced` when an install is about to be replaced.
+     */
+    fn release_stages(&self, set: &[&ModelManifest]) {
+        for (entry, model) in registry::engines::with_models() {
+            if entry.is_model_polisher() && shares_manifest(model, set) {
+                self.deps.polish.unload_stage(&entry.id);
+            }
+        }
+    }
+
+    /// Releases the stages using `set` when a transfer is about to replace a damaged install on disk, so its
+    /// rename can succeed.
+    fn release_replaced(&self, set: &[&ModelManifest]) -> PortResult<()> {
+        for member in set {
+            if matches!(self.status(member)?, ModelStatus::Corrupt) {
+                self.release_stages(set);
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /**
+     * SOURCE OF TRUTH KEYWORDS: reload engines after install, warm polisher after install, unload after remove
+     * WHAT:  After `set` was installed (or removed, `unload_first`), loads the selected speech engine again when it
+     *        runs a manifest of the set, and warms the polish chain when the selected model polisher runs one.
+     * WHY:   The pill's "Set up" and the Settings toggle must end in a working engine without a restart; after a
+     *        removal the speech engine is unloaded so the next press says "Model not installed" (the polisher
+     *        released its files before the removal and simply fails over to the rule output until reinstalled).
+     * WHERE: settle (after an install) and remove.
+     */
+    fn reload_engines(&self, set: &[&ModelManifest], unload_first: bool) {
         let settings = self.deps.settings.current();
-        let affected = registry::engines::with_models().any(|(entry, model)| {
-            model.id == manifest.id
-                && entry.kind() == EngineKind::Asr
-                && entry.selection(&settings) == (EngineSelection::Selectable { active: true })
-        });
-        if !affected {
+        let active = EngineSelection::Selectable { active: true };
+        let mut speech = false;
+        let mut polisher = false;
+        for (entry, model) in registry::engines::with_models() {
+            if entry.selection(&settings) != active || !shares_manifest(model, set) {
+                continue;
+            }
+            match entry.kind() {
+                EngineKind::Asr => speech = true,
+                EngineKind::Polisher => polisher = true,
+                EngineKind::Vad => {}
+            }
+        }
+        if polisher && !unload_first {
+            self.deps.polish.prepare_now(&settings);
+        }
+        if !speech {
             return;
         }
         if unload_first {
@@ -459,6 +717,48 @@ impl Inner {
                 "the speech engine could not be loaded after its model changed"
             );
         }
+    }
+}
+
+/// The requirements of an install set (every manifest but the last).
+fn requirements<'a>(
+    set: &'a [&'static ModelManifest],
+) -> impl Iterator<Item = &'static ModelManifest> + 'a {
+    set.iter().take(set.len().saturating_sub(1)).copied()
+}
+
+fn requirement_ids(set: &[&'static ModelManifest]) -> Vec<ModelId> {
+    requirements(set)
+        .map(|required| required.id.clone())
+        .collect()
+}
+
+/// Bytes a download of the whole set moves.
+fn transfer_total(set: &[&ModelManifest]) -> ByteCount {
+    ByteCount::new(set.iter().fold(0_u64, |total, member| {
+        total.saturating_add(member.transfer_bytes().get())
+    }))
+}
+
+/// Whether `model`'s install set shares a manifest with `set`.
+fn shares_manifest(model: &'static ModelManifest, set: &[&ModelManifest]) -> bool {
+    registry::models::install_set(model).is_ok_and(|own| {
+        own.iter()
+            .any(|member| set.iter().any(|other| other.id == member.id))
+    })
+}
+
+fn part<'r, 'a>(
+    relay: &'r ProgressRelay<'a>,
+    offset: u64,
+    budget: u64,
+    last: bool,
+) -> PartProgress<'r, 'a> {
+    PartProgress {
+        relay,
+        offset,
+        budget,
+        last,
     }
 }
 

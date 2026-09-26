@@ -54,16 +54,21 @@ const PARAKEET_ENGINE: EngineSpec = {
 const PARAKEET_MODEL: ModelManifest = {
   id: "parakeet-tdt-0.6b-v3",
   label: "Parakeet TDT 0.6B v3",
+  kind: "model",
   license: "CC-BY-4.0",
   attribution: "NVIDIA Parakeet TDT 0.6B v3 by NVIDIA (CC BY 4.0)",
   revision: "abc",
   files: [{ name: "encoder.onnx", url: "https://huggingface.co/x/encoder.onnx", sha256: "0".repeat(64), bytes: 1_048_576 * 600 }],
+  archive: null,
+  requires: [],
   bundled: false,
 };
 
 const SILERO: ModelEntry = {
   engine: { id: "silero-vad-v5", label: "Silero VAD", model_id: "silero-vad-v5", caps: { kind: "vad", frame_ms: 32 } },
   model: { ...PARAKEET_MODEL, id: "silero-vad-v5", label: "Silero VAD v5", license: "MIT", attribution: null, bundled: true },
+  requires: [],
+  download_bytes: 1_048_576 * 600,
   status: { kind: "installed" },
   selection: { kind: "built_in" },
   runtime: null,
@@ -74,6 +79,8 @@ function parakeet(overrides: Partial<ModelEntry> = {}): ModelEntry {
   return {
     engine: PARAKEET_ENGINE,
     model: PARAKEET_MODEL,
+    requires: [],
+    download_bytes: 1_048_576 * 600,
     status: { kind: "not_installed" },
     selection: { kind: "selectable", active: true },
     runtime: null,
@@ -175,6 +182,44 @@ describe("ModelsPage", () => {
     await vi.waitFor(() => {
       expect(mocks.modelsImport).toHaveBeenCalledWith({ model_id: "parakeet-tdt-0.6b-v3" });
     });
+  });
+
+  it("sizes a model with its runtime as one download and credits both", async () => {
+    const runtime: ModelManifest = {
+      ...PARAKEET_MODEL,
+      id: "llama-cpp-vulkan",
+      label: "llama.cpp runtime b11146 (Vulkan)",
+      kind: "runtime",
+      license: "MIT",
+      attribution: "llama.cpp by the ggml authors (MIT License)",
+    };
+    const grammar = parakeet({
+      engine: {
+        id: "qwen3-1.7b",
+        label: "Qwen3 1.7B grammar polish",
+        model_id: "qwen3-1.7b-q4-k-m",
+        caps: { kind: "polisher", latency_class: "slow", languages: { kind: "any" }, needs_model: true },
+      },
+      model: {
+        ...PARAKEET_MODEL,
+        id: "qwen3-1.7b-q4-k-m",
+        label: "Qwen3 1.7B (Q4_K_M)",
+        license: "Apache-2.0",
+        attribution: "Qwen3-1.7B by the Qwen team",
+        requires: ["llama-cpp-vulkan"],
+      },
+      requires: [runtime],
+      download_bytes: 1_048_576 * 1_250,
+      selection: { kind: "selectable", active: false },
+    });
+    renderPage(view(grammar));
+    const polish = await card("Qwen3 1.7B grammar polish");
+    expect(polish.getByText("Text cleanup")).toBeInTheDocument();
+    expect(polish.getByText("1.2 GB")).toBeInTheDocument();
+    expect(polish.getByText("llama.cpp runtime b11146 (Vulkan)")).toBeInTheDocument();
+    expect(polish.getByText("Qwen3-1.7B by the Qwen team")).toBeInTheDocument();
+    expect(polish.getByText("llama.cpp by the ggml authors (MIT License)")).toBeInTheDocument();
+    expect(polish.getByText("Any language")).toBeInTheDocument();
   });
 
   it("follows live progress and cancels a running download", async () => {
