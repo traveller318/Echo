@@ -135,6 +135,7 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<RecoveryReport, Box<dyn Error>>
     let pill = PillPresenter::spawn(
         Arc::clone(&overlay) as _,
         Arc::clone(&foreground),
+        settings.clone(),
         PillTiming::DEFAULT,
     )
     .map_err(startup_failure)?;

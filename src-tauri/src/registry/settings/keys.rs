@@ -15,6 +15,11 @@ pub const THEME: SettingKey = SettingKey::from_static("general.theme");
 pub const ONBOARDED: SettingKey = SettingKey::from_static("general.onboarded");
 /// Hidden from the settings list (offered in About): detailed log lines.
 pub const DEBUG_LOG: SettingKey = SettingKey::from_static("general.debug_log");
+pub const PILL_VISIBILITY: SettingKey = SettingKey::from_static("pill.visibility");
+pub const PILL_STYLE: SettingKey = SettingKey::from_static("pill.style");
+pub const PILL_MOVABLE: SettingKey = SettingKey::from_static("pill.movable");
+/// Hidden: where the user dragged the pill (see `values::pill_position`).
+pub const PILL_POSITION: SettingKey = SettingKey::from_static("pill.position");
 pub const RECORD_HOTKEY: SettingKey = SettingKey::from_static("hotkeys.record");
 pub const HOTKEY_MODE: SettingKey = SettingKey::from_static("hotkeys.mode");
 pub const PASTE_LAST_HOTKEY: SettingKey = SettingKey::from_static("hotkeys.paste_last");

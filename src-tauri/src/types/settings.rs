@@ -1,8 +1,8 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: SettingSpec, SettingKind, SettingValue, EnumOptions, OptionSource, SettingsSnapshot, SharedSettings, SettingsAvailability, SettingSectionSpec, setting validation
+ * SOURCE OF TRUTH KEYWORDS: SettingSpec, SettingKind, SettingValue, EnumOptions, EnumDisplay, OptionSource, SettingsSnapshot, SharedSettings, SettingsAvailability, SettingSectionSpec, setting validation
  * WHAT:  The shape of a registry setting (SettingSpec with its SettingKind) and of a Settings page section
  *        (SettingSectionSpec), the value a setting holds (SettingValue), where an Enum's options come from
- *        (EnumOptions / OptionSource), the conditions under which a setting or option is offered (CapsRequirement,
+ *        (EnumOptions / OptionSource) and how its choices are drawn (EnumDisplay), the conditions under which a setting or option is offered (CapsRequirement,
  *        evaluated against AdapterCaps) and what is offered right now (SettingsAvailability), the kind check every write passes
  *        (`SettingSpec::validate`), the resolved values the core reads (SettingsSnapshot), the one live copy of
  *        them the running app shares (SharedSettings), and the settings commands' inputs and output
@@ -38,6 +38,7 @@ use super::{
 #[serde(rename_all = "snake_case")]
 pub enum SettingSection {
     General,
+    Pill,
     Hotkeys,
     Session,
     Audio,
@@ -55,6 +56,7 @@ impl SettingSection {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::General => "general",
+            Self::Pill => "pill",
             Self::Hotkeys => "hotkeys",
             Self::Session => "session",
             Self::Audio => "audio",
@@ -182,6 +184,33 @@ pub enum EnumOptions {
     Runtime { source: OptionSource },
 }
 
+/**
+ * SOURCE OF TRUTH KEYWORDS: EnumDisplay, EnumPreview, enum control style, segmented control, preview cards, choice picker
+ * WHAT:  How the Settings page draws an `Enum` setting's choices: a Select list, a segmented row of buttons, or a row
+ *        of cards each showing a preview of its choice (EnumPreview names what the preview draws).
+ * WHY:   Settings controls are generated from the registry (root CLAUDE.md §7), so a setting that reads better as
+ *        pictures (the pill's style) or as a two-way switch says so here instead of getting its own component. The
+ *        UI keys its preview renderers by EnumPreview, so a new preview fails tsc until it can be drawn, and nothing
+ *        in the UI matches on a setting key. A Select stays the default for long or runtime lists.
+ * WHERE: SettingKind::Enum in registry/settings/list.rs; rendered by src/components/global/setting-field
+ *        (EnumControl, enum-previews).
+ */
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[serde(tag = "as", rename_all = "snake_case")]
+pub enum EnumDisplay {
+    Select,
+    Segmented,
+    Cards { preview: EnumPreview },
+}
+
+/// What a card of an `EnumDisplay::Cards` setting draws for its choice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum EnumPreview {
+    /// The pill at rest in the chosen PillStyle.
+    PillStyle,
+}
+
 /// The unit an `Int` setting is stored in, so the UI can label and format it without knowing the key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
@@ -212,6 +241,7 @@ pub enum SettingKind {
     },
     Enum {
         options: EnumOptions,
+        display: EnumDisplay,
     },
     /// A global shortcut accelerator such as `Ctrl+Alt+Space`; only the hotkey adapter parses it.
     Hotkey,
@@ -300,7 +330,7 @@ impl SettingSpec {
                     ))
                 }
             }
-            (SettingKind::Enum { options }, SettingValue::Enum(choice)) => match options {
+            (SettingKind::Enum { options, .. }, SettingValue::Enum(choice)) => match options {
                 EnumOptions::Fixed { list } => {
                     if list.iter().any(|option| option.value == *choice) {
                         Ok(())
@@ -512,6 +542,13 @@ impl SettingsSnapshot {
         }
     }
 
+    pub fn text(&self, key: &SettingKey) -> Option<&str> {
+        match self.get(key)? {
+            SettingValue::Text(value) => Some(value.as_str()),
+            _ => None,
+        }
+    }
+
     pub fn hotkey(&self, key: &SettingKey) -> Option<&str> {
         match self.get(key)? {
             SettingValue::Hotkey(value) => Some(value.as_str()),
@@ -637,6 +674,7 @@ mod tests {
             options: EnumOptions::Fixed {
                 list: StaticList::new(THEMES),
             },
+            display: EnumDisplay::Select,
         },
         default: SettingValue::Enum(StaticStr::new("system")),
         restart_required: false,
@@ -727,9 +765,14 @@ mod tests {
                 options: EnumOptions::Runtime {
                     source: OptionSource::AsrLanguages,
                 },
+                display: EnumDisplay::Select,
             })
             .unwrap(),
-            json!({ "kind": "enum", "options": { "from": "runtime", "source": "asr_languages" } })
+            json!({
+                "kind": "enum",
+                "options": { "from": "runtime", "source": "asr_languages" },
+                "display": { "as": "select" }
+            })
         );
     }
 
@@ -801,6 +844,7 @@ mod tests {
                 options: EnumOptions::Runtime {
                     source: OptionSource::AsrEngines,
                 },
+                display: EnumDisplay::Select,
             },
             SettingValue::Enum(StaticStr::new("parakeet-tdt-0.6b-v3")),
         );

@@ -84,7 +84,6 @@ export const THEME_SCALE = {
     "slide-out-right",
     "slide-in-up",
     "indeterminate",
-    "shimmer",
   ],
 } as const;
 

@@ -85,6 +85,10 @@ export const commands = {
 	pillSetHitAreas: (input: PillHitAreas) => typedError<null, AppError>(__TAURI_INVOKE("pill_set_hit_areas", { input })),
 	/**  The pill finished its exit animation. */
 	pillExited: () => typedError<null, AppError>(__TAURI_INVOKE("pill_exited")),
+	/**  The pill settings the pill page renders: when it shows, its style and whether it can be dragged. */
+	pillGetLook: () => typedError<PillLook, AppError>(__TAURI_INVOKE("pill_get_look")),
+	/**  Drags the pill with the cursor until the primary button is released, then remembers where it was left. */
+	pillDrag: () => typedError<null, AppError>(__TAURI_INVOKE("pill_drag")),
 	/**  Every registry list the UI renders from. Compiled in, so it never changes while the app runs. */
 	registryGet: () => typedError<RegistryView, AppError>(__TAURI_INVOKE("registry_get")),
 	/**  What the Settings page may offer now: the caps requirements that hold and every choice setting's options. */
@@ -148,6 +152,7 @@ export const events = {
 	modelsChanged: makeEvent<ModelsChanged>("ModelsChanged"),
 	navigationRequested: makeEvent<NavigationRequested>("NavigationRequested"),
 	onboardingRequested: makeEvent<OnboardingRequested>("OnboardingRequested"),
+	pillLookChanged: makeEvent<PillLookChanged>("PillLookChanged"),
 	sessionStateChanged: makeEvent<SessionStateChanged>("SessionStateChanged"),
 	settingsChanged: makeEvent<SettingsChanged>("SettingsChanged"),
 	transcriptSaved: makeEvent<TranscriptSaved>("TranscriptSaved"),
@@ -444,6 +449,21 @@ export type EngineSpec = {
 	caps: EngineCaps,
 };
 
+/**
+ * 
+ *  * SOURCE OF TRUTH KEYWORDS: EnumDisplay, EnumPreview, enum control style, segmented control, preview cards, choice picker
+ *  * WHAT:  How the Settings page draws an `Enum` setting's choices: a Select list, a segmented row of buttons, or a row
+ *  *        of cards each showing a preview of its choice (EnumPreview names what the preview draws).
+ *  * WHY:   Settings controls are generated from the registry (root CLAUDE.md §7), so a setting that reads better as
+ *  *        pictures (the pill's style) or as a two-way switch says so here instead of getting its own component. The
+ *  *        UI keys its preview renderers by EnumPreview, so a new preview fails tsc until it can be drawn, and nothing
+ *  *        in the UI matches on a setting key. A Select stays the default for long or runtime lists.
+ *  * WHERE: SettingKind::Enum in registry/settings/list.rs; rendered by src/components/global/setting-field
+ *  *        (EnumControl, enum-previews).
+ *  
+ */
+export type EnumDisplay = { as: "select" } | { as: "segmented" } | { as: "cards"; preview: EnumPreview };
+
 /**  One choice of an `Enum` setting. */
 export type EnumOption = {
 	/**  Stored value. */
@@ -455,6 +475,11 @@ export type EnumOption = {
 
 /**  The options of an `Enum` setting: a fixed list, or a source resolved at runtime by the registry. */
 export type EnumOptions = { from: "fixed"; list: EnumOption[] } | { from: "runtime"; source: OptionSource };
+
+/**  What a card of an `EnumDisplay::Cards` setting draws for its choice. */
+export type EnumPreview = 
+/**  The pill at rest in the chosen PillStyle. */
+"pill_style";
 
 /**  A hardware graphics adapter that can run DirectX 12 compute (what DirectML needs). */
 export type GpuAdapter = {
@@ -1049,6 +1074,33 @@ export type PillHitAreas = {
 	areas: OverlayRect[],
 };
 
+/**  Everything the pill page needs to know about the user's pill settings. */
+export type PillLook = {
+	visibility: PillVisibility,
+	style: PillStyle,
+	/**  The pill can be dragged anywhere; off keeps it at the bottom centre. */
+	movable: boolean,
+};
+
+/**  The pill settings (visibility, style, movable) changed; carries the full look, so the pill never merges. */
+export type PillLookChanged = PillLook;
+
+/**  The `pill.style` choice: how the pill looks. */
+export type PillStyle = 
+/**  The full pill: logo, waveform, ✕ and stop while recording. */
+"full" | 
+/**  A compact pill with Echo's colour logo: a round badge at rest, logo, waveform and stop while recording. */
+"icon" | 
+/**  The compact pill in grey: grey logo and a neutral waveform. */
+"mono";
+
+/**  The `pill.visibility` choice: when the pill is on screen. */
+export type PillVisibility = 
+/**  Always on screen; between takes it rests in its idle look. */
+"always" | 
+/**  Only while a take runs (and while it reports how the take ended). */
+"recording";
+
 /**  Caps of a `TextPolisher` adapter. */
 export type PolisherCaps = {
 	latency_class: LatencyClass,
@@ -1182,7 +1234,7 @@ export type SettingKey = string;
 /**  The control and the validation rule of a setting. */
 export type SettingKind = { kind: "bool" } | 
 /**  Inclusive range. */
-{ kind: "int"; min: number; max: number; unit: SettingUnit | null } | { kind: "enum"; options: EnumOptions } | 
+{ kind: "int"; min: number; max: number; unit: SettingUnit | null } | { kind: "enum"; options: EnumOptions; display: EnumDisplay } | 
 /**  A global shortcut accelerator such as `Ctrl+Alt+Space`; only the hotkey adapter parses it. */
 { kind: "hotkey" } | 
 /**
@@ -1199,7 +1251,7 @@ export type SettingOptions = {
 };
 
 /**  The Settings page group a setting belongs to; equals the prefix of its key (`general.theme` → `general`). */
-export type SettingSection = "general" | "hotkeys" | "session" | "audio" | "output" | "transcription" | "polish" | "storage" | "metrics" | "privacy" | "updates";
+export type SettingSection = "general" | "pill" | "hotkeys" | "session" | "audio" | "output" | "transcription" | "polish" | "storage" | "metrics" | "privacy" | "updates";
 
 /**
  * 

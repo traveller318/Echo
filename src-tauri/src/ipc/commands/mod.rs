@@ -13,7 +13,7 @@
  *        it again; audio lists devices and runs the
  *        microphone check; system holds appearance, the logs / privacy openers, the page opener and About; updates
  *        checks for and installs a newer Echo; hotkeys pauses Echo's hotkeys and reports it; pill takes the pill
- *        page's button areas and exit).
+ *        page's button areas and exit, reads its look and drags it).
  */
 
 pub mod audio;
@@ -60,6 +60,8 @@ pub fn catalog<R: Runtime>() -> Commands<R> {
         models::models_set_active,
         pill::pill_set_hit_areas,
         pill::pill_exited,
+        pill::pill_get_look,
+        pill::pill_drag,
         settings::registry_get,
         settings::settings_availability,
         settings::settings_get_all,

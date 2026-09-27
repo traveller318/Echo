@@ -1,10 +1,11 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: Win32OverlayWindow, pill window adapter, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, SWP_NOACTIVATE, per-monitor DPI placement, click-through, GetCursorPos
+ * SOURCE OF TRUTH KEYWORDS: Win32OverlayWindow, pill window adapter, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, SWP_NOACTIVATE, per-monitor DPI placement, click-through, GetCursorPos, GetAsyncKeyState, SM_SWAPBUTTON, drag move
  * WHAT:  Win32OverlayWindow: OverlayWindow over the pre-created pill window. `attach` makes it a tool window (no
  *        taskbar button, no Alt+Tab entry) that is never activated and lets clicks through; `show` places it at the
- *        bottom centre of a monitor's work area in physical pixels and shows it on top without activation; `hide`
- *        hides it; `set_click_through` switches WS_EX_TRANSPARENT; `pointer_over` compares the cursor with areas
- *        given in the page's CSS pixels.
+ *        bottom centre of a monitor's work area (or at a saved corner still on a monitor) in physical pixels and
+ *        shows it on top without activation; `hide` hides it; `set_click_through` switches WS_EX_TRANSPARENT;
+ *        `pointer_over` compares the cursor with areas given in the page's CSS pixels; `origin`, `move_to`,
+ *        `cursor` and `primary_button_down` are what the presenter's drag reads and moves with.
  * WHY:   Showing a window with SW_SHOW activates it and would send the paste to the pill (05 W3); SetWindowPos with
  *        SWP_SHOWWINDOW | SWP_NOACTIVATE shows it, puts it on top and places it in one call, which is what
  *        SW_SHOWNOACTIVATE does plus the move. Tauri's own show/hide/ignore-cursor calls are never used on this
@@ -16,7 +17,10 @@
  *        WS_EX_LAYERED | WS_EX_TRANSPARENT; LAYERED is set once at attach and only TRANSPARENT is switched, so the
  *        webview's surface is never recreated while the pointer moves over the pill. The Tauri window exists only
  *        once the event loop runs, after the composition root built this adapter, so the handle arrives later
- *        through `attach`; until then every call fails with `Internal` and the pill simply does not show.
+ *        through `attach`; until then every call fails with `Internal` and the pill simply does not show. A drag
+ *        moves the window with SetWindowPos (SWP_NOACTIVATE) instead of the system move loop (WM_NCLBUTTONDOWN +
+ *        HTCAPTION), which is modal on the UI thread and would activate the window; the button is read with
+ *        GetAsyncKeyState, which reports physical buttons, so swapped buttons (SM_SWAPBUTTON) read the right one.
  * WHERE: Built by app/bootstrap, attached by app/windows.rs on RunEvent::Ready, driven through `dyn OverlayWindow`
  *        by pipeline/pill.rs.
  */
@@ -25,14 +29,16 @@ use parking_lot::Mutex;
 use windows::Win32::{
     Foundation::{HWND, POINT, RECT},
     Graphics::Gdi::{
-        ClientToScreen, GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY,
-        MONITORINFO, MonitorFromPoint, MonitorFromRect,
+        ClientToScreen, GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTONULL,
+        MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromPoint, MonitorFromRect,
     },
     UI::{
         HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI},
+        Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON},
         WindowsAndMessaging::{
-            GWL_EXSTYLE, GetCursorPos, GetWindowLongPtrW, GetWindowRect, HWND_TOPMOST, SW_HIDE,
-            SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW,
+            GWL_EXSTYLE, GetCursorPos, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect,
+            HWND_TOPMOST, SET_WINDOW_POS_FLAGS, SM_SWAPBUTTON, SW_HIDE, SWP_FRAMECHANGED,
+            SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW,
             SetWindowLongPtrW, SetWindowPos, ShowWindow, WS_EX_APPWINDOW, WS_EX_LAYERED,
             WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
         },
@@ -42,7 +48,10 @@ use windows::Win32::{
 use crate::{
     adapters::win32::hwnd,
     ports::OverlayWindow,
-    types::{AppError, OverlayRect, PortError, PortResult, ScreenRect, WindowHandle},
+    types::{
+        AppError, OverlayPlacement, OverlayRect, PortError, PortResult, ScreenPoint, ScreenRect,
+        WindowHandle,
+    },
 };
 
 /// The DPI at which one CSS pixel is one physical pixel.
@@ -108,22 +117,17 @@ impl Win32OverlayWindow {
 }
 
 impl OverlayWindow for Win32OverlayWindow {
-    fn show(&self, work_area: Option<ScreenRect>) -> PortResult<()> {
+    fn show(&self, placement: OverlayPlacement) -> PortResult<()> {
         let handle = self.handle()?;
-        let area = match work_area {
-            Some(area) => area,
-            None => primary_work_area()?,
-        };
-        let (width, height) = size_on(handle, &area)?;
-        let (x, y) = bottom_centre(&area, width, height);
-        place(handle, x, y, SWP_SHOWWINDOW)?;
-        // Moving to a monitor with another DPI made Windows resize the window: place it again with its real size.
-        let actual = window_rect(handle)?;
-        let (x, y) = bottom_centre(&area, actual.width, actual.height);
-        if (x, y) != (actual.x, actual.y) {
-            place(handle, x, y, SWP_NOZORDER)?;
+        match placement {
+            OverlayPlacement::At(corner) if on_a_monitor(&window_rect(handle)?, corner) => {
+                show_at(handle, corner)
+            }
+            OverlayPlacement::At(_) | OverlayPlacement::BottomCentre(None) => {
+                show_bottom_centre(handle, &primary_work_area()?)
+            }
+            OverlayPlacement::BottomCentre(Some(area)) => show_bottom_centre(handle, &area),
         }
-        Ok(())
     }
 
     fn hide(&self) -> PortResult<()> {
@@ -173,6 +177,86 @@ impl OverlayWindow for Win32OverlayWindow {
         let y = f64::from(cursor.y - origin.y) / scale;
         Ok(areas.iter().any(|area| area.contains(x, y)))
     }
+
+    fn origin(&self) -> PortResult<ScreenPoint> {
+        let rect = window_rect(self.handle()?)?;
+        Ok(ScreenPoint {
+            x: rect.x,
+            y: rect.y,
+        })
+    }
+
+    fn move_to(&self, corner: ScreenPoint) -> PortResult<()> {
+        place(self.handle()?, corner.x, corner.y, SET_WINDOW_POS_FLAGS(0))
+    }
+
+    fn cursor(&self) -> PortResult<ScreenPoint> {
+        let mut cursor = POINT::default();
+        // SAFETY: writes the cursor position into a POINT this function owns.
+        unsafe { GetCursorPos(&raw mut cursor) }
+            .map_err(|error| failure(format!("the cursor position could not be read: {error}")))?;
+        Ok(ScreenPoint {
+            x: cursor.x,
+            y: cursor.y,
+        })
+    }
+
+    fn primary_button_down(&self) -> PortResult<bool> {
+        // SAFETY: reads a system metric; no memory is passed.
+        let swapped = unsafe { GetSystemMetrics(SM_SWAPBUTTON) } != 0;
+        let button = if swapped { VK_RBUTTON } else { VK_LBUTTON };
+        // SAFETY: reads the async state of a virtual key; the most significant bit set (negative) is "down now".
+        let state = unsafe { GetAsyncKeyState(i32::from(button.0)) };
+        Ok(state < 0)
+    }
+}
+
+/// Shows the window at the bottom centre of `area`, sized for that monitor's DPI.
+fn show_bottom_centre(handle: HWND, area: &ScreenRect) -> PortResult<()> {
+    let (width, height) = size_on(handle, area)?;
+    let (x, y) = bottom_centre(area, width, height);
+    place(handle, x, y, SWP_SHOWWINDOW)?;
+    // Moving to a monitor with another DPI made Windows resize the window: place it again with its real size.
+    let actual = window_rect(handle)?;
+    let (x, y) = bottom_centre(area, actual.width, actual.height);
+    if (x, y) != (actual.x, actual.y) {
+        place(handle, x, y, SWP_NOZORDER)?;
+    }
+    Ok(())
+}
+
+/// Shows the window with its top-left corner at `corner`.
+fn show_at(handle: HWND, corner: ScreenPoint) -> PortResult<()> {
+    place(handle, corner.x, corner.y, SWP_SHOWWINDOW)?;
+    // A DPI change on the way resizes the window around a suggested rectangle: put the corner back.
+    let actual = window_rect(handle)?;
+    if (actual.x, actual.y) != (corner.x, corner.y) {
+        place(handle, corner.x, corner.y, SWP_NOZORDER)?;
+    }
+    Ok(())
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: on_a_monitor, saved pill corner check, monitor unplugged, off-screen pill fallback
+ * WHAT:  Whether a window of `current`'s size with its corner at `corner` has its centre on a connected monitor.
+ * WHY:   A position saved on a monitor that was unplugged or rearranged since would show the pill off screen,
+ *        where it could never be dragged back; the centre is what the user sees of the pill.
+ * WHERE: Win32OverlayWindow::show for OverlayPlacement::At.
+ */
+fn on_a_monitor(current: &ScreenRect, corner: ScreenPoint) -> bool {
+    let centre = centre_at(current, corner);
+    // SAFETY: looks up the monitor under a point; the point is a value, a null handle means none.
+    let monitor = unsafe { MonitorFromPoint(centre, MONITOR_DEFAULTTONULL) };
+    !monitor.is_invalid()
+}
+
+/// The centre of a window of `size`'s width and height whose corner is at `corner`.
+fn centre_at(size: &ScreenRect, corner: ScreenPoint) -> POINT {
+    let half = |length: u32| i32::try_from(length / 2).unwrap_or(0);
+    POINT {
+        x: corner.x.saturating_add(half(size.width)),
+        y: corner.y.saturating_add(half(size.height)),
+    }
 }
 
 fn failure(detail: String) -> PortError {
@@ -192,12 +276,7 @@ fn set_ex_styles(handle: HWND, styles: u32) {
 }
 
 /// Moves the window to (`x`, `y`) without resizing or activating it; `extra` adds SWP flags.
-fn place(
-    handle: HWND,
-    x: i32,
-    y: i32,
-    extra: windows::Win32::UI::WindowsAndMessaging::SET_WINDOW_POS_FLAGS,
-) -> PortResult<()> {
+fn place(handle: HWND, x: i32, y: i32, extra: SET_WINDOW_POS_FLAGS) -> PortResult<()> {
     // SAFETY: repositions a live window above all non-topmost windows; no activation is requested.
     unsafe {
         SetWindowPos(
@@ -344,6 +423,38 @@ mod tests {
     }
 
     #[test]
+    fn a_saved_corner_is_kept_only_while_a_monitor_shows_the_window() {
+        let pill = ScreenRect {
+            x: 0,
+            y: 0,
+            width: 360,
+            height: 88,
+        };
+        assert_eq!(
+            centre_at(&pill, ScreenPoint { x: 10, y: 20 }),
+            POINT { x: 190, y: 64 }
+        );
+        let primary = primary_work_area().unwrap();
+        let inside = ScreenPoint {
+            x: primary.x,
+            y: primary.y,
+        };
+        assert!(on_a_monitor(&pill, inside));
+        let far_away = ScreenPoint {
+            x: i32::MAX - 100,
+            y: i32::MAX - 100,
+        };
+        assert!(!on_a_monitor(&pill, far_away));
+    }
+
+    #[test]
+    fn the_cursor_and_the_button_read_without_a_window() {
+        let overlay = Win32OverlayWindow::new();
+        assert!(overlay.cursor().is_ok());
+        assert!(overlay.primary_button_down().is_ok());
+    }
+
+    #[test]
     fn sizes_rescale_between_dpis() {
         assert_eq!(rescale(360, 96, 144), 540);
         assert_eq!(rescale(540, 144, 96), 360);
@@ -359,9 +470,12 @@ mod tests {
     fn an_unattached_overlay_fails_instead_of_touching_a_window() {
         let overlay = Win32OverlayWindow::new();
         for result in [
-            overlay.show(None),
+            overlay.show(OverlayPlacement::BottomCentre(None)),
+            overlay.show(OverlayPlacement::At(ScreenPoint { x: 0, y: 0 })),
             overlay.hide(),
             overlay.set_click_through(true),
+            overlay.move_to(ScreenPoint { x: 0, y: 0 }),
+            overlay.origin().map(|_| ()),
         ] {
             assert_eq!(
                 result.map_err(PortError::into_app_error),

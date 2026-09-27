@@ -171,12 +171,15 @@
   --pill-height: 28px;
   --pill-width-recording: 146px;
   --pill-width-cancel: 172px;
-  --pill-width-processing: 132px;
   --pill-width-copied: 112px;
   --pill-width-notice: 200px;
   --pill-width-error: 280px;
   --pill-width-setup: 260px;
+  --pill-width-idle: 112px;
+  --pill-width-mark: 28px;
+  --pill-width-recording-compact: 118px;
   --pill-logo-width: 24px;
+  --pill-mark-width: 18px;
   --pill-divider-height: 14px;
   --pill-stop-size: 18px;
   --ring-size: 20px;

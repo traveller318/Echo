@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: event payloads, AppEvent, SessionStateChanged, AudioLevel, TranscriptSaved, HistoryChanged, MetricsChanged, SettingsChanged, ModelProgress, ModelsChanged, AppearanceChanged, NavigationRequested, AudioDevicesChanged, OnboardingRequested, HotkeyRehearsed, HotkeyStatusChanged
+ * SOURCE OF TRUTH KEYWORDS: event payloads, AppEvent, SessionStateChanged, AudioLevel, TranscriptSaved, HistoryChanged, MetricsChanged, SettingsChanged, ModelProgress, ModelsChanged, AppearanceChanged, NavigationRequested, AudioDevicesChanged, OnboardingRequested, HotkeyRehearsed, HotkeyStatusChanged, PillLookChanged
  * WHAT:  The payload struct of every Rust → UI event in 02 §4.4 (each struct name is the event name), and AppEvent,
  *        the envelope emitters hand to the event sink.
  * WHY:   Rust owns domain state and pushes it as typed events; the UI reads once through a command and then stays
@@ -15,7 +15,7 @@ use specta::Type;
 
 use super::{
     AppearanceView, ByteCount, HotkeyAction, HotkeyId, HotkeyStatus, KeyState, ModelId, ModelPhase,
-    NavId, SessionView, SettingKey, SettingValue, TranscriptSummary,
+    NavId, PillLook, SessionView, SettingKey, SettingValue, TranscriptSummary,
 };
 
 /// The session changed state; carries the full view, so the UI never merges partial updates.
@@ -116,6 +116,10 @@ pub struct HotkeyRehearsed {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct HotkeyStatusChanged(pub HotkeyStatus);
 
+/// The pill settings (visibility, style, movable) changed; carries the full look, so the pill never merges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct PillLookChanged(pub PillLook);
+
 /**
  * SOURCE OF TRUTH KEYWORDS: AppEvent, any event, event envelope, emit event, EventSink AppEvent, From payload
  * WHAT:  One value that can carry any event payload above; `From<Payload>` for each, so emitters write
@@ -143,6 +147,7 @@ pub enum AppEvent {
     OnboardingRequested(OnboardingRequested),
     HotkeyRehearsed(HotkeyRehearsed),
     HotkeyStatusChanged(HotkeyStatusChanged),
+    PillLookChanged(PillLookChanged),
 }
 
 /// `From<Payload> for AppEvent` for every payload, so the variant is never named twice at an emit site.
@@ -171,6 +176,7 @@ app_event_from![
     OnboardingRequested,
     HotkeyRehearsed,
     HotkeyStatusChanged,
+    PillLookChanged,
 ];
 
 #[cfg(test)]

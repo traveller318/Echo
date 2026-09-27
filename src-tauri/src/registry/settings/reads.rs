@@ -1,11 +1,11 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: typed setting reads, sound_cues, notice_shown, onboarded, launch_at_startup, start_minimized, debug_log, theme read, transcription reads, polish reads, remove_fillers, dictionary, llm_polisher, trailing_space, delivery_policy, input_device, session_policy, record_mode, retention_policy, typing_wpm, auto_check_updates
+ * SOURCE OF TRUTH KEYWORDS: typed setting reads, pill_look, pill_dragged_position, sound_cues, notice_shown, onboarded, launch_at_startup, start_minimized, debug_log, theme read, transcription reads, polish reads, remove_fillers, dictionary, llm_polisher, trailing_space, delivery_policy, input_device, session_policy, record_mode, retention_policy, typing_wpm, auto_check_updates
  * WHAT:  Typed reads of a SettingsSnapshot for the settings the core acts on.
  * WHY:   Values are stored as tagged SettingValues and enum text; spelling them is the registry's job, so the
  *        pipeline asks here instead of matching kinds or comparing strings. A resolved snapshot always holds a
  *        valid value for every key, so each fallback only guards a snapshot built outside `resolve` and uses the
  *        spec's own default.
- * WHERE: Re-exported by registry/settings; read by pipeline/appearance, pipeline/asr, pipeline/polish,
+ * WHERE: Re-exported by registry/settings; read by pipeline/pill (pill_look, pill_dragged_position), pipeline/appearance, pipeline/asr, pipeline/polish,
  *        pipeline/delivery, pipeline/metrics (typing_wpm), pipeline/updates (auto_check_updates) and the session actor (session_policy, input_device,
  *        delivery_policy).
  */
@@ -14,9 +14,9 @@ use std::num::NonZeroU32;
 
 use super::{find, keys, values};
 use crate::types::{
-    Accelerator, AudioDeviceId, DeliveryPolicy, EngineId, Language, OneTimeNotice, RecordMode,
-    RetentionPolicy, SessionPolicy, SettingKey, SettingValue, SettingsSnapshot, TextPair,
-    ThemePreference,
+    Accelerator, AudioDeviceId, DeliveryPolicy, EngineId, Language, OneTimeNotice, PillLook,
+    PillStyle, PillVisibility, RecordMode, RetentionPolicy, ScreenPoint, SessionPolicy, SettingKey,
+    SettingValue, SettingsSnapshot, TextPair, ThemePreference,
 };
 
 /// The `general.theme` choice in effect; a resolved snapshot always holds a valid one, so the default is only a
@@ -26,6 +26,39 @@ pub fn theme(settings: &SettingsSnapshot) -> ThemePreference {
         .enum_value(&keys::THEME)
         .and_then(ThemePreference::from_value)
         .unwrap_or_default()
+}
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: pill_look, pill_dragged_position, pill settings read, pill visibility, pill style, movable pill
+ * WHAT:  `pill_look`: the PillLook `pill.visibility`, `pill.style` and `pill.movable` give; `pill_dragged_position`:
+ *        the corner the user dragged the pill to, while moving it is on (None: bottom centre).
+ * WHY:   The presenter and the pill page decide from typed values, never from stored text. A position kept from an
+ *        earlier drag is ignored while `pill.movable` is off, so switching it off puts the pill back at the bottom
+ *        centre and switching it on again brings back the user's spot.
+ * WHERE: pipeline/pill.rs (PillPresenter, look_after_settings_change); ipc/commands/pill.rs (`pill_get_look`).
+ */
+pub fn pill_look(settings: &SettingsSnapshot) -> PillLook {
+    PillLook {
+        visibility: settings
+            .enum_value(&keys::PILL_VISIBILITY)
+            .and_then(PillVisibility::from_value)
+            .unwrap_or_default(),
+        style: settings
+            .enum_value(&keys::PILL_STYLE)
+            .and_then(PillStyle::from_value)
+            .unwrap_or_default(),
+        movable: bool_or_default(settings, &keys::PILL_MOVABLE),
+    }
+}
+
+/// The dragged window corner in effect: set and `pill.movable` on.
+pub fn pill_dragged_position(settings: &SettingsSnapshot) -> Option<ScreenPoint> {
+    if !bool_or_default(settings, &keys::PILL_MOVABLE) {
+        return None;
+    }
+    settings
+        .text(&keys::PILL_POSITION)
+        .and_then(values::parse_pill_position)
 }
 
 /**

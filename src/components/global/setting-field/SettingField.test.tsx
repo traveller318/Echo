@@ -1,6 +1,6 @@
 /**
  * SOURCE OF TRUTH KEYWORDS: SettingField test, setting control test, every SettingKind control, reset to default test, inline setting error test, dictionary editor test
- * WHAT:  Renders SettingField for every SettingKind and verifies the control each gets, that valid edits are
+ * WHAT:  Renders SettingField for every SettingKind (and every Enum display) and verifies the control each gets, that valid edits are
  *        committed as tagged SettingValues, that invalid ones show Rust's message and commit nothing, the reset
  *        button, the restart badge, and an inline write error.
  * WHY:   Every setting in the app goes through this one component; a broken kind would silently disable a whole
@@ -13,7 +13,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AppError, EnumOption, SettingKind, SettingSpec, SettingValue } from "@/bindings";
 import { SettingField } from "./SettingField";
 
-vi.mock("@/bindings", () => ({ SETTING_TOKEN_MAX_CHARS: 128 }));
+// `events` is read at import by lib/echo-events (the pill previews' waveform); no event fires in this file.
+vi.mock("@/bindings", () => ({ SETTING_TOKEN_MAX_CHARS: 128, events: {} }));
 
 const saved = {
   scrollIntoView: Object.getOwnPropertyDescriptor(Element.prototype, "scrollIntoView"),
@@ -121,7 +122,7 @@ describe("SettingField", () => {
       { value: "system", label: "Match Windows", requires: null },
       { value: "dark", label: "Dark", requires: null },
     ];
-    const kind: SettingKind = { kind: "enum", options: { from: "fixed", list: options } };
+    const kind: SettingKind = { kind: "enum", options: { from: "fixed", list: options }, display: { as: "select" } };
     const { onCommit } = renderField(spec(kind, { kind: "enum", value: "system" }), { kind: "enum", value: "system" }, {
       options,
     });
@@ -140,8 +141,54 @@ describe("SettingField", () => {
     });
   });
 
+  it("renders a segmented Enum as radio buttons that save a pick", async () => {
+    const options: EnumOption[] = [
+      { value: "always", label: "Always", requires: null },
+      { value: "recording", label: "While recording", requires: null },
+    ];
+    const kind: SettingKind = { kind: "enum", options: { from: "fixed", list: options }, display: { as: "segmented" } };
+    const { onCommit } = renderField(spec(kind, { kind: "enum", value: "recording" }), { kind: "enum", value: "recording" }, {
+      options,
+    });
+    const group = screen.getByRole("radiogroup", { name: "Test setting" });
+    expect(within(group).getByRole("radio", { name: "While recording" })).toBeChecked();
+    act(() => {
+      fireEvent.click(within(group).getByRole("radio", { name: "Always" }));
+    });
+    await vi.waitFor(() => {
+      expect(onCommit).toHaveBeenCalledExactlyOnceWith({ kind: "enum", value: "always" });
+    });
+  });
+
+  it("renders a cards Enum under its label with a preview per option", async () => {
+    const options: EnumOption[] = [
+      { value: "full", label: "Full", requires: null },
+      { value: "icon", label: "Icon", requires: null },
+      { value: "mono", label: "Monochrome", requires: null },
+    ];
+    const kind: SettingKind = {
+      kind: "enum",
+      options: { from: "fixed", list: options },
+      display: { as: "cards", preview: "pill_style" },
+    };
+    const { onCommit, view } = renderField(spec(kind, { kind: "enum", value: "full" }), { kind: "enum", value: "full" }, {
+      options,
+    });
+    const group = screen.getByRole("radiogroup", { name: "Test setting" });
+    expect(within(group).getAllByRole("radio")).toHaveLength(3);
+    expect(within(group).getByRole("radio", { name: "Full" })).toBeChecked();
+    expect(view.container.querySelectorAll("[data-slot=pill-preview]")).toHaveLength(3);
+    expect(view.container.querySelector("[data-setting]")).toHaveClass("flex-col");
+    act(() => {
+      fireEvent.click(within(group).getByRole("radio", { name: "Monochrome" }));
+    });
+    await vi.waitFor(() => {
+      expect(onCommit).toHaveBeenCalledExactlyOnceWith({ kind: "enum", value: "mono" });
+    });
+  });
+
   it("names languages and says when nothing can be chosen", () => {
-    const languages: SettingKind = { kind: "enum", options: { from: "runtime", source: "asr_languages" } };
+    const languages: SettingKind = { kind: "enum", options: { from: "runtime", source: "asr_languages" }, display: { as: "select" } };
     renderField(spec(languages, { kind: "enum", value: "auto" }), { kind: "enum", value: "de" }, {
       options: [
         { value: "auto", label: "Auto-detect", requires: null },
@@ -150,7 +197,7 @@ describe("SettingField", () => {
     });
     expect(screen.getByRole("combobox", { name: "Test setting" })).toHaveTextContent("German");
 
-    const polishers: SettingKind = { kind: "enum", options: { from: "runtime", source: "model_polishers" } };
+    const polishers: SettingKind = { kind: "enum", options: { from: "runtime", source: "model_polishers" }, display: { as: "select" } };
     const { view } = renderField(
       spec(polishers, { kind: "enum", value: "qwen3-1.7b" }, { label: "Polish model" }),
       { kind: "enum", value: "qwen3-1.7b" },

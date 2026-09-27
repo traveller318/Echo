@@ -455,9 +455,11 @@ pub mod testing {
         let overlay = Arc::new(FakeOverlayWindow::default());
         let main_window = Arc::new(FakeMainWindow::default());
         let sounds = Arc::new(FakeSoundPlayer::default());
+        let settings = SharedSettings::new(settings);
         let pill = PillPresenter::spawn(
             Arc::clone(&overlay) as _,
             Arc::clone(&foreground) as _,
+            settings.clone(),
             PillTiming::DEFAULT,
         )
         .unwrap();
@@ -478,7 +480,6 @@ pub mod testing {
             readiness: None,
         })
         .unwrap();
-        let settings = SharedSettings::new(settings);
         let db = Db::open_in_memory().unwrap();
         let hotkey_gate = HotkeyGate::new(HotkeyGateDeps {
             service: Arc::clone(&hotkeys) as _,

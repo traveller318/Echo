@@ -89,7 +89,7 @@ pub(super) fn availability_in(
         options: SETTINGS
             .iter()
             .filter_map(|spec| {
-                let SettingKind::Enum { options } = &spec.kind else {
+                let SettingKind::Enum { options, .. } = &spec.kind else {
                     return None;
                 };
                 Some(SettingOptions {
@@ -117,7 +117,7 @@ pub(super) fn check_available_in(
             "This setting isn't available on this PC.",
         ));
     }
-    if let (SettingKind::Enum { options }, SettingValue::Enum(choice)) = (&spec.kind, value)
+    if let (SettingKind::Enum { options, .. }, SettingValue::Enum(choice)) = (&spec.kind, value)
         && !offered_in(entries, options, settings, adapters)
             .iter()
             .any(|option| option.value == *choice)

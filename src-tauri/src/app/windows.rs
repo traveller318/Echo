@@ -57,7 +57,10 @@ pub fn setup<R: Runtime>(app: &AppHandle<R>) {
         apply_mica(app);
     }
     apply_theme(app, view.theme);
-    attach_pill(app);
+    if attach_pill(app) {
+        // An always-visible pill can show only now that its window exists.
+        ctx.pill().attached();
+    }
 
     let handle = app.clone();
     AppearanceChanged::listen_any(app, move |event| {
@@ -131,14 +134,15 @@ fn hides_on_close(label: &str) -> bool {
 }
 
 /// Hands the pill window to the overlay adapter; without it the pill never shows, and dictation still works.
-fn attach_pill<R: Runtime>(app: &AppHandle<R>) {
+/// True when the pill window is attached.
+fn attach_pill<R: Runtime>(app: &AppHandle<R>) -> bool {
     let Some(overlay) = app.try_state::<Arc<Win32OverlayWindow>>() else {
         tracing::error!("the pill overlay was not managed before the windows were set up");
-        return;
+        return false;
     };
     let Some(pill) = app.get_webview_window(PILL_WINDOW) else {
         tracing::warn!("no pill window to attach");
-        return;
+        return false;
     };
     let attached = pill
         .hwnd()
@@ -148,9 +152,10 @@ fn attach_pill<R: Runtime>(app: &AppHandle<R>) {
                 .attach(window_handle(hwnd))
                 .map_err(|error| error.detail().unwrap_or("no detail").to_owned())
         });
-    if let Err(detail) = attached {
+    if let Err(detail) = &attached {
         tracing::warn!(%detail, "the pill window could not be attached; takes run without it");
     }
+    attached.is_ok()
 }
 
 fn apply_mica<R: Runtime>(app: &AppHandle<R>) {

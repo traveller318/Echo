@@ -56,6 +56,7 @@ pub(super) fn validate_in(
     if let (
         SettingKind::Enum {
             options: EnumOptions::Runtime { source },
+            ..
         },
         SettingValue::Enum(choice),
     ) = (&spec.kind, value)

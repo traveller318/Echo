@@ -36,6 +36,9 @@ export default defineConfig({
         main: entry("./index.html"),
         pill: entry("./pill.html"),
       },
+      // The timing report is a profiling hint, not a defect: Tailwind's one CSS transform scans every source file
+      // and always crosses its threshold, so it printed a warning on every release build (05 §3, 2026-09-27).
+      checks: { pluginTimings: false },
     },
   },
   test: {

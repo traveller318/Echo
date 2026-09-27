@@ -4,7 +4,7 @@
  *        smoothing) and `silentLevels`; `levelFromRms` is re-exported for the waveform.
  * WHY:   04 §4: 10 bars mapped from AudioLevel.rms with light smoothing. The decibel scale and the smoothing are
  *        lib/audio-level.ts, shared with onboarding's microphone meter so both draw the same event the same way.
- * WHERE: pill/_components/Waveform.tsx.
+ * WHERE: components/global/pill-face/Waveform.tsx; its tests in src/pill/pill-parts.test.ts.
  */
 import { smoothLevel } from "@/lib/audio-level";
 

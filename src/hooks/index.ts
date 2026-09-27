@@ -1,16 +1,15 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: hooks barrel, useHotkeyStatus, useHotkeyCaptureLease, useEchoQuery, useEchoInfiniteQuery, useEchoEvent, useEchoMutation, useRegistryView, useSessionView, useHistoryList, useClearHistory, useMetricsSummary, useModels, useModelActions, useSettingValues, useSettingWrite, useOnboarding, useSessionRehearsal, useMicCheck, useAudioLevel, useWindowFocused, data hooks
+ * SOURCE OF TRUTH KEYWORDS: hooks barrel, useHotkeyStatus, useHotkeyCaptureLease, useEchoQuery, useEchoInfiniteQuery, useEchoEvent, useEchoMutation, useRegistryView, useSessionView, usePillLook, usePushedView, useHistoryList, useClearHistory, useMetricsSummary, useModels, useModelActions, useSettingValues, useSettingWrite, useOnboarding, useSessionRehearsal, useMicCheck, useAudioLevel, useWindowFocused, data hooks
  * WHAT:  Barrel for src/hooks: the data hooks every window uses to read commands (single and paged), run writes,
  *        follow Rust events, read the registry, follow the current take, read and act on History, read the
  *        Dashboard metrics, read and act on Models, read and act on Settings, read and
  *        finish onboarding, set the session rehearsal, run a microphone check with its live level, tell whether the
  *        window is in front, read and switch the hotkey pause (and a hotkey field's
- *        capture lease), plus the timing hooks for delayed indicators and live counters.
+ *        capture lease), plus the timing hook for live counters.
  * WHY:   One import path (`@/hooks`) for the data layer keeps components free of TanStack and Tauri details.
  * WHERE: Imported by the app shell, routes and (later) the pill.
  */
 export { useAudioLevel } from "./use-audio-level";
-export { useDelayedFlag } from "./use-delayed-flag";
 export { useEchoEvent, type UseEchoEventOptions } from "./use-echo-event";
 export {
   echoInfiniteQueryOptions,
@@ -71,6 +70,8 @@ export {
 export { useRunningClock, type RunningClockOptions } from "./use-running-clock";
 export { useSessionRehearsal } from "./use-session-rehearsal";
 export { useSessionView, type UseSessionViewOptions } from "./use-session-view";
+export { usePillLook } from "./use-pill-look";
+export { usePushedView } from "./use-pushed-view";
 export { useWindowFocused } from "./use-window-focused";
 export {
   AUDIO_DEVICES_QUERY,

@@ -38,6 +38,7 @@ mod onboarding;
 mod overlay;
 mod paths;
 mod permission;
+mod pill;
 mod polish;
 mod port_error;
 mod power;
@@ -85,8 +86,8 @@ pub use error::{AppError, AppErrorCode, HotkeyIssue, ResourceKind};
 pub use events::{
     AppEvent, AppearanceChanged, AudioDevicesChanged, AudioLevel, HistoryChangeReason,
     HistoryChanged, HotkeyRehearsed, HotkeyStatusChanged, MetricsChanged, ModelProgress,
-    ModelsChanged, NavigationRequested, OnboardingRequested, SessionStateChanged, SettingsChanged,
-    TranscriptSaved,
+    ModelsChanged, NavigationRequested, OnboardingRequested, PillLookChanged, SessionStateChanged,
+    SettingsChanged, TranscriptSaved,
 };
 pub use future::BoxFuture;
 pub use hotkey::{
@@ -117,9 +118,10 @@ pub use notification::{OneTimeNotice, Toast, ToastKind};
 pub use onboarding::{
     OnboardingCondition, OnboardingNeeds, OnboardingStepId, OnboardingStepSpec, OnboardingView,
 };
-pub use overlay::{OverlayRect, PillHitAreas};
+pub use overlay::{OverlayPlacement, OverlayRect, PillHitAreas};
 pub use paths::{AppPaths, ONNX_RUNTIME_LOAD_ORDER, OnnxRuntimeLibrary};
 pub use permission::{Permission, PermissionCheckFn, PermissionGate, PermissionState};
+pub use pill::{PillLook, PillStyle, PillVisibility};
 pub use polish::{
     PolishContext, PolishFallback, PolishFallbackReason, PolishOutcome, PolishPlan, PolishPolicy,
 };
@@ -134,15 +136,15 @@ pub use session_machine::{
     SessionPolicy, SessionState, SessionTimer, SettledTake, StopCause, TakeData, TimerToken,
 };
 pub use settings::{
-    AdapterCaps, CapsRequirement, EnumOption, EnumOptions, OptionSource, SettingEntry, SettingKind,
-    SettingOptions, SettingSection, SettingSectionSpec, SettingSpec, SettingUnit, SettingValue,
-    SettingsAvailability, SettingsResetInput, SettingsSetInput, SettingsSnapshot, SharedSettings,
-    TextPair,
+    AdapterCaps, CapsRequirement, EnumDisplay, EnumOption, EnumOptions, EnumPreview, OptionSource,
+    SettingEntry, SettingKind, SettingOptions, SettingSection, SettingSectionSpec, SettingSpec,
+    SettingUnit, SettingValue, SettingsAvailability, SettingsResetInput, SettingsSetInput,
+    SettingsSnapshot, SharedSettings, TextPair,
 };
 pub use sound::{CueSound, SoundClip, Tone};
 pub use startup::{LaunchAtLoginState, LaunchOrigin, MainWindowAtLaunch};
 pub use static_data::{StaticList, StaticStr};
-pub use target::{AppTarget, ScreenRect, TargetRule, WindowHandle};
+pub use target::{AppTarget, ScreenPoint, ScreenRect, TargetRule, WindowHandle};
 pub use transcript::{
     HistoryListInput, NewTranscript, Page, PageCursor, Transcript, TranscriptChange,
     TranscriptInput, TranscriptRef, TranscriptSelector, TranscriptStatus, TranscriptSummary,

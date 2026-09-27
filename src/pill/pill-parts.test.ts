@@ -7,7 +7,7 @@
  * WHERE: Runs in the `web` Vitest project.
  */
 import { describe, expect, it, vi } from "vitest";
-import { levelFromRms, pushLevel, silentLevels, WAVEFORM_BARS } from "./_components";
+import { levelFromRms, pushLevel, silentLevels, WAVEFORM_BARS } from "@/components/global";
 import { PillHitAreaRegistry } from "./hit-areas";
 
 describe("waveform levels", () => {

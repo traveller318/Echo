@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: SETTINGS list, setting specs, setting defaults, theme options, hotkey mode options, dictionary limits
+ * SOURCE OF TRUTH KEYWORDS: SETTINGS list, setting specs, setting defaults, theme options, hotkey mode options, pill visibility options, pill style options, dictionary limits
  * WHAT:  SETTINGS: every setting spec in Settings page order, plus the fixed option lists and limits they use.
  * WHY:   Adding a setting is one entry here; the Settings UI, its Zod schema and write validation are generated
  *        from it (root CLAUDE.md §7).
@@ -10,8 +10,9 @@ use super::{keys, values};
 use crate::{
     registry::hotkeys,
     types::{
-        CapsRequirement, EnumOption, EnumOptions, OptionSource, SettingKind, SettingSection,
-        SettingSpec, SettingUnit, SettingValue, StaticList, StaticStr, ThemePreference,
+        CapsRequirement, EnumDisplay, EnumOption, EnumOptions, EnumPreview, OptionSource,
+        PillStyle, PillVisibility, SettingKind, SettingSection, SettingSpec, SettingUnit,
+        SettingValue, StaticList, StaticStr, ThemePreference,
     },
 };
 
@@ -29,6 +30,37 @@ pub(super) const THEME_OPTIONS: &[EnumOption] = &[
     EnumOption {
         value: StaticStr::new(ThemePreference::Dark.as_str()),
         label: StaticStr::new("Dark"),
+        requires: None,
+    },
+];
+
+pub(super) const PILL_VISIBILITY_OPTIONS: &[EnumOption] = &[
+    EnumOption {
+        value: StaticStr::new(PillVisibility::Always.as_str()),
+        label: StaticStr::new("Always"),
+        requires: None,
+    },
+    EnumOption {
+        value: StaticStr::new(PillVisibility::Recording.as_str()),
+        label: StaticStr::new("While recording"),
+        requires: None,
+    },
+];
+
+pub(super) const PILL_STYLE_OPTIONS: &[EnumOption] = &[
+    EnumOption {
+        value: StaticStr::new(PillStyle::Full.as_str()),
+        label: StaticStr::new("Full"),
+        requires: None,
+    },
+    EnumOption {
+        value: StaticStr::new(PillStyle::Icon.as_str()),
+        label: StaticStr::new("Icon"),
+        requires: None,
+    },
+    EnumOption {
+        value: StaticStr::new(PillStyle::Mono.as_str()),
+        label: StaticStr::new("Monochrome"),
         requires: None,
     },
 ];
@@ -96,6 +128,7 @@ pub const SETTINGS: &[SettingSpec] = &[
             options: EnumOptions::Fixed {
                 list: StaticList::new(THEME_OPTIONS),
             },
+            display: EnumDisplay::Select,
         },
         default: SettingValue::Enum(StaticStr::new(ThemePreference::System.as_str())),
         restart_required: false,
@@ -130,6 +163,70 @@ pub const SETTINGS: &[SettingSpec] = &[
         requires: None,
     },
     SettingSpec {
+        key: keys::PILL_VISIBILITY,
+        section: SettingSection::Pill,
+        label: StaticStr::new("Show pill"),
+        help: StaticStr::new(
+            "Keep the pill on screen all the time, or show it only while you dictate.",
+        ),
+        kind: SettingKind::Enum {
+            options: EnumOptions::Fixed {
+                list: StaticList::new(PILL_VISIBILITY_OPTIONS),
+            },
+            display: EnumDisplay::Segmented,
+        },
+        default: SettingValue::Enum(StaticStr::new(PillVisibility::Recording.as_str())),
+        restart_required: false,
+        visible: true,
+        requires: None,
+    },
+    SettingSpec {
+        key: keys::PILL_MOVABLE,
+        section: SettingSection::Pill,
+        label: StaticStr::new("Move freely"),
+        help: StaticStr::new(
+            "Drag the pill anywhere on screen. Off keeps it at the bottom centre of the screen you work on.",
+        ),
+        kind: SettingKind::Bool,
+        default: SettingValue::Bool(false),
+        restart_required: false,
+        visible: true,
+        requires: None,
+    },
+    SettingSpec {
+        key: keys::PILL_STYLE,
+        section: SettingSection::Pill,
+        label: StaticStr::new("Style"),
+        help: StaticStr::new("How the pill looks on screen."),
+        kind: SettingKind::Enum {
+            options: EnumOptions::Fixed {
+                list: StaticList::new(PILL_STYLE_OPTIONS),
+            },
+            display: EnumDisplay::Cards {
+                preview: EnumPreview::PillStyle,
+            },
+        },
+        default: SettingValue::Enum(StaticStr::new(PillStyle::Full.as_str())),
+        restart_required: false,
+        visible: true,
+        requires: None,
+    },
+    SettingSpec {
+        key: keys::PILL_POSITION,
+        section: SettingSection::Pill,
+        label: StaticStr::new("Pill position"),
+        help: StaticStr::new(
+            "Internal: where the pill was dragged to (its window's top-left corner in screen pixels), empty until then.",
+        ),
+        kind: SettingKind::Text {
+            max_len: values::PILL_POSITION_MAX_LEN,
+        },
+        default: SettingValue::Text(StaticStr::new("")),
+        restart_required: false,
+        visible: false,
+        requires: None,
+    },
+    SettingSpec {
         key: keys::RECORD_HOTKEY,
         section: SettingSection::Hotkeys,
         label: StaticStr::new("Dictation hotkey"),
@@ -151,6 +248,7 @@ pub const SETTINGS: &[SettingSpec] = &[
             options: EnumOptions::Fixed {
                 list: StaticList::new(HOTKEY_MODE_OPTIONS),
             },
+            display: EnumDisplay::Select,
         },
         default: SettingValue::Enum(StaticStr::new(values::HOLD)),
         restart_required: false,
@@ -270,6 +368,7 @@ pub const SETTINGS: &[SettingSpec] = &[
             options: EnumOptions::Runtime {
                 source: OptionSource::AsrEngines,
             },
+            display: EnumDisplay::Select,
         },
         default: SettingValue::Enum(StaticStr::new("parakeet-tdt-0.6b-v3")),
         restart_required: false,
@@ -285,6 +384,7 @@ pub const SETTINGS: &[SettingSpec] = &[
             options: EnumOptions::Runtime {
                 source: OptionSource::AsrLanguages,
             },
+            display: EnumDisplay::Select,
         },
         default: SettingValue::Enum(StaticStr::new(values::AUTO)),
         restart_required: false,
@@ -302,6 +402,7 @@ pub const SETTINGS: &[SettingSpec] = &[
             options: EnumOptions::Runtime {
                 source: OptionSource::AsrAccelerators,
             },
+            display: EnumDisplay::Select,
         },
         default: SettingValue::Enum(StaticStr::new(values::AUTO)),
         restart_required: false,
@@ -357,6 +458,7 @@ pub const SETTINGS: &[SettingSpec] = &[
             options: EnumOptions::Runtime {
                 source: OptionSource::ModelPolishers,
             },
+            display: EnumDisplay::Select,
         },
         default: SettingValue::Enum(StaticStr::new("qwen3-1.7b")),
         restart_required: false,

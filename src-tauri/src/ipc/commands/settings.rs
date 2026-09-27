@@ -243,6 +243,7 @@ fn announce(
             models: ctx.models(),
             paths: ctx.paths(),
             launch: ctx.launch(),
+            pill: ctx.pill(),
             events: ctx.events(),
         }
         .apply(before, snapshot);

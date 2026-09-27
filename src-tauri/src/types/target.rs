@@ -1,7 +1,7 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: AppTarget, WindowHandle, ScreenRect, foreground window, paste target, elevated window, monitor work area, UIPI
+ * SOURCE OF TRUTH KEYWORDS: AppTarget, WindowHandle, ScreenRect, ScreenPoint, foreground window, paste target, elevated window, monitor work area, UIPI
  * WHAT:  AppTarget: the app that had focus when a take started (window, process, exe name, monitor work area,
- *        elevation), plus its WindowHandle and ScreenRect building blocks.
+ *        elevation), plus its WindowHandle, ScreenRect and ScreenPoint building blocks.
  * WHY:   The paste must land where the user was typing (05 W3), the pill appears on that window's monitor above
  *        the taskbar (05 W15), and an elevated target cannot receive synthetic input (05 W2), so all three facts are
  *        captured once at `RecordPressed` and carried through the take. WindowHandle is opaque: only the
@@ -31,6 +31,13 @@ pub struct ScreenRect {
     pub y: i32,
     pub width: u32,
     pub height: u32,
+}
+
+/// A point in physical screen pixels (per-monitor DPI v2 coordinates), e.g. the cursor or a window's corner.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct ScreenPoint {
+    pub x: i32,
+    pub y: i32,
 }
 
 /// The window that had focus when the take started.

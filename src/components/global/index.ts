@@ -1,5 +1,5 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: components global barrel, reusable components, GlassSurface, EmptyState, InlineNotice, FactList, ModelCard, ModelCardActions, ProgressBar, NavIcon, Page, DataList, TranscriptRow, SettingField, SettingRow, HotkeyInput, StatCard, MicCheckPanel, ConfirmDialog, take actions
+ * SOURCE OF TRUTH KEYWORDS: components global barrel, reusable components, GlassSurface, EmptyState, InlineNotice, FactList, ModelCard, ModelCardActions, ProgressBar, NavIcon, Page, PillPreview, PillRest, PillMark, Waveform, DataList, TranscriptRow, SettingField, SettingRow, HotkeyInput, StatCard, MicCheckPanel, ConfirmDialog, take actions
  * WHAT:  Barrel for every reusable app component (one folder each under components/global).
  * WHY:   Routes import `@/components/global` and never reach into a folder, so components can be reorganised
  *        inside their folders freely (03 §3). Components inside global/ import each other by folder, never
@@ -61,6 +61,24 @@ export {
 } from "./model-card";
 export { NavIcon, type NavIconProps } from "./nav-icon";
 export { Page, type PageProps } from "./page";
+export {
+  isPillStyle,
+  levelFromRms,
+  PILL_STYLES,
+  PillMark,
+  PillPreview,
+  PillRest,
+  pushLevel,
+  silentLevels,
+  Waveform,
+  WAVEFORM_BARS,
+  type PillMarkProps,
+  type PillPreviewProps,
+  type PillRestProps,
+  type PillStyleSpec,
+  type WaveformProps,
+  type WaveformTone,
+} from "./pill-face";
 export { ProgressBar, progressFraction, type ProgressBarProps } from "./progress-bar";
 export {
   optionLabel,

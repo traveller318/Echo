@@ -9,11 +9,13 @@
  *        effect, the options offered now and what to do on commit or reset, so Settings, onboarding or any later
  *        surface reuse it with their own data source. A refused write shows beside the control with a
  *        --color-record glyph and border, and readable text (04 §7); the control itself returns to the value in effect.
+ *        A control that needs the row's width (an Enum drawn as preview cards) goes under the label and help instead
+ *        of beside them; the spec says so through its display, never through its key.
  * WHERE: routes/settings (every visible setting); onboarding's hotkey and microphone steps (step 24).
  */
 import { CircleAlertIcon, RotateCcwIcon, RotateCwIcon } from "lucide-react";
 import { useId } from "react";
-import type { AppError, EnumOption, SettingSpec, SettingValue } from "@/bindings";
+import type { AppError, EnumOption, SettingKind, SettingSpec, SettingValue } from "@/bindings";
 import {
   Badge,
   Button,
@@ -58,6 +60,11 @@ export interface SettingFieldProps {
 }
 
 const NO_OPTIONS: readonly EnumOption[] = [];
+
+/** The control needs the whole row width: it sits under the label instead of beside it. */
+function isWideControl(kind: SettingKind): boolean {
+  return kind.kind === "enum" && kind.display.as === "cards";
+}
 
 /** Same value, compared by content (Pairs are arrays). */
 function sameValue(left: SettingValue, right: SettingValue): boolean {
@@ -168,13 +175,17 @@ export function SettingField({
     onCaptureChange,
   });
   const canReset = onReset !== undefined && !sameValue(value, spec.default);
+  const wide = isWideControl(spec.kind);
 
   return (
     <Field
       data-invalid={invalid}
       data-setting={spec.key}
       aria-busy={pending}
-      className={cn("flex-row items-start justify-between gap-6 py-3", className)}
+      className={cn(
+        wide ? "flex-col items-stretch gap-3 py-3" : "flex-row items-start justify-between gap-6 py-3",
+        className,
+      )}
     >
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex items-center gap-2">
@@ -191,7 +202,7 @@ export function SettingField({
           {spec.restart_required ? " Takes effect the next time Echo starts." : null}
         </FieldDescription>
       </div>
-      <div className="flex w-setting-control shrink-0 flex-col items-end gap-1">
+      <div className={cn("flex shrink-0 flex-col items-end gap-1", wide ? "w-full" : "w-setting-control")}>
         <div className="flex w-full items-center justify-end gap-1">
           {control}
           {canReset ? (

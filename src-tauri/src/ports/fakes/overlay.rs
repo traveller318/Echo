@@ -1,7 +1,8 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: FakeOverlayWindow, OverlayCall, fake pill window, pointer over test, click-through test, overlay show hide test
+ * SOURCE OF TRUTH KEYWORDS: FakeOverlayWindow, OverlayCall, fake pill window, pointer over test, click-through test, overlay show hide test, drag test, scripted cursor
  * WHAT:  FakeOverlayWindow: an OverlayWindow that records every call, reports a scripted pointer position (over a
- *        button or not) and whose next show can fail. ChannelSink-style waiting (`wait_for`) lets a test await calls
+ *        button or not), a scripted cursor and primary button for drags, keeps the window corner its moves set, and
+ *        whose next show can fail. ChannelSink-style waiting (`wait_for`) lets a test await calls
  *        a worker thread makes later.
  * WHY:   The pill presenter decides when to show, hide and take clicks on its own thread; tests prove those
  *        decisions without a window appearing on the test machine.
@@ -16,15 +17,16 @@ use std::{
 use super::lock;
 use crate::{
     ports::OverlayWindow,
-    types::{OverlayRect, PortError, PortResult, ScreenRect},
+    types::{OverlayPlacement, OverlayRect, PortError, PortResult, ScreenPoint},
 };
 
 /// One call the overlay received.
 #[derive(Debug, Clone, PartialEq)]
 pub enum OverlayCall {
-    Show(Option<ScreenRect>),
+    Show(OverlayPlacement),
     Hide,
     ClickThrough(bool),
+    MoveTo(ScreenPoint),
 }
 
 #[derive(Default)]
@@ -32,6 +34,9 @@ struct OverlayState {
     calls: Vec<OverlayCall>,
     pointer_over: bool,
     next_error: Option<PortError>,
+    origin: ScreenPoint,
+    cursor: ScreenPoint,
+    button_down: bool,
 }
 
 /// An overlay that records instead of drawing.
@@ -50,6 +55,13 @@ impl FakeOverlayWindow {
     /// Moves the pointer onto (`true`) or off (`false`) any clickable area.
     pub fn set_pointer_over(&self, over: bool) {
         lock(&self.state).pointer_over = over;
+    }
+
+    /// Puts the cursor at `cursor` with the primary button held (`down`) or not.
+    pub fn set_cursor(&self, cursor: ScreenPoint, down: bool) {
+        let mut state = lock(&self.state);
+        state.cursor = cursor;
+        state.button_down = down;
     }
 
     /// Makes the next show fail with `error` (and not be recorded).
@@ -85,11 +97,14 @@ impl FakeOverlayWindow {
 }
 
 impl OverlayWindow for FakeOverlayWindow {
-    fn show(&self, work_area: Option<ScreenRect>) -> PortResult<()> {
+    fn show(&self, placement: OverlayPlacement) -> PortResult<()> {
         if let Some(error) = lock(&self.state).next_error.take() {
             return Err(error);
         }
-        self.record(OverlayCall::Show(work_area));
+        if let OverlayPlacement::At(corner) = placement {
+            lock(&self.state).origin = corner;
+        }
+        self.record(OverlayCall::Show(placement));
         Ok(())
     }
 
@@ -106,6 +121,24 @@ impl OverlayWindow for FakeOverlayWindow {
     fn pointer_over(&self, areas: &[OverlayRect]) -> PortResult<bool> {
         Ok(!areas.is_empty() && lock(&self.state).pointer_over)
     }
+
+    fn origin(&self) -> PortResult<ScreenPoint> {
+        Ok(lock(&self.state).origin)
+    }
+
+    fn move_to(&self, corner: ScreenPoint) -> PortResult<()> {
+        lock(&self.state).origin = corner;
+        self.record(OverlayCall::MoveTo(corner));
+        Ok(())
+    }
+
+    fn cursor(&self) -> PortResult<ScreenPoint> {
+        Ok(lock(&self.state).cursor)
+    }
+
+    fn primary_button_down(&self) -> PortResult<bool> {
+        Ok(lock(&self.state).button_down)
+    }
 }
 
 #[cfg(test)]
@@ -117,14 +150,15 @@ mod tests {
     fn records_calls_and_scripts_the_pointer() {
         let overlay = FakeOverlayWindow::default();
         overlay.fail_next_show(PortError::new(AppError::Internal));
-        assert!(overlay.show(None).is_err());
-        overlay.show(None).unwrap();
+        let primary = OverlayPlacement::BottomCentre(None);
+        assert!(overlay.show(primary).is_err());
+        overlay.show(primary).unwrap();
         overlay.set_click_through(false).unwrap();
         overlay.hide().unwrap();
         assert_eq!(
             overlay.calls(),
             [
-                OverlayCall::Show(None),
+                OverlayCall::Show(primary),
                 OverlayCall::ClickThrough(false),
                 OverlayCall::Hide
             ]
@@ -148,5 +182,17 @@ mod tests {
                 .len(),
             3
         );
+    }
+
+    #[test]
+    fn moves_and_the_scripted_cursor_are_kept() {
+        let overlay = FakeOverlayWindow::default();
+        let corner = ScreenPoint { x: 40, y: 900 };
+        overlay.move_to(corner).unwrap();
+        assert_eq!(overlay.origin().unwrap(), corner);
+        overlay.set_cursor(ScreenPoint { x: 5, y: 6 }, true);
+        assert_eq!(overlay.cursor().unwrap(), ScreenPoint { x: 5, y: 6 });
+        assert!(overlay.primary_button_down().unwrap());
+        assert_eq!(overlay.calls(), [OverlayCall::MoveTo(corner)]);
     }
 }

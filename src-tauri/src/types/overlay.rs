@@ -1,7 +1,8 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: OverlayRect, PillHitAreas, pill hit areas, click-through, overlay window, pill buttons, CSS pixels
+ * SOURCE OF TRUTH KEYWORDS: OverlayRect, PillHitAreas, OverlayPlacement, pill hit areas, click-through, overlay window, pill buttons, CSS pixels, pill placement
  * WHAT:  OverlayRect (a rectangle on the pill's page, in CSS pixels from its top-left corner) and PillHitAreas (the
- *        rectangles of the pill's buttons, the only places the pill takes clicks), the input of `pill_set_hit_areas`.
+ *        rectangles of the pill's buttons, the only places the pill takes clicks), the input of `pill_set_hit_areas`;
+ *        OverlayPlacement, where the overlay window goes when it is shown.
  * WHY:   The pill is a transparent, non-activating window that must let clicks through everywhere except on its
  *        buttons (04 §4). Only the page knows where its buttons are after a morph, and only the overlay adapter
  *        knows the window's DPI and screen position, so the page reports rectangles in its own CSS pixels (1 CSS px
@@ -14,6 +15,23 @@
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
+
+use super::{ScreenPoint, ScreenRect};
+
+/**
+ * SOURCE OF TRUTH KEYWORDS: OverlayPlacement, pill placement, bottom centre, dragged pill position, saved position
+ * WHAT:  Where `OverlayWindow::show` puts the window: the bottom centre of a work area (None = the primary
+ *        monitor's), or a top-left corner the user dragged it to (physical pixels).
+ * WHY:   The pill follows the user's monitor unless they moved it (`pill.movable` + `pill.position`); the saved
+ *        corner may sit on a monitor that is gone since, so the adapter falls back to the primary bottom centre
+ *        instead of showing the pill off screen.
+ * WHERE: Chosen by pipeline/pill.rs (PillPresenter); carried out by adapters/window/overlay.rs.
+ */
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OverlayPlacement {
+    BottomCentre(Option<ScreenRect>),
+    At(ScreenPoint),
+}
 
 /// A rectangle on the pill's page, in whole CSS pixels from its top-left corner.
 #[derive(

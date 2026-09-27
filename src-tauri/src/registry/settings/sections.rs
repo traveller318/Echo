@@ -19,6 +19,7 @@ const fn section(section: SettingSection, label: &'static str) -> SettingSection
 /// Every Settings page section, in page order.
 pub const SECTIONS: &[SettingSectionSpec] = &[
     section(SettingSection::General, "General"),
+    section(SettingSection::Pill, "Recording pill"),
     section(SettingSection::Hotkeys, "Hotkeys"),
     section(SettingSection::Session, "Recording"),
     section(SettingSection::Audio, "Microphone"),

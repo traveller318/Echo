@@ -1,10 +1,11 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: settings effects, SettingsEffects, launch at startup effect, apply settings live, after settings write, derived settings state, live settings change, LLM sidecar start stop, polish model download
+ * SOURCE OF TRUTH KEYWORDS: settings effects, SettingsEffects, launch at startup effect, pill look effect, PillLookChanged, apply settings live, after settings write, derived settings state, live settings change, LLM sidecar start stop, polish model download
  * WHAT:  SettingsEffects: the one place that makes a stored settings change take effect in the running app.
  *        `apply(before, after)` compares the snapshot a write replaced with the new one and runs every consequence:
  *        the appearance (AppearanceChanged), the retention sweep, the speech engine swap, the polish chain (grammar
  *        polish on starts the LLM sidecar, off stops it), the download of a polish model just switched on, the
- *        start-at-sign-in entry, and the dashboard refresh (MetricsChanged).
+ *        start-at-sign-in entry, the pill (PillLookChanged for its page, and the presenter shows, hides or re-places
+ *        its window) and the dashboard refresh (MetricsChanged).
  * WHY:   Every setting works live or says a restart is needed (step 18); most are simply read at the moment they
  *        matter (per take, per delivery, per command) and need nothing here. The rest derive running state, and each
  *        owner decides from `before` and `after` whether it is affected, so no code matches on a setting key
@@ -17,12 +18,14 @@
 
 use crate::{
     pipeline::{
-        appearance, asr, asr::AsrWorker, launch, models::ModelManager, polish::PolishChains,
-        retention, retention::RetentionHandle,
+        appearance, asr, asr::AsrWorker, launch, models::ModelManager, pill, pill::PillPresenter,
+        polish::PolishChains, retention, retention::RetentionHandle,
     },
     ports::{EventSink, LaunchAtLogin, SystemAppearance},
     registry,
-    types::{AppEvent, AppPaths, AppearanceChanged, MetricsChanged, SettingsSnapshot},
+    types::{
+        AppEvent, AppPaths, AppearanceChanged, MetricsChanged, PillLookChanged, SettingsSnapshot,
+    },
 };
 
 /// What a settings change may act on.
@@ -41,6 +44,8 @@ pub struct SettingsEffects<'a> {
     pub paths: &'a AppPaths,
     /// Echo's start at sign-in, for `general.launch_at_startup`.
     pub launch: &'a dyn LaunchAtLogin,
+    /// The pill window, for the `pill.*` settings.
+    pub pill: &'a PillPresenter,
     /// Rust → UI events.
     pub events: &'a dyn EventSink<AppEvent>,
 }
@@ -59,6 +64,10 @@ impl SettingsEffects<'_> {
         self.polish.refresh_on_change(before, after);
         self.models.fetch_newly_selected(before, after);
         launch::after_settings_change(self.launch, before, after);
+        if let Some(look) = pill::look_after_settings_change(before, after) {
+            self.pill.look_changed();
+            self.events.emit(PillLookChanged(look).into());
+        }
         if registry::metrics::inputs_changed(before, after) {
             self.events.emit(MetricsChanged {}.into());
         }

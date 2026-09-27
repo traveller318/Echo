@@ -39,14 +39,14 @@ describe("settingValueSchema", () => {
   });
 
   it("enum accepts only the options offered now", () => {
-    const kind = { kind: "enum", options: { from: "fixed", list: THEMES } } as const;
+    const kind = { kind: "enum", options: { from: "fixed", list: THEMES }, display: { as: "select" } } as const;
     const schema = settingValueSchema("enum", kind, { options: THEMES });
     expect(schema.safeParse("dark").success).toBe(true);
     expect(firstMessage(schema.safeParse("sepia"))).toBe("Choose one of the listed options.");
     expect(firstMessage(schema.safeParse(" "))).toBe("Choose an option.");
     const runtime = settingValueSchema(
       "enum",
-      { kind: "enum", options: { from: "runtime", source: "asr_engines" } },
+      { kind: "enum", options: { from: "runtime", source: "asr_engines" }, display: { as: "select" } },
       { options: [] },
     );
     expect(firstMessage(runtime.safeParse("parakeet"))).toBe("Choose one of the listed options.");

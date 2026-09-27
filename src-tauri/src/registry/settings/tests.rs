@@ -116,6 +116,10 @@ fn every_documented_setting_is_registered() {
             "general.theme",
             "general.onboarded",
             "general.debug_log",
+            "pill.visibility",
+            "pill.movable",
+            "pill.style",
+            "pill.position",
             "hotkeys.record",
             "hotkeys.mode",
             "hotkeys.paste_last",
@@ -163,6 +167,7 @@ fn fixed_options_are_unique() {
     for spec in SETTINGS {
         if let SettingKind::Enum {
             options: EnumOptions::Fixed { list },
+            ..
         } = &spec.kind
         {
             let values: HashSet<&str> = list.iter().map(|option| option.value.as_str()).collect();
@@ -718,4 +723,73 @@ fn onboarding_starts_undone_hidden_and_is_remembered_once_set() {
         !onboarded(&SettingsSnapshot::default()),
         "an unresolved snapshot falls back to the spec default"
     );
+}
+
+#[test]
+fn pill_options_are_exactly_the_pill_choices_and_the_look_reads_them() {
+    use super::list::{PILL_STYLE_OPTIONS, PILL_VISIBILITY_OPTIONS};
+    use crate::types::{PillLook, PillStyle, PillVisibility, ScreenPoint};
+
+    let visibility: Vec<&str> = PillVisibility::ALL
+        .iter()
+        .map(|choice| choice.as_str())
+        .collect();
+    assert_eq!(values_of(PILL_VISIBILITY_OPTIONS), visibility);
+    let styles: Vec<&str> = PillStyle::ALL.iter().map(|style| style.as_str()).collect();
+    assert_eq!(values_of(PILL_STYLE_OPTIONS), styles);
+
+    assert_eq!(pill_look(&defaults()), PillLook::default());
+    let chosen = resolve([
+        (keys::PILL_VISIBILITY, SettingValue::Enum(text("always"))),
+        (keys::PILL_STYLE, SettingValue::Enum(text("mono"))),
+        (keys::PILL_MOVABLE, SettingValue::Bool(true)),
+        (
+            keys::PILL_POSITION,
+            values::pill_position(ScreenPoint { x: -20, y: 7 }),
+        ),
+    ]);
+    assert_eq!(
+        pill_look(&chosen),
+        PillLook {
+            visibility: PillVisibility::Always,
+            style: PillStyle::Mono,
+            movable: true,
+        }
+    );
+    assert_eq!(
+        pill_dragged_position(&chosen),
+        Some(ScreenPoint { x: -20, y: 7 })
+    );
+    assert!(
+        !find(&keys::PILL_POSITION).unwrap().visible,
+        "Rust's own state"
+    );
+}
+
+#[test]
+fn pill_positions_round_trip_and_anything_else_is_no_position() {
+    use crate::types::ScreenPoint;
+
+    for corner in [
+        ScreenPoint { x: 0, y: 0 },
+        ScreenPoint { x: -2560, y: 1400 },
+        ScreenPoint {
+            x: i32::MIN,
+            y: i32::MAX,
+        },
+    ] {
+        let SettingValue::Text(stored) = values::pill_position(corner) else {
+            panic!("a position is stored as text");
+        };
+        assert!(
+            find(&keys::PILL_POSITION)
+                .unwrap()
+                .validate(&SettingValue::Text(stored.clone()))
+                .is_ok()
+        );
+        assert_eq!(values::parse_pill_position(&stored), Some(corner));
+    }
+    for junk in ["", "12", "a,b", "1,2,3", "9999999999,0"] {
+        assert_eq!(values::parse_pill_position(junk), None, "{junk}");
+    }
 }
