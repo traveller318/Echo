@@ -24,6 +24,7 @@ export type NavPages = Readonly<Record<NavId, NavPage>>;
 export const NAV_PAGES: NavPages = {
   dashboard: lazy(() => import("@/routes/dashboard")),
   history: lazy(() => import("@/routes/history")),
+  dictionary: lazy(() => import("@/routes/dictionary")),
   models: lazy(() => import("@/routes/models")),
   settings: lazy(() => import("@/routes/settings")),
 };

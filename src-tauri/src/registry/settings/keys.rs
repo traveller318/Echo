@@ -35,9 +35,12 @@ pub const ASR_ENGINE: SettingKey = SettingKey::from_static("transcription.engine
 pub const LANGUAGE: SettingKey = SettingKey::from_static("transcription.language");
 pub const ACCELERATOR: SettingKey = SettingKey::from_static("transcription.accelerator");
 pub const REMOVE_FILLERS: SettingKey = SettingKey::from_static("polish.remove_fillers");
-pub const DICTIONARY: SettingKey = SettingKey::from_static("polish.dictionary");
 pub const LLM_ENABLED: SettingKey = SettingKey::from_static("polish.llm_enabled");
 pub const LLM_ENGINE: SettingKey = SettingKey::from_static("polish.llm_engine");
+/// Whether the dictionary is applied to takes; off keeps the saved terms but swaps nothing.
+pub const DICTIONARY_ENABLED: SettingKey = SettingKey::from_static("dictionary.enabled");
+/// The dictionary's word → written-as pairs (stored as `polish.dictionary` before migration 0004).
+pub const DICTIONARY: SettingKey = SettingKey::from_static("dictionary.entries");
 pub const AUDIO_RETENTION_DAYS: SettingKey =
     SettingKey::from_static("storage.audio_retention_days");
 pub const HISTORY_RETENTION_DAYS: SettingKey =

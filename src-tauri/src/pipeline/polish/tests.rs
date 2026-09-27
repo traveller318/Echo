@@ -152,6 +152,30 @@ fn the_context_follows_the_settings_and_the_engine_caps() {
 }
 
 #[test]
+fn a_switched_off_dictionary_reaches_no_stage() {
+    let pair = TextPair {
+        from: StaticStr::new("cloud code"),
+        to: StaticStr::new("Claude Code"),
+    };
+    let settings = resolve([
+        (keys::DICTIONARY_ENABLED, SettingValue::Bool(false)),
+        (
+            keys::DICTIONARY,
+            SettingValue::Pairs(StaticList::from(vec![pair])),
+        ),
+    ]);
+    let context = polish_context(&settings, &parakeet_caps(), None);
+    assert!(
+        context.dictionary.is_empty(),
+        "the saved terms stay, unused"
+    );
+
+    let chain = registry_chain(&settings);
+    let outcome = block_on(chain.run("I use cloud code.", &context));
+    assert_eq!(outcome.text, "I use cloud code. ");
+}
+
+#[test]
 fn stages_run_in_order_and_the_trailing_space_comes_last() {
     let (chain, slow) = fake_chain(FakePolish::Map(exclaim), true);
     assert_eq!(chain.stage_ids().collect::<Vec<_>>(), [&RULES, &LLM]);
@@ -193,6 +217,32 @@ fn a_failing_or_empty_slow_stage_falls_back() {
         reasons(&outcome.fallbacks),
         [("fake-llm", &PolishFallbackReason::EmptyOutput)]
     );
+}
+
+#[test]
+fn a_model_stage_that_rewrites_a_dictionary_term_falls_back_to_the_rule_output() {
+    let with_term = PolishContext {
+        dictionary: StaticList::from(vec![TextPair {
+            from: StaticStr::new("bridge mind"),
+            to: StaticStr::new("BRIDGEMIND"),
+        }]),
+        ..context(None)
+    };
+    // The rules fake uppercases, so its output holds the spelling "BRIDGEMIND".
+    let (rewriting, _) = fake_chain(FakePolish::Map(str::to_lowercase), false);
+    let outcome = block_on(rewriting.run("i use bridgemind", &with_term));
+    assert_eq!(outcome.text, "I USE BRIDGEMIND");
+    assert_eq!(outcome.polisher_ids, [RULES]);
+    assert_eq!(
+        reasons(&outcome.fallbacks),
+        [("fake-llm", &PolishFallbackReason::DictionaryTermLost)]
+    );
+
+    let (keeping, _) = fake_chain(FakePolish::Map(exclaim), false);
+    let outcome = block_on(keeping.run("i use bridgemind", &with_term));
+    assert_eq!(outcome.text, "I USE BRIDGEMIND!");
+    assert_eq!(outcome.polisher_ids, [RULES, LLM]);
+    assert!(outcome.fallbacks.is_empty());
 }
 
 #[test]

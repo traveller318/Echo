@@ -4,7 +4,8 @@
  *        visible settings whose caps requirement holds, rows showing the effective values, a change sent through
  *        `settings_set`, a reset through `settings_reset`, a refused hotkey shown inline, and the notice for a selected
  *        engine whose model is not ready (grammar polish downloading), the hotkeys-paused notice and its resume, a
- *        hotkey field holding the capture lease while it captures; plus the pure grouping and notice-copy rules.
+ *        hotkey field holding the capture lease while it captures, and no section another page owns (the dictionary);
+ *        plus the pure grouping and notice-copy rules.
  * WHY:   The page wires the registry, the settings reads and SettingField together; this is the one place that
  *        whole flow runs short of Rust.
  * WHERE: Runs in the `web` Vitest project with `@/bindings` mocked.
@@ -28,7 +29,7 @@ import type {
 import { RegistryContext } from "@/hooks";
 import { createEchoQueryClient } from "@/lib/query-client";
 import { setupNoticeCopy } from "./_components/model-setup-copy";
-import { settingsBySection } from "./_components/settings-layout";
+import { settingsBySection } from "@/lib/settings-layout";
 
 const NAV: NavItem = { id: "settings", label: "Settings", icon: "settings", route: "/settings", order: 3 };
 const MODELS_NAV: NavItem = { id: "models", label: "Models", icon: "boxes", route: "/models", order: 2 };
@@ -104,14 +105,16 @@ const SETTINGS: SettingSpec[] = [
     label: "Check for updates automatically",
     requires: "updater_available",
   }),
+  setting({ key: "dictionary.enabled", section: "dictionary", label: "Apply dictionary to transcripts" }),
 ];
 
 const REGISTRY: RegistryView = {
   settings: SETTINGS,
   sections: [
-    { section: "general", label: "General" },
-    { section: "hotkeys", label: "Hotkeys" },
-    { section: "updates", label: "Updates" },
+    { section: "general", label: "General", page: "settings" },
+    { section: "hotkeys", label: "Hotkeys", page: "settings" },
+    { section: "dictionary", label: "Dictionary", page: "dictionary" },
+    { section: "updates", label: "Updates", page: "settings" },
   ],
   hotkeys: [],
   nav: [NAV, MODELS_NAV],
@@ -126,6 +129,7 @@ const VALUES: SettingEntry[] = [
   { key: "general.debug_log", value: { kind: "bool", value: false } },
   { key: "hotkeys.record", value: { kind: "hotkey", value: "Ctrl+Alt" } },
   { key: "updates.auto_check", value: { kind: "bool", value: true } },
+  { key: "dictionary.enabled", value: { kind: "bool", value: true } },
 ];
 
 const AVAILABILITY: SettingsAvailability = { caps: ["hotkey_release", "multiple_languages"], options: [] };
@@ -208,6 +212,7 @@ describe("SettingsPage", () => {
     expect(screen.queryByText("Detailed logging")).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "About" })).not.toBeInTheDocument();
     expect(screen.queryByText("Check for updates automatically")).not.toBeInTheDocument();
+    expect(screen.queryByText("Apply dictionary to transcripts")).not.toBeInTheDocument();
   });
 
   it("sends a change and a reset through the settings commands", async () => {
@@ -291,7 +296,7 @@ describe("SettingsPage", () => {
 describe("settingsBySection", () => {
   it("keeps registry order, drops hidden and unavailable settings and empty sections", () => {
     const shown = (caps: CapsRequirement[]) =>
-      settingsBySection(REGISTRY.sections, SETTINGS, caps).map((group) => [
+      settingsBySection(REGISTRY.sections, SETTINGS, caps, "settings").map((group) => [
         group.section.section,
         group.settings.map((spec) => spec.key),
       ]);
@@ -304,6 +309,9 @@ describe("settingsBySection", () => {
       ["hotkeys", ["hotkeys.record"]],
       ["updates", ["updates.auto_check"]],
     ]);
+    expect(settingsBySection(REGISTRY.sections, SETTINGS, [], "dictionary").map((group) => group.section.section)).toEqual(
+      ["dictionary"],
+    );
   });
 });
 

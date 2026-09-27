@@ -325,7 +325,10 @@ mod tests {
         assert_eq!(view.metrics, metrics::METRICS);
         assert_eq!(view.engines, engines::specs());
         let nav: Vec<&str> = view.nav.iter().map(|item| item.id.as_str()).collect();
-        assert_eq!(nav, ["dashboard", "history", "models", "settings"]);
+        assert_eq!(
+            nav,
+            ["dashboard", "history", "dictionary", "models", "settings"]
+        );
     }
 
     #[test]

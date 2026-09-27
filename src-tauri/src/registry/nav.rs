@@ -1,6 +1,6 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: nav registry, NAV, sidebar entries, dashboard, history, models, settings, route order
- * WHAT:  The main window's sidebar entries (dashboard, history, models, settings) with label, icon, route and
+ * SOURCE OF TRUTH KEYWORDS: nav registry, NAV, sidebar entries, dashboard, history, dictionary, models, settings, route order
+ * WHAT:  The main window's sidebar entries (dashboard, history, dictionary, models, settings) with label, icon, route and
  *        order, and the list in sidebar order.
  * WHY:   The sidebar and router are built from these (02 §3.3), so adding a page is a NavId variant, an entry here
  *        and its route folder (src/routes/<id>/, which tsc demands through the generated NavId union). Onboarding is a route, not a nav item: it is reached on first run, never from the sidebar.
@@ -26,18 +26,25 @@ pub const NAV: &[NavItem] = &[
         order: 1,
     },
     NavItem {
+        id: NavId::Dictionary,
+        label: StaticStr::new("Dictionary"),
+        icon: NavIcon::BookOpen,
+        route: StaticStr::new("/dictionary"),
+        order: 2,
+    },
+    NavItem {
         id: NavId::Models,
         label: StaticStr::new("Models"),
         icon: NavIcon::Boxes,
         route: StaticStr::new("/models"),
-        order: 2,
+        order: 3,
     },
     NavItem {
         id: NavId::Settings,
         label: StaticStr::new("Settings"),
         icon: NavIcon::Settings,
         route: StaticStr::new("/settings"),
-        order: 3,
+        order: 4,
     },
 ];
 
@@ -77,9 +84,12 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_lists_the_four_pages_and_not_onboarding() {
+    fn sidebar_lists_the_five_pages_and_not_onboarding() {
         let order: Vec<&str> = items().iter().map(|item| item.id.as_str()).collect();
-        assert_eq!(order, ["dashboard", "history", "models", "settings"]);
+        assert_eq!(
+            order,
+            ["dashboard", "history", "dictionary", "models", "settings"]
+        );
         assert!(NAV.iter().all(|item| item.route.as_str() != "/onboarding"));
     }
 }

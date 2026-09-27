@@ -1,7 +1,8 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: Page, page layout, page title, content area, content-pad, content-max, actions slot
+ * SOURCE OF TRUTH KEYWORDS: Page, page layout, page title, page description, content area, content-pad, content-max, actions slot
  * WHAT:  The content area of a main-window screen: a padded, width-capped column with the page title as its h1,
- *        an optional `actions` slot beside the title, and the page body as children.
+ *        an optional `description` line under it, an optional `actions` slot beside the title, and the page body as
+ *        children.
  * WHY:   04 §5 fixes the content area (--content-pad, max --content-max, title --text-title1) for every screen;
  *        one component keeps Dashboard, History, Models, Settings and Onboarding aligned. The title is the one
  *        h1 of the window, so EmptyState and cards use h2 and below. Slots keep copy and behaviour out of it.
@@ -12,11 +13,13 @@ import { cn } from "@/lib/cn";
 
 export type PageProps = Omit<ComponentProps<"section">, "title"> & {
   readonly title: ReactNode;
+  /** One line under the title saying what the page is for. */
+  readonly description?: ReactNode;
   /** Controls beside the title (e.g. "Import from folder"). */
   readonly actions?: ReactNode;
 };
 
-export function Page({ title, actions, className, children, ...props }: PageProps) {
+export function Page({ title, description, actions, className, children, ...props }: PageProps) {
   return (
     <section
       data-slot="page"
@@ -24,7 +27,14 @@ export function Page({ title, actions, className, children, ...props }: PageProp
       {...props}
     >
       <header data-slot="page-header" className="flex items-center justify-between gap-4">
-        <h1 className="text-title1 text-fg">{title}</h1>
+        <div className="flex min-w-0 flex-col gap-1">
+          <h1 className="text-title1 text-fg">{title}</h1>
+          {description === undefined ? null : (
+            <p data-slot="page-description" className="text-body text-fg-secondary">
+              {description}
+            </p>
+          )}
+        </div>
         {actions === undefined ? null : (
           <div data-slot="page-actions" className="flex items-center gap-2">
             {actions}

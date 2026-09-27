@@ -78,7 +78,7 @@ const HOTKEY_MODE_OPTIONS: &[EnumOption] = &[
     },
 ];
 
-/// `polish.dictionary` limits (02 §3.3: at most 500 entries).
+/// `dictionary.entries` limits (02 §3.3: at most 500 entries).
 const DICTIONARY_MAX_PAIRS: u32 = 500;
 const DICTIONARY_MAX_LEN: u32 = 100;
 
@@ -421,22 +421,6 @@ pub const SETTINGS: &[SettingSpec] = &[
         requires: None,
     },
     SettingSpec {
-        key: keys::DICTIONARY,
-        section: SettingSection::Polish,
-        label: StaticStr::new("Dictionary"),
-        help: StaticStr::new(
-            "Words Echo should always write your way, such as names and terms. Matching ignores case.",
-        ),
-        kind: SettingKind::Pairs {
-            max_pairs: DICTIONARY_MAX_PAIRS,
-            max_len: DICTIONARY_MAX_LEN,
-        },
-        default: SettingValue::Pairs(StaticList::new(&[])),
-        restart_required: false,
-        visible: true,
-        requires: None,
-    },
-    SettingSpec {
         key: keys::LLM_ENABLED,
         section: SettingSection::Polish,
         label: StaticStr::new("Grammar polish"),
@@ -461,6 +445,33 @@ pub const SETTINGS: &[SettingSpec] = &[
             display: EnumDisplay::Select,
         },
         default: SettingValue::Enum(StaticStr::new("qwen3-1.7b")),
+        restart_required: false,
+        visible: true,
+        requires: None,
+    },
+    SettingSpec {
+        key: keys::DICTIONARY_ENABLED,
+        section: SettingSection::Dictionary,
+        label: StaticStr::new("Apply dictionary to transcripts"),
+        help: StaticStr::new("Swap your saved terms into every dictation before it lands."),
+        kind: SettingKind::Bool,
+        default: SettingValue::Bool(true),
+        restart_required: false,
+        visible: true,
+        requires: None,
+    },
+    SettingSpec {
+        key: keys::DICTIONARY,
+        section: SettingSection::Dictionary,
+        label: StaticStr::new("Saved terms"),
+        help: StaticStr::new(
+            "Words Echo should always write your way, such as names and terms. Matching ignores case.",
+        ),
+        kind: SettingKind::Pairs {
+            max_pairs: DICTIONARY_MAX_PAIRS,
+            max_len: DICTIONARY_MAX_LEN,
+        },
+        default: SettingValue::Pairs(StaticList::new(&[])),
         restart_required: false,
         visible: true,
         requires: None,

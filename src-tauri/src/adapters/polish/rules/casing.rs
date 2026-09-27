@@ -3,7 +3,9 @@
  * WHAT:  `apply_casing` capitalizes the first word of the text, of each line and of each sentence, and the words the
  *        lexicon always capitalizes ("i" → "I", "i'm" → "I'm").
  * WHY:   Stage 5 of 02 §8.3, skipped when the engine's caps say it cases its own output (rules/mod.rs decides). It
- *        only ever raises a letter, never lowers one, so names the engine wrote stay. A full stop ends a sentence only
+ *        only ever raises a letter, never lowers one, so names the engine wrote stay, and it leaves a word that already
+ *        holds a capital alone, so a deliberate spelling ("iPhone", a dictionary term such as "eBay") survives a
+ *        sentence start. A full stop ends a sentence only
  *        when whitespace or the end follows it and it is not part of an ellipsis, a one-letter abbreviation chain
  *        ("e.g.", "U.S.") or a lexicon abbreviation ("Dr."); "3.5" and "example.com" never qualify because a word
  *        follows the dot directly. An ellipsis does not end a sentence: it usually marks a trailing thought.
@@ -27,7 +29,8 @@ pub fn apply_casing(tokens: &mut [Token], lexicon: Option<&Lexicon>) {
                 let always = !dotted
                     && lexicon
                         .is_some_and(|lexicon| lexicon.is_capitalized(&tokens[index].folded()));
-                if sentence_start || always {
+                let spelled = tokens[index].text.chars().any(char::is_uppercase);
+                if (sentence_start || always) && !spelled {
                     tokens[index].text = capitalize_first(&tokens[index].text);
                 }
                 sentence_start = false;
@@ -110,6 +113,7 @@ mod tests {
             ("(yes.) then", "(Yes.) Then"),
             ("plan B. next", "Plan B. Next"),
             ("the iPhone and NASA", "The iPhone and NASA"),
+            ("iPhone first. eBay next", "iPhone first. eBay next"),
             ("émile arrived", "Émile arrived"),
         ];
         for (input, expected) in cases {

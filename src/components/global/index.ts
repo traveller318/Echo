@@ -1,5 +1,5 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: components global barrel, reusable components, GlassSurface, EmptyState, InlineNotice, FactList, ModelCard, ModelCardActions, ProgressBar, NavIcon, Page, PillPreview, PillRest, PillMark, Waveform, DataList, TranscriptRow, SettingField, SettingRow, HotkeyInput, StatCard, MicCheckPanel, ConfirmDialog, take actions
+ * SOURCE OF TRUTH KEYWORDS: components global barrel, reusable components, GlassSurface, EmptyState, InlineNotice, FactList, ModelCard, ModelCardActions, ProgressBar, NavIcon, Page, PillPreview, PillRest, PillMark, Waveform, DataList, TranscriptRow, SettingField, SettingRow, SettingsReads, HotkeyInput, StatCard, MicCheckPanel, ConfirmDialog, take actions
  * WHAT:  Barrel for every reusable app component (one folder each under components/global).
  * WHY:   Routes import `@/components/global` and never reach into a folder, so components can be reorganised
  *        inside their folders freely (03 §3). Components inside global/ import each other by folder, never
@@ -89,6 +89,7 @@ export {
   type SettingForm,
 } from "./setting-field";
 export { SettingRow, SettingRowFor, type SettingRowForProps, type SettingRowProps } from "./setting-row";
+export { SettingsReads, type SettingsReadsProps, type SettingsReadsResult } from "./settings-reads";
 export {
   StatCard,
   StatFigure,

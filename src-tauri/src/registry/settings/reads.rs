@@ -102,9 +102,10 @@ pub(super) const fn accelerator_value(accelerator: Accelerator) -> &'static str 
 }
 
 /**
- * SOURCE OF TRUTH KEYWORDS: remove_fillers setting, dictionary setting, llm_polisher, trailing_space, polish settings read
+ * SOURCE OF TRUTH KEYWORDS: remove_fillers setting, dictionary setting, dictionary enabled, llm_polisher, trailing_space, polish settings read
  * WHAT:  Typed reads of the polish and output settings the polish chain acts on: whether fillers are removed, the
- *        dictionary pairs, the model polisher to run (None while grammar polish is off) and the trailing space.
+ *        dictionary pairs to apply (none while the dictionary is off), the model polisher to run (None while
+ *        grammar polish is off) and the trailing space.
  * WHY:   The chain is built from the registry and these reads (02 §8.3), so the pipeline never matches a
  *        SettingValue kind. The model polisher id is only a choice: whether it is registered and built is decided
  *        where the chain is built (pipeline/polish), which falls back to the rule output when it is not.
@@ -114,8 +115,12 @@ pub fn remove_fillers(settings: &SettingsSnapshot) -> bool {
     bool_or_default(settings, &keys::REMOVE_FILLERS)
 }
 
-/// `polish.dictionary`, in the order the user entered it.
+/// The `dictionary.entries` pairs to apply, in the order the user entered them; none while `dictionary.enabled`
+/// is off, so the switch is honoured by every stage that reads the dictionary.
 pub fn dictionary(settings: &SettingsSnapshot) -> &[TextPair] {
+    if !bool_or_default(settings, &keys::DICTIONARY_ENABLED) {
+        return &[];
+    }
     settings.pairs(&keys::DICTIONARY).unwrap_or_default()
 }
 

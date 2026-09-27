@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use super::{
-    AppError, HotkeyCaps, LaunchAtLoginCaps, SettingKey, StaticList, StaticStr, UpdaterCaps,
+    AppError, HotkeyCaps, LaunchAtLoginCaps, NavId, SettingKey, StaticList, StaticStr, UpdaterCaps,
 };
 
 /// The Settings page group a setting belongs to; equals the prefix of its key (`general.theme` → `general`).
@@ -45,6 +45,7 @@ pub enum SettingSection {
     Output,
     Transcription,
     Polish,
+    Dictionary,
     Storage,
     Metrics,
     Privacy,
@@ -63,6 +64,7 @@ impl SettingSection {
             Self::Output => "output",
             Self::Transcription => "transcription",
             Self::Polish => "polish",
+            Self::Dictionary => "dictionary",
             Self::Storage => "storage",
             Self::Metrics => "metrics",
             Self::Privacy => "privacy",
@@ -72,16 +74,22 @@ impl SettingSection {
 }
 
 /**
- * SOURCE OF TRUTH KEYWORDS: SettingSectionSpec, settings section label, section order, Settings page sections
- * WHAT:  One Settings page section: which section and the heading it shows. The registry lists them in page order.
- * WHY:   The page renders a card per section from the registry (04 §5) and never spells a heading itself, so a new
- *        section is one registry entry with no UI change.
- * WHERE: registry/settings/sections.rs (SECTIONS); sent to the UI in RegistryView.sections.
+ * SOURCE OF TRUTH KEYWORDS: SettingSectionSpec, settings section label, section order, Settings page sections, section page, settings owned by a page
+ * WHAT:  One settings section: which section, the heading it shows and the main-window page that shows it. The
+ *        registry lists them in page order.
+ * WHY:   A page renders a card per section from the registry (04 §5) and never spells a heading itself, so a new
+ *        section is one registry entry with no UI change. Most sections live on Settings, but a feature with its
+ *        own sidebar page (the dictionary) owns its section there; `page` says so as data, so no page filters
+ *        settings by key.
+ * WHERE: registry/settings/sections.rs (SECTIONS); sent to the UI in RegistryView.sections; src/lib/settings-layout.ts
+ *        groups a page's settings by it.
  */
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct SettingSectionSpec {
     pub section: SettingSection,
     pub label: StaticStr,
+    /// The page that shows this section's settings.
+    pub page: NavId,
 }
 
 /// A capability the active adapters must declare for a setting or option to be shown.

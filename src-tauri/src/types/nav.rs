@@ -22,6 +22,7 @@ use super::StaticStr;
 pub enum NavId {
     Dashboard,
     History,
+    Dictionary,
     Models,
     Settings,
 }
@@ -32,6 +33,7 @@ impl NavId {
         match self {
             Self::Dashboard => "dashboard",
             Self::History => "history",
+            Self::Dictionary => "dictionary",
             Self::Models => "models",
             Self::Settings => "settings",
         }
@@ -60,6 +62,7 @@ pub struct OpenPageInput {
 pub enum NavIcon {
     LayoutDashboard,
     History,
+    BookOpen,
     Boxes,
     Settings,
 }
@@ -108,6 +111,7 @@ mod tests {
         for id in [
             NavId::Dashboard,
             NavId::History,
+            NavId::Dictionary,
             NavId::Models,
             NavId::Settings,
         ] {

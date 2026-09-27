@@ -8,7 +8,8 @@
  *        React Hook Form field array validated by the registry schema: each rule (blank word, length, characters,
  *        a word listed twice ignoring case) is reported on the row that breaks it with Rust's message, and nothing is
  *        saved until every row passes. An empty "written as" removes the word, as the polish rule does (02 §8.3).
- * WHERE: SettingField, for SettingKind `pairs` (`polish.dictionary`).
+ * WHERE: SettingField, for any SettingKind `pairs` row. The dictionary (`dictionary.entries`) is not drawn here: it
+ *        has its own page with a searchable term list (routes/dictionary).
  */
 import { PlusIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";

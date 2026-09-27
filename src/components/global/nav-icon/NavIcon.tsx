@@ -10,12 +10,13 @@
  *        components/global/index.ts.
  */
 import type { LucideIcon, LucideProps } from "lucide-react";
-import { BoxesIcon, HistoryIcon, LayoutDashboardIcon, SettingsIcon } from "lucide-react";
+import { BookOpenIcon, BoxesIcon, HistoryIcon, LayoutDashboardIcon, SettingsIcon } from "lucide-react";
 import type { NavIcon as NavIconName } from "@/bindings";
 
 const NAV_ICONS: Readonly<Record<NavIconName, LucideIcon>> = {
   "layout-dashboard": LayoutDashboardIcon,
   history: HistoryIcon,
+  "book-open": BookOpenIcon,
   boxes: BoxesIcon,
   settings: SettingsIcon,
 };

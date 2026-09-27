@@ -18,10 +18,10 @@ use crate::{
     registry::{engines, engines::tests::SAMPLE_ENGINES, hotkeys},
     types::{
         Accelerator, AdapterCaps, AppError, CapsRequirement, DeliveryPolicy, EnumOption,
-        EnumOptions, HotkeyCaps, HotkeyIssue, Language, LaunchAtLoginCaps, OptionSource,
+        EnumOptions, HotkeyCaps, HotkeyIssue, Language, LaunchAtLoginCaps, NavId, OptionSource,
         RecordMode, ResourceKind, RetentionPolicy, SessionPolicy, SettingKey, SettingKind,
-        SettingValue, SettingsSnapshot, StaticList, StaticStr, TextPair, ThemePreference,
-        UpdaterCaps,
+        SettingSection, SettingValue, SettingsSnapshot, StaticList, StaticStr, TextPair,
+        ThemePreference, UpdaterCaps,
     },
 };
 
@@ -134,9 +134,10 @@ fn every_documented_setting_is_registered() {
             "transcription.language",
             "transcription.accelerator",
             "polish.remove_fillers",
-            "polish.dictionary",
             "polish.llm_enabled",
             "polish.llm_engine",
+            "dictionary.enabled",
+            "dictionary.entries",
             "storage.audio_retention_days",
             "storage.history_retention_days",
             "metrics.typing_wpm",
@@ -340,7 +341,21 @@ fn polish_reads_follow_the_stored_values_and_their_defaults() {
     ]);
     assert!(!remove_fillers(&chosen));
     assert!(!trailing_space(&chosen));
-    assert_eq!(dictionary(&chosen), [pair]);
+    assert_eq!(dictionary(&chosen), std::slice::from_ref(&pair));
+    assert_eq!(
+        defaults.bool(&keys::DICTIONARY_ENABLED),
+        Some(true),
+        "the dictionary applies by default"
+    );
+    let switched_off = SettingsSnapshot::from_resolved([
+        (keys::DICTIONARY_ENABLED, SettingValue::Bool(false)),
+        (
+            keys::DICTIONARY,
+            SettingValue::Pairs(StaticList::from(vec![pair.clone()])),
+        ),
+    ]);
+    assert!(dictionary(&switched_off).is_empty());
+    assert_eq!(switched_off.pairs(&keys::DICTIONARY), Some(&[pair][..]));
     assert_eq!(
         llm_polisher(&chosen),
         Some(crate::types::EngineId::from_static("sample-llm"))
@@ -525,6 +540,33 @@ fn sections_list_every_used_section_once_in_first_use_order() {
             spec.section
         );
     }
+}
+
+#[test]
+fn the_dictionary_section_lives_on_its_own_page_and_every_other_on_settings() {
+    let nav: Vec<NavId> = crate::registry::nav::NAV
+        .iter()
+        .map(|item| item.id)
+        .collect();
+    for spec in SECTIONS {
+        assert!(
+            nav.contains(&spec.page),
+            "{:?} names a page the sidebar lacks",
+            spec.section
+        );
+        let expected = if spec.section == SettingSection::Dictionary {
+            NavId::Dictionary
+        } else {
+            NavId::Settings
+        };
+        assert_eq!(spec.page, expected, "{:?}", spec.section);
+    }
+    let dictionary: Vec<&str> = SETTINGS
+        .iter()
+        .filter(|spec| spec.section == SettingSection::Dictionary)
+        .map(|spec| spec.key.as_str())
+        .collect();
+    assert_eq!(dictionary, ["dictionary.enabled", "dictionary.entries"]);
 }
 
 #[test]

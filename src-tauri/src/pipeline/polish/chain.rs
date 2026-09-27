@@ -7,7 +7,8 @@
  *        under the PolishPolicy timeout; a timeout, an error or empty output keeps the text of the stage before it
  *        and is reported as a fallback. Instant stages are awaited directly: they are synchronous work behind a
  *        ready future, which a timer could not interrupt anyway. A stage whose caps exclude the take's language is
- *        skipped, not failed. A stage that could not be built is reported on every take, so the session can say
+ *        skipped, not failed. A model stage (`needs_model`) whose answer lost a dictionary spelling its input held
+ *        is not used either, so the user's swaps survive grammar polish on every take. A stage that could not be built is reported on every take, so the session can say
  *        why grammar polish did nothing, and is retried by the next build. Rebuilding after a settings change keeps
  *        the Arc of every stage whose id is unchanged, so a running sidecar is not restarted. Fallback details are
  *        logged here, never the text (02 §12).
@@ -17,6 +18,7 @@
 
 use std::sync::Arc;
 
+use super::dictionary_guard::keeps_dictionary_terms;
 use crate::{
     ports::TextPolisher,
     registry::{self, engines::BuildCtx},
@@ -213,6 +215,17 @@ impl PolishChain {
             Ok(polished) if slow && polished.trim().is_empty() => {
                 tracing::warn!(engine = %stage.id, "polish stage returned no text; kept the previous text");
                 Err(PolishFallbackReason::EmptyOutput)
+            }
+            // Never logs the term: dictionary entries are user content (02 §12).
+            Ok(polished)
+                if stage.caps.needs_model
+                    && !keeps_dictionary_terms(text, &polished, &context.dictionary) =>
+            {
+                tracing::warn!(
+                    engine = %stage.id,
+                    "polish stage changed a dictionary term; kept the previous text"
+                );
+                Err(PolishFallbackReason::DictionaryTermLost)
             }
             Ok(polished) => Ok(polished),
             Err(error) => {

@@ -11,7 +11,7 @@
  *        settings and the registry without building anything, and a rebuilt chain can keep the stages it already
  *        has (a running LLM sidecar is not restarted by an unrelated settings change). The 2 s budget is pipeline
  *        policy like SegmentPolicy, not a setting, and tests shorten it. A stage that loses (timeout, error, empty
- *        output, could not be built) never blocks delivery: the previous stage's text is kept and the fallback is
+ *        output, a dictionary spelling it lost, could not be built) never blocks delivery: the previous stage's text is kept and the fallback is
  *        reported so the session can log it; `polisher_ids` is what `transcripts.polisher_ids` stores.
  * WHERE: Built by pipeline/polish (plan from registry + settings, context per take); PolishContext is passed to
  *        `TextPolisher::polish` (ports/polish.rs); PolishOutcome goes to the session actor, which stores the text and
@@ -80,6 +80,8 @@ pub enum PolishFallbackReason {
     TimedOut,
     /// A slow stage returned no text for non-empty input.
     EmptyOutput,
+    /// A model stage rewrote or dropped a dictionary spelling its input held (pipeline/polish/dictionary_guard.rs).
+    DictionaryTermLost,
 }
 
 /// A stage whose output the chain did not use.

@@ -41,6 +41,7 @@ const STEPS: &[M<'static>] = &[
         "../../migrations/0002_accelerator_benchmarks.sql"
     )),
     M::up(include_str!("../../migrations/0003_cleared_takes.sql")),
+    M::up(include_str!("../../migrations/0004_dictionary_page.sql")),
 ];
 
 /// The migrations `open` applies.
@@ -388,5 +389,33 @@ mod tests {
             })
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn migration_0004_moves_the_saved_dictionary_to_its_own_key() {
+        let dir = TempDir::new("db");
+        let file = dir.join("echo.db");
+        let backup_of = |from: usize| dir.join(format!("echo.db.bak-{from}"));
+        let before = Db::open_with(&file, &Migrations::from_slice(&STEPS[..3]), backup_of).unwrap();
+        before
+            .write(|connection| {
+                connection.execute(
+                    "INSERT INTO settings (key, value_json, updated_at) VALUES \
+                     ('polish.dictionary', '{\"kind\":\"pairs\",\"value\":[]}', 1)",
+                    [],
+                )
+            })
+            .unwrap();
+        drop(before);
+
+        let db = Db::open_with(&file, &MIGRATIONS, backup_of).unwrap();
+        let keys: Vec<String> = db
+            .read(|connection| {
+                let mut statement = connection.prepare("SELECT key FROM settings")?;
+                let rows = statement.query_map([], |row| row.get(0))?;
+                rows.collect()
+            })
+            .unwrap();
+        assert_eq!(keys, ["dictionary.entries"]);
     }
 }

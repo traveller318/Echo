@@ -934,10 +934,10 @@ export type ModelsView = {
 };
 
 /**  A sidebar icon, serialized as its lucide-react name (e.g. `layout-dashboard`). */
-export type NavIcon = "layout-dashboard" | "history" | "boxes" | "settings";
+export type NavIcon = "layout-dashboard" | "history" | "book-open" | "boxes" | "settings";
 
 /**  Registry id of a sidebar navigation item; each one has a page in `src/routes/<id>/`. */
-export type NavId = "dashboard" | "history" | "models" | "settings";
+export type NavId = "dashboard" | "history" | "dictionary" | "models" | "settings";
 
 /**  A registry navigation entry. */
 export type NavItem = {
@@ -1251,20 +1251,26 @@ export type SettingOptions = {
 };
 
 /**  The Settings page group a setting belongs to; equals the prefix of its key (`general.theme` → `general`). */
-export type SettingSection = "general" | "pill" | "hotkeys" | "session" | "audio" | "output" | "transcription" | "polish" | "storage" | "metrics" | "privacy" | "updates";
+export type SettingSection = "general" | "pill" | "hotkeys" | "session" | "audio" | "output" | "transcription" | "polish" | "dictionary" | "storage" | "metrics" | "privacy" | "updates";
 
 /**
  * 
- *  * SOURCE OF TRUTH KEYWORDS: SettingSectionSpec, settings section label, section order, Settings page sections
- *  * WHAT:  One Settings page section: which section and the heading it shows. The registry lists them in page order.
- *  * WHY:   The page renders a card per section from the registry (04 §5) and never spells a heading itself, so a new
- *  *        section is one registry entry with no UI change.
- *  * WHERE: registry/settings/sections.rs (SECTIONS); sent to the UI in RegistryView.sections.
+ *  * SOURCE OF TRUTH KEYWORDS: SettingSectionSpec, settings section label, section order, Settings page sections, section page, settings owned by a page
+ *  * WHAT:  One settings section: which section, the heading it shows and the main-window page that shows it. The
+ *  *        registry lists them in page order.
+ *  * WHY:   A page renders a card per section from the registry (04 §5) and never spells a heading itself, so a new
+ *  *        section is one registry entry with no UI change. Most sections live on Settings, but a feature with its
+ *  *        own sidebar page (the dictionary) owns its section there; `page` says so as data, so no page filters
+ *  *        settings by key.
+ *  * WHERE: registry/settings/sections.rs (SECTIONS); sent to the UI in RegistryView.sections; src/lib/settings-layout.ts
+ *  *        groups a page's settings by it.
  *  
  */
 export type SettingSectionSpec = {
 	section: SettingSection,
 	label: string,
+	/**  The page that shows this section's settings. */
+	page: NavId,
 };
 
 /**  A registry setting entry. */
