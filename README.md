@@ -24,7 +24,7 @@ Changed your mind? Press `Esc` to start a 3-second countdown that throws the rec
 | **1. Record** | Captures your microphone and saves the audio to disk as you speak, so a recording is never lost even if something crashes. |
 | **2. Detect speech** | A voice-activity model (Silero VAD) splits the audio into speech segments and skips the silence. |
 | **3. Transcribe** | The speech model (Parakeet) turns each segment into punctuated, capitalized text. It starts while you are still talking, so the text is ready almost as soon as you stop. |
-| **4. Clean up** | Rules remove fillers ("um", "uh"), repeated words and spacing mistakes, and apply your dictionary spellings. If grammar polish is on, a local language model then smooths the wording. |
+| **4. Clean up** | Rules remove fillers ("um", "uh"), repeated words and spacing mistakes, write spoken numbers as digits ("twenty five" → "25"), and apply your dictionary spellings. If grammar polish is on, a local language model then smooths the wording. |
 | **5. Deliver** | The text is pasted into the window you were using and kept on your clipboard. If that window can't accept a paste (for example an app running as administrator), Echo copies the text and tells you to press `Ctrl+V`. |
 | **6. Save** | The take is saved to History, where you can search it, copy it or re-run it. Your Dashboard stats are updated. |
 
@@ -33,7 +33,7 @@ All six steps run on your computer. Nothing is sent over the internet.
 ## Features
 
 - **Fast local recognition** — NVIDIA Parakeet TDT 0.6B v3 (int8 ONNX) on ONNX Runtime. Runs on the CPU, with optional GPU acceleration through DirectML. Supports 25 languages with automatic punctuation and capitalization.
-- **Text cleanup** — a rule pass that is always on removes filler words and repeats and fixes spacing and casing. An optional grammar polish uses a local Qwen3 1.7B model through llama.cpp.
+- **Text cleanup** — a rule pass that is always on removes filler words and repeats, writes spoken numbers as digits, and fixes spacing and casing. An optional grammar polish uses a local Qwen3 1.7B model through llama.cpp.
 - **Personal dictionary** — save names, jargon and spellings so they come out right every time.
 - **Works in any app** — text is inserted into the focused window. Paste the last transcript again at any time with `Ctrl+Alt+V`.
 - **Never lose a take** — audio is written to disk while you speak. If anything fails or crashes, the recording is still in History and can be re-run.

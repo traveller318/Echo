@@ -1,11 +1,12 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: RulePolisher, rule polish, rule stages, dictionary fillers repeats spacing casing, Instant polisher, always-on polish
+ * SOURCE OF TRUTH KEYWORDS: RulePolisher, rule polish, rule stages, dictionary fillers repeats numbers spacing casing, Instant polisher, always-on polish
  * WHAT:  RulePolisher: the always-on TextPolisher (latency class Instant, no model, any language) that runs the rule
- *        stages of 02 §8.3 in their fixed order: dictionary, fillers, repeats, spacing and punctuation, casing.
+ *        stages of 02 §8.3 in their fixed order: dictionary, fillers, repeats, numbers, spacing and punctuation,
+ *        casing.
  * WHY:   Rule cleanup must cost microseconds (02 §6.2: < 5 ms for the whole chain), so it is plain Rust over one token
  *        list, one file per stage. Language-specific data lives in lexicon.rs, so a language is a data change. The
- *        stages read only the PolishContext: fillers only when `remove_fillers`, casing only when the engine does not
- *        case (`cased`). The compiled dictionary is cached and rebuilt only when the user's pairs change, because the
+ *        stages read only the PolishContext: fillers only when `remove_fillers`, numbers only when the lexicon has
+ *        number words, casing only when the engine does not case (`cased`). The compiled dictionary is cached and rebuilt only when the user's pairs change, because the
  *        context carries the pairs on every take. `polish` never fails: rules always produce text (possibly empty
  *        when the take held nothing but fillers).
  * WHERE: Built by the `rules` registry engine entry (registry/engines.rs); run first by the polish chain
@@ -16,6 +17,7 @@ mod casing;
 mod dictionary;
 mod fillers;
 mod lexicon;
+mod numbers;
 mod repeats;
 mod spacing;
 mod text;
@@ -29,7 +31,7 @@ use parking_lot::Mutex;
 
 use self::{
     casing::apply_casing, dictionary::CompiledDictionary, fillers::remove_fillers,
-    repeats::collapse_repeats, spacing::normalize_spacing,
+    numbers::write_numbers, repeats::collapse_repeats, spacing::normalize_spacing,
 };
 use crate::{
     ports::TextPolisher,
@@ -67,6 +69,9 @@ impl RulePolisher {
             tokens = remove_fillers(&tokens, lexicon);
         }
         tokens = collapse_repeats(&tokens, lexicon);
+        if let Some(numbers) = lexicon.and_then(|lexicon| lexicon.numbers) {
+            tokens = write_numbers(&tokens, numbers);
+        }
         tokens = normalize_spacing(&tokens);
         if !context.cased {
             apply_casing(&mut tokens, lexicon);

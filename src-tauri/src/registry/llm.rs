@@ -22,7 +22,7 @@ use crate::types::{
     ModelKind, PortError, PortResult, ResourceKind, SidecarFiles, SidecarPolicy, ThinkingControl,
 };
 
-/// How Qwen3 is asked to polish (02 §8.3 stage 6, 05 A12, A16).
+/// How Qwen3 is asked to polish (02 §8.3 stage 7, 05 A12, A16).
 pub const QWEN3_POLISH: LlmPolishProfile = LlmPolishProfile {
     system_prompt: "Fix grammar and punctuation. Keep meaning and wording. Output only the text.",
     thinking: ThinkingControl::Disable {

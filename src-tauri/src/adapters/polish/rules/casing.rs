@@ -2,7 +2,7 @@
  * SOURCE OF TRUTH KEYWORDS: casing stage, sentence case, capitalize sentence start, standalone i, abbreviations, sentence end detection
  * WHAT:  `apply_casing` capitalizes the first word of the text, of each line and of each sentence, and the words the
  *        lexicon always capitalizes ("i" → "I", "i'm" → "I'm").
- * WHY:   Stage 5 of 02 §8.3, skipped when the engine's caps say it cases its own output (rules/mod.rs decides). It
+ * WHY:   Stage 6 of 02 §8.3, skipped when the engine's caps say it cases its own output (rules/mod.rs decides). It
  *        only ever raises a letter, never lowers one, so names the engine wrote stay, and it leaves a word that already
  *        holds a capital alone, so a deliberate spelling ("iPhone", a dictionary term such as "eBay") survives a
  *        sentence start. A full stop ends a sentence only

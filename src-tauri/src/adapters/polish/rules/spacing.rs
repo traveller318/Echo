@@ -4,12 +4,12 @@
  *        space before closing punctuation or after opening brackets, a space after a comma glued to the next word,
  *        stacked marks folded (", ." → ".", ",," → ",", "?." → "?", ". ." → "."), and no punctuation or whitespace
  *        left dangling at the start or a comma at the end.
- * WHY:   Stage 4 of 02 §8.3 and the spacing half of 05 A3: segments joined by the pipeline and words removed by the
+ * WHY:   Stage 5 of 02 §8.3 and the spacing half of 05 A3: segments joined by the pipeline and words removed by the
  *        filler and repeat stages leave exactly these artefacts ("go, um." → "go, ." → "go."). It is one pass that
  *        looks back at what it has already written, so cascades ("a , , .") settle without repeating the pass.
  *        Dots glued together ("...") are an ellipsis and stay; a full stop is never glued to the next word, so
  *        "3.5", "example.com" and "e.g." are untouched; no space is added after a colon ("10:30").
- * WHERE: RulePolisher::apply (rules/mod.rs), after repeats and before casing; it always runs.
+ * WHERE: RulePolisher::apply (rules/mod.rs), after numbers and before casing; it always runs.
  */
 
 use super::text::{Token, TokenKind, is_pause, is_terminal};

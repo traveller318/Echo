@@ -122,12 +122,12 @@ impl EngineEntry {
         }
     }
 
-    /// A polisher that needs no model: it runs on every take (02 §8.3 stages 1–5).
+    /// A polisher that needs no model: it runs on every take (02 §8.3 stages 1–6).
     pub fn is_always_on_polisher(&self) -> bool {
         self.polisher_caps().is_some_and(|caps| !caps.needs_model)
     }
 
-    /// A polisher that needs a model: the opt-in stage `polish.llm_engine` selects (02 §8.3 stage 6).
+    /// A polisher that needs a model: the opt-in stage `polish.llm_engine` selects (02 §8.3 stage 7).
     pub fn is_model_polisher(&self) -> bool {
         self.polisher_caps().is_some_and(|caps| caps.needs_model)
     }

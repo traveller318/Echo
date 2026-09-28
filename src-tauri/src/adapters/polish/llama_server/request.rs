@@ -3,7 +3,7 @@
  * WHAT:  The llama-server chat request for one take (`chat_body`), its output budget (`max_tokens`), whether it fits
  *        the context at all (`fits_context`), a one-token warm-up request (`warm_up_body`) and reading the answer
  *        (`parse_answer`: the text and how generation ended).
- * WHY:   02 §8.3 stage 6 with 05 A12/A16: the exact system prompt, greedy sampling, a budget of about 1.5 × the
+ * WHY:   02 §8.3 stage 7 with 05 A12/A16: the exact system prompt, greedy sampling, a budget of about 1.5 × the
  *        input, stop sequences, and thinking switched off twice (the `/no_think` marker in the system prompt and
  *        `enable_thinking = false` for the chat template), since either alone has been seen to leak reasoning. The
  *        input is not tokenized first (a loopback round trip on the delivery path), so its tokens are estimated from

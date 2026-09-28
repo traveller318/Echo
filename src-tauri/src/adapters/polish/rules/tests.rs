@@ -1,9 +1,10 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: RulePolisher tests, rule chain table tests, cloud code dictionary test, filler test, casing skip test
+ * SOURCE OF TRUTH KEYWORDS: RulePolisher tests, rule chain table tests, cloud code dictionary test, filler test, numbers to digits test, casing skip test
  * WHAT:  Table-driven tests of the whole rule polisher: every stage together, with the context switches (fillers
  *        off, engine casing, a named or detected language) and the TextPolisher contract.
  * WHY:   Each stage file tests its own rules; these prove the fixed order composes (a filler removed before spacing
- *        folds its comma, a stutter collapsed before casing) and that the context flags reach the right stage.
+ *        folds its comma, a stutter collapsed before casing, a doubled number word kept by repeats for the numbers
+ *        stage) and that the context flags reach the right stage.
  * WHERE: `cargo test` (adapters::polish::rules::tests).
  */
 
@@ -59,7 +60,28 @@ fn every_stage_runs_in_order() {
         (
             &cased,
             "I- I think the the answer is, uh, forty two.",
-            "I think the answer is forty two.",
+            "I think the answer is 42.",
+        ),
+        (&cased, "Twenty, fifty.", "20, 50."),
+        (
+            &cased,
+            "Um, it was built in fifteen twenty three, not one thousand five hundred.",
+            "It was built in 1523, not 1500.",
+        ),
+        (
+            &uncased,
+            "i- i have twenty twenty five tickets at ten thirty",
+            "I have 2025 tickets at 10:30",
+        ),
+        (
+            &uncased,
+            "twenty people came. five left",
+            "20 people came. Five left",
+        ),
+        (
+            &cased,
+            "One of them had five apples.",
+            "One of them had five apples.",
         ),
         (&cased, "Hello.  World , again", "Hello. World, again"),
         (&cased, "hello. world", "hello. world"),
@@ -101,6 +123,11 @@ fn other_languages_keep_their_words() {
     assert_eq!(
         polisher.apply("Um dia muito bom, obrigado.", &detected),
         "Um dia muito bom, obrigado."
+    );
+    assert_eq!(
+        polisher.apply("Ich habe zwanzig Euro und twenty.", &detected),
+        "Ich habe zwanzig Euro und twenty.",
+        "number words are written as digits only for a language with number data"
     );
     let german = PolishContext {
         language: Some(Language::from_static("de")),

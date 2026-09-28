@@ -1,7 +1,8 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: Lexicon, LEXICONS, filler words, edge fillers, keep repeats, abbreviations, language detection markers, resolve lexicon
+ * SOURCE OF TRUTH KEYWORDS: Lexicon, LEXICONS, filler words, edge fillers, keep repeats, abbreviations, number words, language detection markers, resolve lexicon
  * WHAT:  The per-language data the rule stages use (fillers, clause-edge filler phrases, words whose doubling is
- *        grammatical, abbreviations, words always capitalized) and `resolve`, which picks the lexicon for a take:
+ *        grammatical, abbreviations, words always capitalized, spoken number words) and `resolve`, which picks the
+ *        lexicon for a take:
  *        the language the context names, otherwise the one whose marker words the text uses most.
  * WHY:   Adding a language is a data change: a new LEXICONS row, no stage code (02 §8.3). Language-specific rules
  *        are dangerous in the wrong language: English fillers "um" and "er" are real words in German, Dutch,
@@ -11,8 +12,10 @@
  *        exist only to win that vote and switch the English rules off. A tie between languages turns every
  *        language rule off. Text with no marker at all (a short reply such as "Um, okay.") gets the first row,
  *        English, the language of Echo's filler list and UI; a language picked in Settings always wins over the vote.
- * WHERE: rules/mod.rs resolves once per take; fillers.rs, repeats.rs and casing.rs read the chosen row.
+ * WHERE: rules/mod.rs resolves once per take; fillers.rs, repeats.rs, numbers.rs and casing.rs read the chosen row.
  */
+
+use std::ops::RangeInclusive;
 
 use super::text::Token;
 use crate::types::Language;
@@ -37,6 +40,8 @@ pub struct Lexicon {
     pub abbreviations: &'static [&'static str],
     /// Words always written with a capital first letter, also inside contractions ("i" → "I", "i'm" → "I'm").
     pub capitalized: &'static [&'static str],
+    /// Spoken number words written as digits; `None` leaves numbers as the engine wrote them.
+    pub numbers: Option<&'static NumberWords>,
 }
 
 impl Lexicon {
@@ -52,6 +57,7 @@ impl Lexicon {
             comma_repeats: &[],
             abbreviations: &[],
             capitalized: &[],
+            numbers: None,
         }
     }
 
@@ -59,8 +65,12 @@ impl Lexicon {
         self.fillers.contains(&folded)
     }
 
+    /// A doubled number word is data, not a stutter ("twenty twenty" is a year).
     pub fn keeps_repeat(&self, folded: &str) -> bool {
         self.keep_repeats.contains(&folded)
+            || self
+                .numbers
+                .is_some_and(|numbers| numbers.is_number_word(folded))
     }
 
     pub fn collapses_across_comma(&self, folded: &str) -> bool {
@@ -110,6 +120,7 @@ pub const LEXICONS: &[Lexicon] = &[
             "fig", "inc", "ltd", "co", "mt",
         ],
         capitalized: &["i"],
+        numbers: Some(&ENGLISH_NUMBERS),
     },
     Lexicon::markers_only(
         "de",
@@ -191,6 +202,163 @@ pub const LEXICONS: &[Lexicon] = &[
 ];
 
 /**
+ * SOURCE OF TRUTH KEYWORDS: NumberWords, ENGLISH_NUMBERS, spoken number words, cardinal words, ordinal words, number scales, digits threshold, clock time, spoken year
+ * WHAT:  One language's spoken number vocabulary and writing conventions, read by the numbers stage (numbers.rs):
+ *        cardinal and ordinal words with their values, the joiner, decimal point and percent words, and how digits
+ *        are written (group separator, decimal separator, clock separator, which lone words stay words).
+ * WHY:   Speech engines write "twenty five" where a typist writes "25"; the conversion is language data, so another
+ *        language is a new NumberWords value, not new stage code. A lone word below `digits_from` stays a word
+ *        (the style-guide convention, and it keeps "one of them" and "no one" intact). Cardinal values classify
+ *        themselves: below 10 a digit, below 20 a teen, below 100 a tens word, exactly 100 the hundred, above it a
+ *        power-of-1000 scale. An ordinal carries the suffix written after its digits, because in English the last
+ *        word alone decides it ("twenty first" → "21st").
+ * WHERE: `Lexicon.numbers`; read by numbers.rs, and by `Lexicon::keeps_repeat` so repeats.rs never collapses
+ *        "twenty twenty".
+ */
+pub struct NumberWords {
+    /// Cardinal words with their values: 0–19, the tens 20–90, the hundred, then the scales (1 000, 1 000 000 …).
+    pub cardinals: &'static [(&'static str, u64)],
+    /// Ordinal words with their values and the suffix written after the digits.
+    pub ordinals: &'static [(&'static str, u64, &'static str)],
+    /// Ordinals that are also common nouns ("a twenty second clip"): a phrase ending in one stays in words.
+    pub ambiguous_ordinals: &'static [&'static str],
+    /// Words for a zero digit inside a clock time, a year or decimals ("ten oh five", "nineteen oh five").
+    pub zero_digits: &'static [&'static str],
+    /// Articles that count as 1 before the hundred or a scale ("a hundred and ten").
+    pub articles: &'static [&'static str],
+    /// The word joining the hundred or a scale to the rest ("one hundred and five").
+    pub joiner: &'static str,
+    /// The word that starts decimal digits ("three point five").
+    pub decimal_point: &'static str,
+    /// The word written as `percent_sign` after a number.
+    pub percent: &'static str,
+    pub percent_sign: char,
+    /// A number said as one word below this stays a word ("five", "one"); anything longer is written in digits.
+    pub digits_from: u64,
+    /// A round multiple of a scale at least this large keeps the scale word ("2 million", "3.5 billion").
+    pub named_scale_from: u64,
+    /// Whole numbers from this value are grouped ("10,000"); smaller ones are not ("1523", years).
+    pub group_from: u64,
+    pub group_separator: char,
+    pub decimal_separator: char,
+    /// Two one-word numbers read as a clock time when the first is an hour here and the second at most 59.
+    pub clock_hours: RangeInclusive<u64>,
+    pub time_separator: char,
+    /// Otherwise as a year when the first is a century here ("nineteen eighty four" → "1984").
+    pub year_centuries: RangeInclusive<u64>,
+}
+
+impl NumberWords {
+    /// The value of a cardinal word.
+    pub fn cardinal(&self, folded: &str) -> Option<u64> {
+        self.cardinals
+            .iter()
+            .find(|(word, _)| *word == folded)
+            .map(|(_, value)| *value)
+    }
+
+    /// The value of an ordinal word and the suffix written after its digits.
+    pub fn ordinal(&self, folded: &str) -> Option<(u64, &'static str)> {
+        self.ordinals
+            .iter()
+            .find(|(word, ..)| *word == folded)
+            .map(|(_, value, suffix)| (*value, *suffix))
+    }
+
+    pub fn is_number_word(&self, folded: &str) -> bool {
+        self.cardinal(folded).is_some() || self.ordinal(folded).is_some()
+    }
+}
+
+/// English number words.
+const ENGLISH_NUMBERS: NumberWords = NumberWords {
+    cardinals: &[
+        ("zero", 0),
+        ("one", 1),
+        ("two", 2),
+        ("three", 3),
+        ("four", 4),
+        ("five", 5),
+        ("six", 6),
+        ("seven", 7),
+        ("eight", 8),
+        ("nine", 9),
+        ("ten", 10),
+        ("eleven", 11),
+        ("twelve", 12),
+        ("thirteen", 13),
+        ("fourteen", 14),
+        ("fifteen", 15),
+        ("sixteen", 16),
+        ("seventeen", 17),
+        ("eighteen", 18),
+        ("nineteen", 19),
+        ("twenty", 20),
+        ("thirty", 30),
+        ("forty", 40),
+        ("fifty", 50),
+        ("sixty", 60),
+        ("seventy", 70),
+        ("eighty", 80),
+        ("ninety", 90),
+        ("hundred", 100),
+        ("thousand", 1_000),
+        ("million", 1_000_000),
+        ("billion", 1_000_000_000),
+        ("trillion", 1_000_000_000_000),
+    ],
+    ordinals: &[
+        ("first", 1, "st"),
+        ("second", 2, "nd"),
+        ("third", 3, "rd"),
+        ("fourth", 4, "th"),
+        ("fifth", 5, "th"),
+        ("sixth", 6, "th"),
+        ("seventh", 7, "th"),
+        ("eighth", 8, "th"),
+        ("ninth", 9, "th"),
+        ("tenth", 10, "th"),
+        ("eleventh", 11, "th"),
+        ("twelfth", 12, "th"),
+        ("thirteenth", 13, "th"),
+        ("fourteenth", 14, "th"),
+        ("fifteenth", 15, "th"),
+        ("sixteenth", 16, "th"),
+        ("seventeenth", 17, "th"),
+        ("eighteenth", 18, "th"),
+        ("nineteenth", 19, "th"),
+        ("twentieth", 20, "th"),
+        ("thirtieth", 30, "th"),
+        ("fortieth", 40, "th"),
+        ("fiftieth", 50, "th"),
+        ("sixtieth", 60, "th"),
+        ("seventieth", 70, "th"),
+        ("eightieth", 80, "th"),
+        ("ninetieth", 90, "th"),
+        ("hundredth", 100, "th"),
+        ("thousandth", 1_000, "th"),
+        ("millionth", 1_000_000, "th"),
+        ("billionth", 1_000_000_000, "th"),
+        ("trillionth", 1_000_000_000_000, "th"),
+    ],
+    ambiguous_ordinals: &["second"],
+    zero_digits: &["oh", "o"],
+    articles: &["a"],
+    joiner: "and",
+    decimal_point: "point",
+    percent: "percent",
+    percent_sign: '%',
+    digits_from: 10,
+    named_scale_from: 1_000_000,
+    group_from: 10_000,
+    group_separator: ',',
+    decimal_separator: '.',
+    clock_hours: 1..=12,
+    time_separator: ':',
+    year_centuries: 10..=29,
+};
+
+/**
  * SOURCE OF TRUTH KEYWORDS: resolve lexicon, language vote, marker score, language-specific rules switch
  * WHAT:  The lexicon for a take: the row of `language` when the context names one (None when no row exists, so
  *        only the universal rules run), otherwise the unique best marker score among `tokens`' words, otherwise
@@ -254,8 +422,23 @@ mod tests {
                 lexicon.abbreviations,
                 lexicon.capitalized,
             ];
-            for word in lists.iter().flat_map(|list| list.iter()) {
-                assert_eq!(*word, word.to_lowercase(), "{} {word}", lexicon.language);
+            let number_words = lexicon.numbers.into_iter().flat_map(|numbers| {
+                numbers
+                    .cardinals
+                    .iter()
+                    .map(|(word, _)| *word)
+                    .chain(numbers.ordinals.iter().map(|(word, ..)| *word))
+                    .chain(numbers.ambiguous_ordinals.iter().copied())
+                    .chain(numbers.zero_digits.iter().copied())
+                    .chain(numbers.articles.iter().copied())
+                    .chain([numbers.joiner, numbers.decimal_point, numbers.percent])
+            });
+            for word in lists
+                .iter()
+                .flat_map(|list| list.iter().copied())
+                .chain(number_words)
+            {
+                assert_eq!(word, word.to_lowercase(), "{} {word}", lexicon.language);
             }
             for marker in lexicon.markers {
                 if let Some(owner) = owners.insert(marker, lexicon.language) {
@@ -309,6 +492,44 @@ mod tests {
             None,
             "one English and one German marker"
         );
+    }
+
+    #[test]
+    fn number_values_follow_their_classes() {
+        for numbers in LEXICONS.iter().filter_map(|lexicon| lexicon.numbers) {
+            let values = numbers
+                .cardinals
+                .iter()
+                .map(|(_, value)| *value)
+                .chain(numbers.ordinals.iter().map(|(_, value, _)| *value));
+            for value in values {
+                let power_of_1000 = value >= 1_000
+                    && value.ilog10().is_multiple_of(3)
+                    && 10u64.pow(value.ilog10()) == value;
+                let classified = value < 20
+                    || (value < 100 && value.is_multiple_of(10))
+                    || value == 100
+                    || power_of_1000;
+                assert!(
+                    classified,
+                    "{value} is no digit, teen, tens, hundred or scale"
+                );
+            }
+            for ordinal in numbers.ambiguous_ordinals {
+                assert!(
+                    numbers.ordinal(ordinal).is_some(),
+                    "{ordinal} is no ordinal"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn doubled_number_words_are_kept() {
+        let english = &LEXICONS[0];
+        assert!(english.keeps_repeat("twenty"));
+        assert!(english.keeps_repeat("fifth"));
+        assert!(!english.keeps_repeat("the"));
     }
 
     #[test]

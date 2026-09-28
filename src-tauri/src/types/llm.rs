@@ -4,7 +4,7 @@
  *        not trusted (LlmPolishProfile with its ThinkingControl and LlmSafety), where the sidecar and its model are
  *        (SidecarFiles), and how the sidecar is started, health-checked and restarted (SidecarPolicy); all together
  *        in LlamaServerSetup.
- * WHY:   02 §8.3 stage 6 and 05 A12/A13/A16 are policy about a model, not code: a different LLM is a new profile
+ * WHY:   02 §8.3 stage 7 and 05 A12/A13/A16 are policy about a model, not code: a different LLM is a new profile
  *        and manifest in the registry, not a new adapter (00 constraint 4). Adapters may not read the registry
  *        (02 §3.2), so the shapes live here and the registry's build fn fills them from AppPaths and the manifests.
  *        None of these cross IPC: the UI sees the engine's caps and manifest only.

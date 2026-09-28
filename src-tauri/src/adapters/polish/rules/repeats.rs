@@ -7,9 +7,10 @@
  *        words, so a joined fragment only goes when it is one letter ("b-but") or repeated ("th-th-the"). Doubled
  *        words are language-specific ("had had", "that that" are grammatical English; German "die die" and French
  *        "nous nous" are too), so they collapse only for a lexicon that opts in, never for words on its keep list,
- *        and across a comma only for its short function words. Numbers are never touched ("10 10" may be data).
+ *        and across a comma only for its short function words. Numbers are never touched ("10 10" may be data),
+ *        nor are the lexicon's number words ("twenty twenty" is a year for the numbers stage, which runs next).
  *        The first spelling is kept, and a fragment's capital moves to the word that stays ("B-but" → "But").
- * WHERE: RulePolisher::apply (rules/mod.rs), after fillers and before spacing.
+ * WHERE: RulePolisher::apply (rules/mod.rs), after fillers and before numbers.
  */
 
 use super::{

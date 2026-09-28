@@ -4,7 +4,7 @@
  *        sidecar (sidecar.rs). `prepare` starts the sidecar and waits until it is ready; `polish` sends one chat
  *        request (request.rs) and returns the answer only when the safety filter accepts it (safety.rs); `unload`
  *        and drop stop the sidecar.
- * WHY:   02 §8.3 stage 6: opt-in, local, never blocking delivery. `polish` never waits for a sidecar that is not
+ * WHY:   02 §8.3 stage 7: opt-in, local, never blocking delivery. `polish` never waits for a sidecar that is not
  *        ready: it asks it to start and fails at once, so the chain keeps the rule output for that take and the next
  *        take gets the LLM (a killed sidecar comes back by itself, 05 A13). The chain's 2 s timeout bounds a slow
  *        answer; dropping the request future closes its connection and llama-server cancels the generation. A text
