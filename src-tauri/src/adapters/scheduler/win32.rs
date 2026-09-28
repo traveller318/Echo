@@ -6,22 +6,23 @@
  * WHY:   The capture worker must keep up with the microphone while ONNX inference saturates other cores, so it runs
  *        one step above normal; the ASR thread stays normal (05 A9). Above normal (not time-critical) is enough for
  *        a thread that drains a 2 s ring every 10 ms, and it cannot starve the UI or the device callback thread
- *        (which Windows audio already runs at its own elevated priority). The pseudo-handle from GetCurrentThread
- *        needs no closing. Clearing PROCESS_POWER_THROTTLING_EXECUTION_SPEED in StateMask while setting it in
- *        ControlMask is Microsoft's documented way to turn EcoQoS off for a process (05 W35); the pseudo-handle from
- *        GetCurrentProcess needs no closing either.
+ *        (which Windows audio already runs at its own elevated priority); the call itself is the shared
+ *        `set_current_thread_priority` (adapters/win32). Clearing PROCESS_POWER_THROTTLING_EXECUTION_SPEED in
+ *        StateMask while setting it in ControlMask is Microsoft's documented way to turn EcoQoS off for a process
+ *        (05 W35); the pseudo-handle from GetCurrentProcess needs no closing.
  * WHERE: Built by app/bootstrap into CommandCtx (and the session actor later); used through `dyn WorkerScheduler`
  *        by pipeline/capture and the ASR worker.
  */
 
 use windows::Win32::System::Threading::{
-    GetCurrentProcess, GetCurrentThread, PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+    GetCurrentProcess, PROCESS_POWER_THROTTLING_CURRENT_VERSION,
     PROCESS_POWER_THROTTLING_EXECUTION_SPEED, PROCESS_POWER_THROTTLING_STATE,
-    ProcessPowerThrottling, SetProcessInformation, SetThreadPriority, THREAD_PRIORITY,
-    THREAD_PRIORITY_ABOVE_NORMAL, THREAD_PRIORITY_BELOW_NORMAL, THREAD_PRIORITY_NORMAL,
+    ProcessPowerThrottling, SetProcessInformation, THREAD_PRIORITY, THREAD_PRIORITY_ABOVE_NORMAL,
+    THREAD_PRIORITY_BELOW_NORMAL, THREAD_PRIORITY_NORMAL,
 };
 
 use crate::{
+    adapters::win32::set_current_thread_priority,
     ports::WorkerScheduler,
     types::{AppError, PortError, PortResult, WorkerPriority},
 };
@@ -38,14 +39,10 @@ impl Win32WorkerScheduler {
 
 impl WorkerScheduler for Win32WorkerScheduler {
     fn prioritize_current_thread(&self, priority: WorkerPriority) -> PortResult<()> {
-        // SAFETY: GetCurrentThread returns a pseudo-handle that is always valid on the calling thread and is never
-        // closed; SetThreadPriority reads only its two arguments.
-        unsafe { SetThreadPriority(GetCurrentThread(), win32_priority(priority)) }.map_err(
-            |error| {
-                PortError::new(AppError::Internal)
-                    .with_detail(format!("SetThreadPriority({priority:?}) failed: {error}"))
-            },
-        )
+        set_current_thread_priority(win32_priority(priority)).map_err(|error| {
+            PortError::new(AppError::Internal)
+                .with_detail(format!("SetThreadPriority({priority:?}) failed: {error}"))
+        })
     }
 
     fn keep_full_speed(&self) -> PortResult<()> {
@@ -88,7 +85,7 @@ fn win32_priority(priority: WorkerPriority) -> THREAD_PRIORITY {
 mod tests {
     use std::thread;
 
-    use windows::Win32::System::Threading::GetThreadPriority;
+    use windows::Win32::System::Threading::{GetCurrentThread, GetThreadPriority};
 
     use super::*;
 
@@ -97,7 +94,8 @@ mod tests {
             Win32WorkerScheduler::new()
                 .prioritize_current_thread(priority)
                 .unwrap();
-            // SAFETY: as above; GetThreadPriority only reads the calling thread's priority.
+            // SAFETY: GetCurrentThread's pseudo-handle is always valid on the calling thread; GetThreadPriority only
+            // reads that thread's priority.
             unsafe { GetThreadPriority(GetCurrentThread()) }
         })
         .join()

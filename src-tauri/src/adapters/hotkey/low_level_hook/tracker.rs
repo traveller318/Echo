@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: ChordTracker, KeyEvent, Reaction, HookBinding, chord matching, modifier-only hotkey, key repeat, stuck key reconcile, swallow key, menu mask
+ * SOURCE OF TRUTH KEYWORDS: ChordTracker, KeyEvent, Reaction, HookBinding, chord matching, modifier-only hotkey, key repeat, stuck key reconcile, swallow key, lost key-up, menu mask, stale main key, stuck media key
  * WHAT:  ChordTracker: the pure state machine behind the low-level keyboard hook. Fed every physical key event
  *        (`handle`) and, while keys are held, a periodic check of which keys Windows still reports down
  *        (`reconcile`), it returns a Reaction: the HotkeyEvents to emit, whether to swallow the key, and whether to
@@ -22,9 +22,20 @@
  *        - The hook sees no auto-repeat flag, so a key-down for a key already held is a repeat when it comes within
  *          REPEAT_WINDOW_MS of the previous one (the slowest Windows repeat delay is 1 s); a later one means its
  *          key-up was lost (secure desktop, a hook timeout) and it is treated as a release and a fresh press.
- *        - Key-ups can be lost entirely (Ctrl+Alt+Del switches to the secure desktop), which would leave a
- *          hold-to-talk take recording forever: `reconcile` releases a held key that Windows has reported up on
- *          two checks in a row. Swallowed keys are skipped there, because Windows never records their state.
+ *        - Key-ups can be lost entirely (Ctrl+Alt+Del switches to the secure desktop, an elevated window takes the
+ *          focus, Windows skips a hook that answered too slowly), which would leave a hold-to-talk take recording
+ *          forever: `reconcile` releases a held key that Windows has reported up on two checks in a row. Swallowed
+ *          keys are skipped there, because Windows never records their state.
+ *        - A swallowed key never reached any app, so it never counts as "another key held" against a chord. A
+ *          swallowed key whose key-up was lost (Esc during a take, the V of Ctrl+Alt+V) would otherwise stay held
+ *          with nothing to heal it until that same key is pressed again, and every chord would stay dead meanwhile:
+ *          the "record hotkey stops working until Echo restarts" failure.
+ *        - A main key physically held auto-repeats, so one whose last down is older than REPEAT_WINDOW_MS is stale:
+ *          its key-up was lost where Windows' own key state cannot vouch for it. A Bluetooth headset's media key is
+ *          the case that forced this: its AVRCP button sends Play/Pause down with no up, Windows then reports that
+ *          key down for good, and `reconcile` alone kept it held, so every chord stayed dead until Echo restarted.
+ *          A stale main key never blocks a chord and `reconcile` lets it go (reporting it in `Reaction::lost`).
+ *          Modifiers are exempt: while a chord is held only the last key pressed repeats.
  *        - An event for a binding that was unregistered or rebound meanwhile is dropped.
  * WHERE: Owned by the hook thread (hook_thread.rs), one per LowLevelKeyboardHotkeys; bindings come from the
  *        adapter's table on every event.
@@ -64,6 +75,8 @@ pub struct Reaction {
     pub swallow: bool,
     /// Tap the menu mask key once this event has passed.
     pub mask: bool,
+    /// Held keys `reconcile` let go because their key-up never arrived (for the log).
+    pub lost: Vec<u16>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -73,6 +86,20 @@ struct HeldKey {
     swallowed: bool,
     /// Reconcile checks in a row that saw it up.
     strikes: u8,
+}
+
+impl HeldKey {
+    /// A main key that has not repeated for REPEAT_WINDOW_MS at `now` is no longer held (module docs).
+    fn is_stale_main(&self, vk: u16, now: u32) -> bool {
+        key_of(vk) == KeyKind::Main && elapsed(self.last_down, now) > REPEAT_WINDOW_MS
+    }
+}
+
+/// Milliseconds from `earlier` to `later` on the wrapping tick clock; 0 when `later` is in fact the earlier one
+/// (a timer message stamped a tick before the key event it follows).
+fn elapsed(earlier: u32, later: u32) -> u32 {
+    let forward = later.wrapping_sub(earlier);
+    if forward > u32::MAX / 2 { 0 } else { forward }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,9 +133,11 @@ impl ChordTracker {
         reaction
     }
 
-    /// Releases every held key that `is_down` has reported up on STALE_STRIKES checks in a row.
+    /// Releases every held key that `is_down` has reported up on STALE_STRIKES checks in a row, and every main key
+    /// stale at `now` (GetTickCount ms) whatever `is_down` says.
     pub fn reconcile(
         &mut self,
+        now: u32,
         is_down: impl Fn(u16) -> bool,
         bindings: &[HookBinding],
     ) -> Reaction {
@@ -119,7 +148,9 @@ impl ChordTracker {
             if key.swallowed {
                 continue;
             }
-            if is_down(*vk) {
+            if key.is_stale_main(*vk, now) {
+                stale.push(*vk);
+            } else if is_down(*vk) {
                 key.strikes = 0;
             } else {
                 key.strikes = key.strikes.saturating_add(1);
@@ -130,13 +161,14 @@ impl ChordTracker {
         }
         for vk in stale {
             self.key_up(vk, &mut reaction.events);
+            reaction.lost.push(vk);
         }
         reaction
     }
 
     fn key_down(&mut self, event: KeyEvent, bindings: &[HookBinding], reaction: &mut Reaction) {
         if let Some(key) = self.held.get_mut(&event.vk) {
-            if event.time.wrapping_sub(key.last_down) <= REPEAT_WINDOW_MS {
+            if elapsed(key.last_down, event.time) <= REPEAT_WINDOW_MS {
                 key.last_down = event.time;
                 reaction.swallow = key.swallowed;
                 return;
@@ -153,8 +185,10 @@ impl ChordTracker {
             },
         );
         match key_of(event.vk) {
-            KeyKind::Main => self.main_down(event.vk, bindings, reaction),
-            KeyKind::Modifier(modifier) => self.modifier_down(modifier, bindings, reaction),
+            KeyKind::Main => self.main_down(event, bindings, reaction),
+            KeyKind::Modifier(modifier) => {
+                self.modifier_down(modifier, event.time, bindings, reaction);
+            }
         }
         if reaction.swallow
             && let Some(key) = self.held.get_mut(&event.vk)
@@ -163,9 +197,10 @@ impl ChordTracker {
         }
     }
 
-    fn main_down(&mut self, vk: u16, bindings: &[HookBinding], reaction: &mut Reaction) {
+    fn main_down(&mut self, event: KeyEvent, bindings: &[HookBinding], reaction: &mut Reaction) {
+        let vk = event.vk;
         let held = self.held_modifiers();
-        let lone_main = self.held_main_keys().all(|other| other == vk);
+        let lone_main = self.blocking_main_keys(event.time).all(|other| other == vk);
         let inactive = |binding: &&HookBinding| {
             binding.chord.key == Some(vk) && !self.active.iter().any(|a| a.id == binding.id)
         };
@@ -203,6 +238,7 @@ impl ChordTracker {
     fn modifier_down(
         &mut self,
         modifier: Modifiers,
+        now: u32,
         bindings: &[HookBinding],
         reaction: &mut Reaction,
     ) {
@@ -210,7 +246,7 @@ impl ChordTracker {
             |chord| !chord.modifiers.contains(modifier),
             &mut reaction.events,
         );
-        if self.held_main_keys().next().is_some() {
+        if self.blocking_main_keys(now).next().is_some() {
             return;
         }
         let held = self.held_modifiers();
@@ -294,11 +330,15 @@ impl ChordTracker {
             })
     }
 
-    fn held_main_keys(&self) -> impl Iterator<Item = u16> + '_ {
+    /// Held main keys an app saw go down: they keep a chord from firing. Swallowed ones and ones stale at `now` are
+    /// left out (module docs).
+    fn blocking_main_keys(&self, now: u32) -> impl Iterator<Item = u16> + '_ {
         self.held
-            .keys()
-            .copied()
-            .filter(|vk| key_of(*vk) == KeyKind::Main)
+            .iter()
+            .filter(move |(vk, key)| {
+                !key.swallowed && key_of(**vk) == KeyKind::Main && !key.is_stale_main(**vk, now)
+            })
+            .map(|(vk, _)| *vk)
     }
 }
 
@@ -319,6 +359,7 @@ mod tests {
     const ESC: u16 = 0x1B;
     const T: u16 = 0x54;
     const V: u16 = 0x56;
+    const MEDIA_PLAY_PAUSE: u16 = 0xB3;
 
     fn binding(id: HotkeyId, text: &'static str) -> HookBinding {
         HookBinding {
@@ -537,12 +578,12 @@ mod tests {
         let bindings = keys.bindings.clone();
         let all_up = |_: u16| false;
         assert_eq!(
-            keys.tracker.reconcile(all_up, &bindings),
+            keys.tracker.reconcile(keys.now, all_up, &bindings),
             Reaction::default(),
             "one check is not enough"
         );
         assert_eq!(
-            keys.tracker.reconcile(all_up, &bindings).events,
+            keys.tracker.reconcile(keys.now, all_up, &bindings).events,
             only(RECORD, KeyState::Released)
         );
         assert!(!keys.tracker.needs_reconcile());
@@ -559,7 +600,7 @@ mod tests {
         let bindings = keys.bindings.clone();
         for _ in 0..3 {
             assert_eq!(
-                keys.tracker.reconcile(|_| false, &bindings),
+                keys.tracker.reconcile(keys.now, |_| false, &bindings),
                 Reaction::default()
             );
         }
@@ -567,7 +608,7 @@ mod tests {
         let flicker = [false, true, false];
         for seen_down in flicker {
             assert_eq!(
-                keys.tracker.reconcile(|_| seen_down, &bindings),
+                keys.tracker.reconcile(keys.now, |_| seen_down, &bindings),
                 Reaction::default()
             );
         }
@@ -583,6 +624,150 @@ mod tests {
         keys.bindings.clear();
         keys.down(LALT);
         assert_eq!(keys.down(T), Reaction::default());
+    }
+
+    #[test]
+    fn a_swallowed_key_that_lost_its_key_up_never_blocks_the_record_chord() {
+        let mut keys = Keyboard::new(vec![
+            binding(RECORD, "Ctrl+Alt"),
+            binding(CANCEL, "Escape"),
+            binding(PASTE, "Ctrl+Alt+V"),
+        ]);
+        // Esc is swallowed, and its key-up never arrives (a hook timeout, the secure desktop).
+        assert!(keys.down(ESC).swallow);
+        keys.wait(5_000);
+        keys.down(LCTRL);
+        assert_eq!(
+            keys.down(LALT).events,
+            only(RECORD, KeyState::Pressed),
+            "the lost Esc must not keep Ctrl+Alt dead"
+        );
+        keys.up(LALT);
+        keys.up(LCTRL);
+
+        // The same for the swallowed main key of another chord.
+        keys.down(LCTRL);
+        keys.down(LALT);
+        assert!(keys.down(V).swallow);
+        keys.up(LALT);
+        keys.up(LCTRL);
+        keys.wait(5_000);
+        keys.down(LCTRL);
+        assert_eq!(keys.down(LALT).events, only(RECORD, KeyState::Pressed));
+        keys.up(LALT);
+        keys.up(LCTRL);
+        // Pressing the lost key again heals it and fires its chord again.
+        keys.down(LCTRL);
+        keys.down(LALT);
+        let paste = keys.down(V);
+        assert!(paste.events.contains(&event(PASTE, KeyState::Pressed)));
+        assert!(paste.swallow);
+    }
+
+    #[test]
+    fn a_main_key_an_app_saw_still_blocks_the_record_chord() {
+        let mut keys = Keyboard::new(vec![binding(RECORD, "Ctrl+Alt"), binding(CANCEL, "Escape")]);
+        keys.down(T);
+        keys.down(LCTRL);
+        assert_eq!(keys.down(LALT), Reaction::default());
+    }
+
+    /// The live failure of 2026-09-28: Bluetooth earbuds sent Play/Pause down with no up, and Windows reported it
+    /// down from then on, so neither a key-up nor `reconcile` ever let it go.
+    #[test]
+    fn a_device_key_windows_keeps_down_never_blocks_the_record_chord() {
+        let mut keys = Keyboard::new(vec![
+            binding(RECORD, "Ctrl+Alt"),
+            binding(PASTE, "Ctrl+Alt+V"),
+        ]);
+        let bindings = keys.bindings.clone();
+        let windows_says_down = |vk: u16| vk == MEDIA_PLAY_PAUSE;
+        assert_eq!(keys.down(MEDIA_PLAY_PAUSE), Reaction::default());
+        assert!(keys.tracker.needs_reconcile());
+        assert!(
+            keys.tracker
+                .reconcile(keys.now, windows_says_down, &bindings)
+                .lost
+                .is_empty(),
+            "a key that just went down is still held"
+        );
+
+        keys.wait(REPEAT_WINDOW_MS + 1);
+        keys.down(LCTRL);
+        assert_eq!(
+            keys.down(LALT).events,
+            only(RECORD, KeyState::Pressed),
+            "a key that stopped repeating is no longer held"
+        );
+        assert_eq!(
+            keys.down(V).events.last(),
+            Some(&event(PASTE, KeyState::Pressed))
+        );
+        keys.up(V);
+        keys.up(LALT);
+        keys.up(LCTRL);
+
+        let healed = keys
+            .tracker
+            .reconcile(keys.now, windows_says_down, &bindings);
+        assert_eq!(healed.lost, [MEDIA_PLAY_PAUSE]);
+        assert!(healed.events.is_empty());
+        assert!(
+            !keys.tracker.needs_reconcile(),
+            "nothing left to watch, so the reconcile timer stops"
+        );
+    }
+
+    #[test]
+    fn a_timer_stamped_before_the_last_key_event_sees_no_stale_key() {
+        let mut keys = Keyboard::new(vec![binding(RECORD, "Ctrl+Alt")]);
+        keys.down(T);
+        let bindings = keys.bindings.clone();
+        let earlier = keys.now.wrapping_sub(5);
+        assert!(
+            keys.tracker
+                .reconcile(earlier, |_| true, &bindings)
+                .lost
+                .is_empty()
+        );
+        keys.down(LCTRL);
+        assert_eq!(keys.down(LALT), Reaction::default(), "T is still held");
+    }
+
+    /// While a renewed hook and the one it replaced are both installed, an unswallowed key reaches the tracker twice
+    /// with the same timestamp (hook_thread.rs `Hooks`); the second copy must change nothing.
+    #[test]
+    fn a_duplicated_event_changes_nothing() {
+        let mut keys = Keyboard::new(vec![binding(RECORD, "Ctrl+Alt")]);
+        let mut twice = |vk: u16, down: bool| {
+            keys.now = keys.now.wrapping_add(10);
+            let event = KeyEvent {
+                vk,
+                down,
+                time: keys.now,
+            };
+            let first = keys.tracker.handle(event, &keys.bindings);
+            let second = keys.tracker.handle(event, &keys.bindings);
+            (first, second)
+        };
+        assert_eq!(twice(LCTRL, true).1, Reaction::default());
+        let (pressed, again) = twice(LALT, true);
+        assert_eq!(pressed.events, only(RECORD, KeyState::Pressed));
+        assert!(pressed.mask);
+        assert_eq!(
+            again,
+            Reaction::default(),
+            "no second press and no second mask tap"
+        );
+        let (interrupted, again) = twice(T, true);
+        assert_eq!(interrupted.events, only(RECORD, KeyState::Interrupted));
+        assert_eq!(again, Reaction::default());
+        assert_eq!(twice(T, false).1, Reaction::default());
+        assert_eq!(twice(LALT, false).1, Reaction::default());
+        assert_eq!(twice(LCTRL, false).1, Reaction::default());
+        // The chord still works afterwards.
+        keys.down(LCTRL);
+        assert_eq!(keys.down(LALT).events, only(RECORD, KeyState::Pressed));
     }
 
     #[test]

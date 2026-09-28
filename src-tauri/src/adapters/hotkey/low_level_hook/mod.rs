@@ -9,10 +9,11 @@
  *        and its main key is swallowed. Two Echo hotkeys still cannot share one combination (`Hotkey { conflict }`),
  *        and text that cannot be parsed is `Hotkey { invalid }` with the previous binding kept. The hook is
  *        installed only while at least one binding exists, so no keyboard hook runs before the session binds its
- *        hotkeys or after everything is unbound; `refresh` reinstalls it, because Windows can silently drop a hook
- *        after sleep or a callback timeout (05 W8). The hook cannot see keys typed into an elevated window (UIPI);
- *        a take can still be stopped there with the pill's stop button, and the paste into such a window is refused
- *        anyway (05 W2).
+ *        hotkeys or after everything is unbound. Windows can silently drop a hook after sleep or a callback
+ *        timeout (05 W8, W9): the hook thread renews its hook in place on a timer (hook_thread.rs), and `refresh`
+ *        reinstalls it with a fresh thread after a power event. The hook cannot see keys typed into an elevated
+ *        window (UIPI); a take can still be stopped there with the pill's stop button, and the paste into such a
+ *        window is refused anyway (05 W2).
  * WHERE: Built by app/bootstrap into CommandCtx and the session actor; driven through `dyn HotkeyService` by
  *        pipeline/hotkeys.rs. Parsing in chord.rs, matching in tracker.rs, Win32 plumbing in hook_thread.rs.
  */
@@ -36,6 +37,11 @@ use crate::{
         AppError, HotkeyCaps, HotkeyEvent, HotkeyId, HotkeyIssue, PortError, PortResult, Shortcut,
     },
 };
+
+/// Serialises the tests that install a real hook: every live hook sees every key a test types, and Windows drops a
+/// key whose call was on its way to a hook that another test just removed.
+#[cfg(test)]
+static REAL_KEYS: Mutex<()> = Mutex::new(());
 
 /// What the hook thread reads on every key event.
 #[derive(Default)]
@@ -210,6 +216,7 @@ mod tests {
 
     #[test]
     fn invalid_text_and_shared_combinations_are_refused_and_the_old_binding_stays() {
+        let _keys = REAL_KEYS.lock();
         let hotkeys = LowLevelKeyboardHotkeys::new();
         assert_eq!(
             issue(hotkeys.register(&RECORD, &Shortcut::from_static("Ctrl"))),
@@ -279,11 +286,13 @@ mod tests {
     /// are ignored.
     #[test]
     fn the_real_hook_reports_press_and_release_and_skips_echo_keys() {
+        let _keys = REAL_KEYS.lock();
         let hotkeys = LowLevelKeyboardHotkeys::new();
         let sink = Arc::new(RecordingSink::default());
         hotkeys.listen(sink.clone()).unwrap();
         hotkeys.register(&RECORD, &FREE).unwrap();
-        let chord: [VIRTUAL_KEY; 4] = [VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_F20];
+        // Shift first: the keys never pass through Ctrl+Alt alone, so an Echo running here ignores them.
+        let chord: [VIRTUAL_KEY; 4] = [VK_LSHIFT, VK_LCONTROL, VK_LMENU, VK_F20];
         let press: Vec<KeyStroke> = chord.iter().copied().map(KeyStroke::down).collect();
         let release: Vec<KeyStroke> = chord.iter().rev().copied().map(KeyStroke::up).collect();
 
