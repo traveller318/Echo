@@ -10,7 +10,8 @@
  *        downmixes and resamples once to 16 kHz mono f32, which ASR, VAD and the WAV journal all consume (05 A2).
  *        So CaptureFormat describes the device side and PIPELINE_SAMPLE_RATE_HZ the pipeline side. Device loss is
  *        its own event because the session finalizes what was captured instead of discarding it (02 §5, 05 W12).
- *        VadEvent is a plain verdict: segmentation rules (600 ms pause, 20 s max, 02 §6.1) are pipeline policy, so
+ *        VadEvent is a plain verdict: segmentation rules (600 ms pause, 400 ms once a segment passes 4 s, 20 s max,
+ *        02 §6.1) are pipeline policy, so
  *        they live in SegmentPolicy, which the pipeline narrows to the engine's `max_segment_s` caps. Segments carry
  *        their index because ASR may finish them out of order and text is joined by index (02 §6.1).
  * WHERE: AudioCapture and VoiceActivity ports (ports/audio.rs, ports/vad.rs); the capture worker in
@@ -108,10 +109,16 @@ pub enum VadEvent {
 }
 
 /**
- * SOURCE OF TRUTH KEYWORDS: SegmentPolicy, segmentation rules, 600 ms pause, 20 s max segment, pre-roll, min speech
+ * SOURCE OF TRUTH KEYWORDS: SegmentPolicy, segmentation rules, 600 ms pause, soft pause, long segment cut, tail segment bound, stop to paste latency, 20 s max segment, pre-roll, min speech
  * WHAT:  How the capture worker cuts a take into segments that are transcribed while the user is still speaking.
- * WHY:   Cuts sit in silence so words are never split (02 §6.1, 05 A3). A cut forced by `max_segment_ms` goes into
- *        the latest pause in the second half of the segment when there is one. `pre_roll_ms` keeps a little
+ * WHY:   Cuts sit in silence so words are never split (02 §6.1, 05 A3). Only the open (tail) segment is left to
+ *        transcribe after the stop, so its length is the stop → paste latency: a user who talks without a 600 ms
+ *        pause would leave up to `max_segment_ms` of speech for after the stop (about 1 s per 10 s on the CPU,
+ *        05 decision log 2026-09-28). Once a segment holds `soft_after_ms`, a shorter `soft_pause_ms` closes it,
+ *        which bounds the tail to a few seconds. 400 ms, not less: shorter pauses sit inside sentences, and
+ *        Parakeet ends every segment with a full stop (05 A3), so a clause-level cut would read as a false
+ *        sentence break. A cut forced by `max_segment_ms` goes into the latest pause in the second half of the
+ *        segment when there is one. `pre_roll_ms` keeps a little
  *        silence before speech so the detector's onset latency never clips the first sound; `min_speech_ms`
  *        keeps clicks and breaths away from ASR, which would hallucinate a word from them (05 A4). The values are
  *        pipeline policy, not settings; `within_engine_limit` keeps a segment inside what the engine accepts.
@@ -121,6 +128,10 @@ pub enum VadEvent {
 pub struct SegmentPolicy {
     /// Silence after speech that closes a segment, in ms.
     pub min_pause_ms: u32,
+    /// Length (from the segment's first kept frame) after which `soft_pause_ms` closes a segment, in ms.
+    pub soft_after_ms: u32,
+    /// Silence after speech that closes a segment of at least `soft_after_ms`, in ms; never above `min_pause_ms`.
+    pub soft_pause_ms: u32,
     /// Longest segment, in ms.
     pub max_segment_ms: u32,
     /// Silence kept in front of the first speech of a segment, in ms.
@@ -133,6 +144,8 @@ impl SegmentPolicy {
     /// The values of 02 §6.1.
     pub const DEFAULT: Self = Self {
         min_pause_ms: 600,
+        soft_after_ms: 4_000,
+        soft_pause_ms: 400,
         max_segment_ms: 20_000,
         pre_roll_ms: 200,
         min_speech_ms: 100,
@@ -291,6 +304,13 @@ mod tests {
             samples: vec![0.0; 8_000],
         };
         assert_eq!(segment.duration_ms(), 500);
+    }
+
+    #[test]
+    fn the_soft_pause_only_shortens_the_wait_inside_a_long_segment() {
+        let policy = SegmentPolicy::DEFAULT;
+        assert!(policy.soft_pause_ms < policy.min_pause_ms);
+        assert!(policy.soft_after_ms < policy.max_segment_ms);
     }
 
     #[test]

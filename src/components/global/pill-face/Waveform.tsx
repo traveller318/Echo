@@ -43,7 +43,7 @@ function levelStyle(level: number): LevelStyle {
  * The bars' own width (WAVEFORM_BARS bars and one gap fewer), so the static bar takes exactly the waveform's place.
  * Literal because Tailwind only generates classes it finds verbatim in source; keep it in step with WAVEFORM_BARS.
  */
-const WAVEFORM_WIDTH = "w-[calc(10*var(--waveform-bar-width)+9*var(--waveform-bar-gap))]";
+const WAVEFORM_WIDTH = "w-[calc(8*var(--waveform-bar-width)+7*var(--waveform-bar-gap))]";
 
 const BAR_HEIGHT =
   "h-[calc(var(--waveform-min)+var(--echo-level)*(var(--waveform-max)-var(--waveform-min)))]";

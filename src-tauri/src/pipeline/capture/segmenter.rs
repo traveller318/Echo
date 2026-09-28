@@ -1,12 +1,14 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: Segmenter, VAD framing, exact VAD frames, frame remainder, segment on pause, max segment cut, pre-roll, speech ms
+ * SOURCE OF TRUTH KEYWORDS: Segmenter, VAD framing, exact VAD frames, frame remainder, segment on pause, soft pause cut, max segment cut, pre-roll, speech ms
  * WHAT:  Segmenter feeds the 16 kHz stream to a VoiceActivity detector in exact frames (the remainder waits for
  *        the next push) and cuts the take into SpeechSegments by SegmentPolicy: on a pause of at least
- *        `min_pause_ms` after speech, or at `max_segment_ms` (in the latest pause of the segment's second half, else
- *        hard). It also totals the take's speech time.
+ *        `min_pause_ms` after speech (`soft_pause_ms` once the segment holds `soft_after_ms`), or at
+ *        `max_segment_ms` (in the latest pause of the segment's second half, else hard). It also totals the take's
+ *        speech time.
  * WHY:   Silero takes exactly 512-sample frames and is stateful, so frames are never padded or split and the
  *        detector is reset once per take, here in `new`, never mid-take (05 A11). Segments end in silence so
- *        words are never cut and each can be transcribed while the user keeps speaking (02 §6.1). Silence before
+ *        words are never cut and each can be transcribed while the user keeps speaking (02 §6.1); the soft pause
+ *        keeps the segment still open at the stop short, since it alone is transcribed after the stop. Silence before
  *        speech is trimmed to `pre_roll_ms`, so a long quiet start costs no ASR time; a segment with less than
  *        `min_speech_ms` of speech is not emitted (clicks make ASR invent words, 05 A4), but its speech still
  *        counts toward the take's total. Cut points fall on frame boundaries, so each emitted segment is exactly
@@ -34,6 +36,8 @@ pub struct SegmenterTotals {
 #[derive(Debug, Clone, Copy)]
 struct FramePolicy {
     pause: usize,
+    soft_after: usize,
+    soft_pause: usize,
     max: usize,
     pre_roll: usize,
     min_speech: usize,
@@ -42,8 +46,12 @@ struct FramePolicy {
 impl FramePolicy {
     fn new(policy: SegmentPolicy, frame_ms: u32) -> Self {
         let ceil = |ms: u32| ms.div_ceil(frame_ms) as usize;
+        let pause = ceil(policy.min_pause_ms).max(1);
         Self {
-            pause: ceil(policy.min_pause_ms).max(1),
+            pause,
+            soft_after: ceil(policy.soft_after_ms),
+            // Never longer than the normal pause, so a long segment is never harder to close than a short one.
+            soft_pause: ceil(policy.soft_pause_ms).clamp(1, pause),
             // At least two frames, so a forced cut always leaves room for a pause in the second half.
             max: ((policy.max_segment_ms / frame_ms) as usize).max(2),
             pre_roll: ceil(policy.pre_roll_ms),
@@ -139,11 +147,20 @@ impl Segmenter {
         }
         if self.segment_speech == 0 {
             self.trim_to_pre_roll();
-        } else if self.silence_run >= self.policy.pause {
+        } else if self.silence_run >= self.pause_to_close() {
             self.cut(self.verdicts.len(), emit);
         } else if self.verdicts.len() >= self.policy.max {
             let at = self.forced_cut_point();
             self.cut(at, emit);
+        }
+    }
+
+    /// Silent frames that close the open segment: the soft pause once it holds `soft_after` frames.
+    fn pause_to_close(&self) -> usize {
+        if self.verdicts.len() >= self.policy.soft_after {
+            self.policy.soft_pause
+        } else {
+            self.policy.pause
         }
     }
 
@@ -218,6 +235,8 @@ mod tests {
     fn policy() -> SegmentPolicy {
         SegmentPolicy {
             min_pause_ms: 320,
+            soft_after_ms: 1_600,
+            soft_pause_ms: 128,
             max_segment_ms: 3_200,
             pre_roll_ms: 64,
             min_speech_ms: 64,
@@ -330,6 +349,47 @@ mod tests {
                 .all(|segment| segment.samples.len() == 100 * FRAME)
         );
         assert_eq!(hard.segments[1].start_ms, 100 * u64::from(FRAME_MS));
+    }
+
+    #[test]
+    fn a_long_segment_closes_on_the_soft_pause() {
+        let mut run = Run::new(policy());
+        // Past 50 frames (soft_after), 4 silent frames (128 ms) close the segment instead of 10.
+        run.push(&speech(60));
+        run.push(&silence(3));
+        assert!(run.segments.is_empty(), "3 silent frames are not a pause");
+        run.push(&silence(1));
+        assert_eq!(run.segments.len(), 1);
+        assert_eq!(run.segments[0].samples.len(), 64 * FRAME);
+        assert_eq!(run.segments[0].speech_ms, 60 * FRAME_MS);
+
+        // The next segment is short again, so it waits for the full pause.
+        run.push(&speech(20));
+        run.push(&silence(4));
+        assert_eq!(
+            run.segments.len(),
+            1,
+            "a short segment ignores the soft pause"
+        );
+        run.push(&silence(6));
+        assert_eq!(run.segments.len(), 2);
+        assert_eq!(run.segments[1].start_ms, 64 * u64::from(FRAME_MS));
+        assert_eq!(run.segments[1].samples.len(), 30 * FRAME);
+    }
+
+    #[test]
+    fn a_soft_pause_above_the_normal_pause_is_capped_to_it() {
+        let mut run = Run::new(SegmentPolicy {
+            soft_pause_ms: 640,
+            ..policy()
+        });
+        run.push(&speech(60));
+        run.push(&silence(10));
+        assert_eq!(
+            run.segments.len(),
+            1,
+            "the normal 320 ms pause still closes it"
+        );
     }
 
     #[test]

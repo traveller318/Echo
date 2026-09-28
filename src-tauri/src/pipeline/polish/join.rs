@@ -1,7 +1,8 @@
 /*!
  * SOURCE OF TRUTH KEYWORDS: join_segments, segment join, joined by index, sentence break across segments, A3 join rule
  * WHAT:  `join_segments` joins a take's segment texts (already in index order) into one text for the polish chain.
- * WHY:   Segments are cut in pauses of at least 600 ms, and each is transcribed on its own, so each may end with its
+ * WHY:   Segments are cut in pauses of at least 600 ms (400 ms in a long segment, SegmentPolicy), and each is
+ *        transcribed on its own, so each may end with its
  *        own punctuation and the next may start in lowercase (05 A3). One space separates segments (blank ones are
  *        skipped). When the previous segment ends a sentence ("hello." + "world") the next one starts with a capital
  *        even if the engine lowercased it, because a long pause after a full stop is a sentence break; when it ends

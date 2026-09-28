@@ -23,7 +23,7 @@ export function PillRest({ pillStyle, reducedMotion }: PillRestProps) {
     return <PillMark pillStyle={pillStyle} />;
   }
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-1">
       <PillMark pillStyle={pillStyle} />
       <span aria-hidden className="h-(--pill-divider-height) w-hairline shrink-0 bg-fg-tertiary" />
       <Waveform listening={false} reducedMotion={reducedMotion} tone={spec.tone} />

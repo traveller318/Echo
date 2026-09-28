@@ -96,7 +96,7 @@ function RecordingContent({ view, pillStyle, reducedMotion }: RecordingContentPr
   if (spec.compact) {
     // Logo, waveform and stop only; the stop target reaches the right edge like the full layout's (04 §4).
     return (
-      <div className="flex h-full w-full items-center gap-2 pl-2">
+      <div className="flex h-full w-full items-center gap-1 pl-2">
         <PillMark pillStyle={pillStyle} />
         {waveform}
         <StopAction />
@@ -104,13 +104,13 @@ function RecordingContent({ view, pillStyle, reducedMotion }: RecordingContentPr
     );
   }
   return (
-    <div className="flex h-full w-full items-center gap-2 pl-2">
+    <div className="flex h-full w-full items-center gap-1 pl-2">
       <PillMark pillStyle={pillStyle} />
       <span aria-hidden className="h-(--pill-divider-height) w-hairline shrink-0 bg-fg-tertiary" />
       {waveform}
       {/* The buttons' empty target edges take the spacing (glyphs stay apart, targets stay 28px), and the stop
           target reaches the pill's right edge: its circle is then as far from that edge as from the top and bottom. */}
-      <div className="-ml-2 flex shrink-0 items-center">
+      <div className="-ml-1 flex shrink-0 items-center">
         <PillAction size="icon-sm" label="Cancel dictation" className="text-fg-secondary" onPress={cancelTake}>
           <XIcon />
         </PillAction>
