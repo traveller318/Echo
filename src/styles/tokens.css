@@ -169,15 +169,15 @@
 
   /* 3.10 Sizes: the pill (4) */
   --pill-height: 28px;
-  --pill-width-recording: 128px;
+  --pill-width-recording: 89px;
   --pill-width-cancel: 172px;
   --pill-width-copied: 112px;
   --pill-width-notice: 200px;
   --pill-width-error: 280px;
   --pill-width-setup: 260px;
-  --pill-width-idle: 94px;
+  --pill-width-idle: 89px;
   --pill-width-mark: 28px;
-  --pill-width-recording-compact: 100px;
+  --pill-width-recording-compact: 83px;
   --pill-logo-width: 24px;
   --pill-mark-width: 18px;
   --pill-divider-height: 14px;

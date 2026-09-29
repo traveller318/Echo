@@ -21,7 +21,7 @@ export interface PillStyleSpec {
   readonly mark: string;
   /** Width class of the logo (height follows the image). */
   readonly markClass: string;
-  /** The compact pill: a round badge at rest, logo · waveform · stop while recording (no ✕, no divider). */
+  /** The compact pill: a round badge at rest, logo · waveform while recording. */
   readonly compact: boolean;
   readonly tone: WaveformTone;
   /** Width token of the resting (idle) layout. */

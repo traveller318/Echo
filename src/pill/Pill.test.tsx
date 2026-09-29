@@ -1,6 +1,6 @@
 /**
- * SOURCE OF TRUTH KEYWORDS: Pill test, pill states test, pill stop button test, pill exit test, pill Set up test, pill hit areas test, idle pill test, pill style test, pill drag test
- * WHAT:  Renders the Pill against pushed SessionStateChanged views and checks each 04 §4 layout, the stop button, the
+ * SOURCE OF TRUTH KEYWORDS: Pill test, pill states test, recording pill without buttons test, pill exit test, pill Set up test, pill hit areas test, idle pill test, pill style test, pill drag test
+ * WHAT:  Renders the Pill against pushed SessionStateChanged views and checks each 04 §4 layout, the buttonless recording pill, the
  *        error and model-missing actions, the hit-area report and the exit report; with the pill settings (PillLook,
  *        read and pushed) the idle layout, the compact and monochrome styles and the drag a movable pill starts.
  * WHY:   The pill is the only UI a user sees while dictating; a wrong layout, a dead button or a window that never
@@ -134,20 +134,18 @@ describe("Pill", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 
-  it("records with the waveform and a stop button that sends the pill's stop", async () => {
+  it("records with the logo and waveform only, no ✕, stop or divider", async () => {
     await renderPill();
     push({ status: "arming", transcript_id: TAKE });
     expect(screen.getByRole("status", { name: "Recording" })).toBeInTheDocument();
     push({ status: "recording", transcript_id: TAKE, elapsed_ms: 65_000 });
-    expect(document.querySelector("[data-slot='waveform']")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Stop dictation" }));
-    await waitFor(() => {
-      expect(mocks.sessionInput).toHaveBeenCalledWith("stop");
-    });
-    // The cancel and stop buttons are the pill's clickable areas.
-    expect(mocks.pillSetHitAreas).toHaveBeenCalledWith({
-      areas: [expect.objectContaining({ x: 0, y: 0 }), expect.objectContaining({ x: 0, y: 0 })],
-    });
+    const recording = screen.getByRole("status", { name: "Recording" });
+    expect(recording.querySelector("[data-slot='waveform']")).toBeInTheDocument();
+    expect(recording.querySelector("img")?.getAttribute("src")).toContain("wave-logo");
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(recording.querySelector(".w-hairline")).toBeNull();
+    // Without buttons nothing on a still pill is clickable.
+    expect(mocks.pillSetHitAreas).not.toHaveBeenCalledWith({ areas: [expect.anything()] });
   });
 
   it("leaves as soon as the take stops and never shows Transcribing", async () => {
@@ -165,18 +163,14 @@ describe("Pill", () => {
     expect(screen.getByRole("status", { name: "Copied" })).toBeInTheDocument();
   });
 
-  it("cancels with ✕ and undoes with Undo, both as Esc", async () => {
+  it("undoes a cancel (started by Esc) with Undo, sent as Esc", async () => {
     await renderPill();
     push({ status: "recording", transcript_id: TAKE });
-    fireEvent.click(screen.getByRole("button", { name: "Cancel dictation" }));
-    await waitFor(() => {
-      expect(mocks.sessionInput).toHaveBeenCalledWith("cancel");
-    });
     push({ status: "cancel_pending", transcript_id: TAKE, countdown_remaining_ms: 3_000 });
     expect(screen.getByRole("status", { name: "Cancelling" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Undo" }));
     await waitFor(() => {
-      expect(mocks.sessionInput).toHaveBeenCalledTimes(2);
+      expect(mocks.sessionInput).toHaveBeenCalledOnce();
     });
     expect(mocks.sessionInput).toHaveBeenLastCalledWith("cancel");
   });
@@ -237,6 +231,7 @@ describe("Pill", () => {
     const idle = await screen.findByRole("status", { name: "Echo is ready" });
     expect(idle).toHaveAttribute("data-kind", "idle");
     expect(idle.querySelector("[data-slot=waveform]")).not.toBeNull();
+    expect(idle.querySelector(".w-hairline")).toBeNull();
     push({ status: "recording", transcript_id: TAKE });
     expect(screen.getByRole("status", { name: "Recording" })).toBeInTheDocument();
     push({ status: "idle" });
@@ -250,7 +245,7 @@ describe("Pill", () => {
     expect(mocks.pillExited).toHaveBeenCalledOnce();
   });
 
-  it("draws the compact styles with their own logo, and records without ✕", async () => {
+  it("draws the compact styles with their own logo, and records without ✕ or stop", async () => {
     await renderPill();
     pushLook({ visibility: "always", style: "icon" });
     const badge = screen.getByRole("status", { name: "Echo is ready" });
@@ -266,20 +261,20 @@ describe("Pill", () => {
       expect(recording.querySelectorAll("img")).toHaveLength(1);
     });
     expect(recording.querySelector("img")?.getAttribute("src")).toContain("wave-grey");
-    expect(screen.getByRole("button", { name: "Stop dictation" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stop dictation" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Cancel dictation" })).toBeNull();
   });
 
   it("starts a drag from a press on a movable surface, never from its buttons", async () => {
     await renderPill();
-    push({ status: "recording", transcript_id: TAKE });
-    const surface = screen.getByRole("status", { name: "Recording" });
+    push({ status: "cancel_pending", transcript_id: TAKE, countdown_remaining_ms: 3_000 });
+    const surface = screen.getByRole("status", { name: "Cancelling" });
     fireEvent.pointerDown(surface, { button: 0 });
     expect(mocks.pillDrag).not.toHaveBeenCalled();
 
     pushLook({ movable: true });
     expect(surface).toHaveAttribute("data-movable", "true");
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Stop dictation" }), { button: 0 });
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Undo" }), { button: 0 });
     fireEvent.pointerDown(surface, { button: 2 });
     expect(mocks.pillDrag).not.toHaveBeenCalled();
     fireEvent.pointerDown(surface, { button: 0 });

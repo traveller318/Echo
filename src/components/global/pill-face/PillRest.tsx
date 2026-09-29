@@ -1,7 +1,8 @@
 /**
  * SOURCE OF TRUTH KEYWORDS: PillRest, idle pill, resting pill, pill between takes, always visible pill look
- * WHAT:  The content of the pill at rest (no take running) in a given style: the full style shows the logo, a
- *        hairline divider and a flat waveform; the compact styles show the logo alone, centred in a round badge.
+ * WHAT:  The content of the pill at rest (no take running) in a given style: the full style shows the logo and a
+ *        flat waveform (the hairline divider is commented out, as in the recording row, so the morph between the
+ *        two never pops it in and out); the compact styles show the logo alone, centred in a round badge.
  * WHY:   With `pill.visibility` = always the pill stays on screen between takes and must say "ready" without words;
  *        the flat waveform previews the recording layout it grows into. The Settings style cards render this same
  *        content, so a preview can never drift from the real pill.
@@ -25,7 +26,7 @@ export function PillRest({ pillStyle, reducedMotion }: PillRestProps) {
   return (
     <div className="flex items-center gap-1">
       <PillMark pillStyle={pillStyle} />
-      <span aria-hidden className="h-(--pill-divider-height) w-hairline shrink-0 bg-fg-tertiary" />
+      {/* <span aria-hidden className="h-(--pill-divider-height) w-hairline shrink-0 bg-fg-tertiary" /> */}
       <Waveform listening={false} reducedMotion={reducedMotion} tone={spec.tone} />
     </div>
   );

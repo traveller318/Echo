@@ -1,11 +1,12 @@
 /**
  * SOURCE OF TRUTH KEYWORDS: Pill, pill window UI, pill morph, pill states, recording pill, compact recording pill, idle pill, movable pill, pill drag, cancel pending pill, copied pill, pill error, model missing Set up
  * WHAT:  The pill window's UI: follows the session (useSessionView) and the pill settings (usePillLook) and renders
- *        its 04 §4 layout — idle (the resting pill, while the user keeps it on screen), recording (full style: logo,
- *        waveform, ✕, stop; compact styles: logo, waveform, stop), cancel pending (draining ring, "Cancelling",
- *        "Undo"), copied, no speech, error (message, "Open") and model missing ("Set up") — inside a glass pill that
- *        springs in, morphs its width between layouts and springs out. ✕ and "Undo" send the Esc input, so the
- *        machine's cancel countdown and undo apply unchanged. Once the take stops the pill leaves (or rests, when it
+ *        its 04 §4 layout — idle (the resting pill, while the user keeps it on screen), recording (logo and
+ *        waveform only, every style), cancel pending (draining ring, "Cancelling", "Undo"), copied, no speech, error
+ *        (message, "Open") and model missing ("Set up") — inside a glass pill that springs in, morphs its width
+ *        between layouts and springs out. "Undo" sends the Esc input, so the machine's cancel countdown and undo
+ *        apply unchanged. The recording ✕ / stop buttons and the logo divider are commented out on the owner's
+ *        request (the hotkey and Esc still stop and cancel); restore them by uncommenting. Once the take stops the pill leaves (or rests, when it
  *        stays on screen): no "Transcribing" wait and no ✓ for a pasted take, the text landing is the confirmation.
  *        While the pill is movable, a press on its surface (not on a button) asks Rust to drag it.
  * WHY:   Rust owns the session and the settings; the pill keeps no copy of domain state, only display state (audio
@@ -23,7 +24,8 @@
  *        pill-commands.ts, pill-only parts in pill/_components, parts shared with Settings in
  *        components/global/pill-face.
  */
-import { SquareIcon, XIcon } from "lucide-react";
+// Recording ✕ / stop buttons are commented out below; restore this import with them.
+// import { SquareIcon, XIcon } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useState, type PointerEvent } from "react";
 import type { PillStyle, SessionView } from "@/bindings";
@@ -50,7 +52,7 @@ import {
   performPillAction,
   reportExited,
   reportHitAreas,
-  stopTake,
+  // stopTake, — used only by the commented-out stop button.
 } from "./pill-commands";
 import { pillKind, pillWidthToken, type PillKind } from "./pill-layout";
 
@@ -70,15 +72,16 @@ const PILL_LABELS: Readonly<Record<PillKind, string>> = {
 
 const LABEL_CLASS = "truncate text-footnote text-fg";
 
-function StopAction({ className }: { readonly className?: string }) {
-  return (
-    <PillAction size="icon-sm" label="Stop dictation" className={className} onPress={stopTake}>
-      <span className="flex size-(--pill-stop-size) items-center justify-center rounded-pill bg-record text-accent-fg">
-        <SquareIcon className="size-2 fill-current" />
-      </span>
-    </PillAction>
-  );
-}
+// The recording stop button, commented out on the owner's request; restore with the imports above.
+// function StopAction({ className }: { readonly className?: string }) {
+//   return (
+//     <PillAction size="icon-sm" label="Stop dictation" className={className} onPress={stopTake}>
+//       <span className="flex size-(--pill-stop-size) items-center justify-center rounded-pill bg-record text-accent-fg">
+//         <SquareIcon className="size-2 fill-current" />
+//       </span>
+//     </PillAction>
+//   );
+// }
 
 interface RecordingContentProps {
   readonly view: SessionView;
@@ -89,33 +92,32 @@ interface RecordingContentProps {
 function RecordingContent({ view, pillStyle, reducedMotion }: RecordingContentProps) {
   const spec = PILL_STYLES[pillStyle];
   const waveform = (
-    <div className="flex min-w-0 flex-1 justify-center">
-      <Waveform listening={view.status === "recording"} reducedMotion={reducedMotion} tone={spec.tone} />
-    </div>
+    <Waveform listening={view.status === "recording"} reducedMotion={reducedMotion} tone={spec.tone} />
   );
+  // Logo and waveform only in every style, centred as one row: the pill's width token (04 §3.10) leaves the same
+  // margin on both sides, so the row sits exactly where the resting row does and the morph never shifts it.
   if (spec.compact) {
-    // Logo, waveform and stop only; the stop target reaches the right edge like the full layout's (04 §4).
     return (
-      <div className="flex h-full w-full items-center gap-1 pl-2">
+      <div className="flex h-full w-full items-center justify-center gap-1">
         <PillMark pillStyle={pillStyle} />
         {waveform}
-        <StopAction />
+        {/* <StopAction /> */}
       </div>
     );
   }
   return (
-    <div className="flex h-full w-full items-center gap-1 pl-2">
+    <div className="flex h-full w-full items-center justify-center gap-1">
       <PillMark pillStyle={pillStyle} />
-      <span aria-hidden className="h-(--pill-divider-height) w-hairline shrink-0 bg-fg-tertiary" />
+      {/* <span aria-hidden className="h-(--pill-divider-height) w-hairline shrink-0 bg-fg-tertiary" /> */}
       {waveform}
       {/* The buttons' empty target edges take the spacing (glyphs stay apart, targets stay 28px), and the stop
-          target reaches the pill's right edge: its circle is then as far from that edge as from the top and bottom. */}
+          target reaches the pill's right edge: its circle is then as far from that edge as from the top and bottom.
       <div className="-ml-1 flex shrink-0 items-center">
         <PillAction size="icon-sm" label="Cancel dictation" className="text-fg-secondary" onPress={cancelTake}>
           <XIcon />
         </PillAction>
         <StopAction className="-ml-2" />
-      </div>
+      </div> */}
     </div>
   );
 }
