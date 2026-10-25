@@ -6,6 +6,12 @@
  * WHERE: Constructed by app/bootstrap; used only through `dyn SoundPlayer` by pipeline/sound_cues.rs.
  */
 
+#[cfg(target_os = "linux")]
+mod cpal_output;
+#[cfg(windows)]
 mod win32_play_sound;
 
+#[cfg(target_os = "linux")]
+pub use cpal_output::CpalSoundPlayer;
+#[cfg(windows)]
 pub use win32_play_sound::Win32SoundPlayer;

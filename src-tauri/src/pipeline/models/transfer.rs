@@ -280,7 +280,7 @@ mod tests {
     use super::*;
     use crate::{
         ports::fakes::RecordingSink,
-        registry::models::{LLAMA_CPP_VULKAN, PARAKEET_TDT_V3, QWEN3_1_7B_Q4},
+        registry::models::{LLAMA_CPP_RUNTIME, PARAKEET_TDT_V3, QWEN3_1_7B_Q4},
     };
 
     fn progress(bytes: u64, phase: ModelPhase) -> ModelProgress {
@@ -344,7 +344,7 @@ mod tests {
         let slots = TransferSlots::default();
         let sink = RecordingSink::default();
         let _guard = slots
-            .begin_set(&QWEN3_1_7B_Q4, &[LLAMA_CPP_VULKAN])
+            .begin_set(&QWEN3_1_7B_Q4, &[LLAMA_CPP_RUNTIME])
             .unwrap();
         // A runtime worth 100 bytes of the card, then a model worth 900.
         let relay = ProgressRelay::new(
@@ -362,13 +362,13 @@ mod tests {
         };
         // The adapter counts the runtime's archive: 500 of 1 000 is half of its share.
         runtime.emit(ModelProgress {
-            model_id: LLAMA_CPP_VULKAN,
+            model_id: LLAMA_CPP_RUNTIME,
             bytes: ByteCount::new(500),
             total: ByteCount::new(1_000),
             phase: ModelPhase::Transferring,
         });
         runtime.emit(ModelProgress {
-            model_id: LLAMA_CPP_VULKAN,
+            model_id: LLAMA_CPP_RUNTIME,
             bytes: ByteCount::new(1_000),
             total: ByteCount::new(1_000),
             phase: ModelPhase::Installing,
@@ -405,28 +405,28 @@ mod tests {
             AppEvent::ModelProgress(progress) if progress.model_id == QWEN3_1_7B_Q4
         )));
         // Both manifests are claimed: neither can start a second transfer.
-        assert!(slots.begin(&LLAMA_CPP_VULKAN).is_err());
+        assert!(slots.begin(&LLAMA_CPP_RUNTIME).is_err());
         assert!(slots.begin(&QWEN3_1_7B_Q4).is_err());
     }
 
     #[test]
     fn a_set_claims_nothing_when_one_member_is_busy() {
         let slots = TransferSlots::default();
-        let runtime = slots.begin(&LLAMA_CPP_VULKAN).unwrap();
+        let runtime = slots.begin(&LLAMA_CPP_RUNTIME).unwrap();
         assert!(
             slots
-                .begin_set(&QWEN3_1_7B_Q4, &[LLAMA_CPP_VULKAN])
+                .begin_set(&QWEN3_1_7B_Q4, &[LLAMA_CPP_RUNTIME])
                 .is_err()
         );
         assert!(!slots.is_running(&QWEN3_1_7B_Q4));
         drop(runtime);
         let set = slots
-            .begin_set(&QWEN3_1_7B_Q4, &[LLAMA_CPP_VULKAN])
+            .begin_set(&QWEN3_1_7B_Q4, &[LLAMA_CPP_RUNTIME])
             .unwrap();
         assert!(slots.cancel(&QWEN3_1_7B_Q4));
         assert!(set.cancellation().is_cancelled());
         drop(set);
-        assert!(!slots.is_running(&LLAMA_CPP_VULKAN));
+        assert!(!slots.is_running(&LLAMA_CPP_RUNTIME));
     }
 
     #[test]

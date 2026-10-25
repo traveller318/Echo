@@ -9,7 +9,13 @@
  */
 
 mod disabled;
+#[cfg(windows)]
 mod run_key;
+#[cfg(target_os = "linux")]
+mod xdg_autostart;
 
 pub use disabled::DisabledLaunchAtLogin;
+#[cfg(windows)]
 pub use run_key::{RunKeyLocation, Win32RunKey};
+#[cfg(target_os = "linux")]
+pub use xdg_autostart::XdgAutostart;

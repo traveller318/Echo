@@ -12,6 +12,7 @@ mod bootstrap;
 mod events;
 mod logging;
 mod panics;
+mod platform;
 mod plugins;
 mod tray;
 mod windows;
@@ -102,9 +103,10 @@ mod tests {
     use std::collections::HashMap;
 
     use tauri::utils::config::{
-        BundleResources, BundleTarget, BundleType, Csp, CspDirectiveSources, NSISInstallerMode,
-        Updater, WebviewInstallMode, WindowConfig,
+        BundleResources, BundleTarget, BundleType, Csp, CspDirectiveSources, Updater, WindowConfig,
     };
+    #[cfg(windows)]
+    use tauri::utils::config::{NSISInstallerMode, WebviewInstallMode};
 
     fn config() -> tauri::Config {
         let context: tauri::Context<tauri::Wry> = tauri::generate_context!();
@@ -132,8 +134,9 @@ mod tests {
             .collect()
     }
 
+    /// The configuration the CLI bundles with: tauri.conf.json with this system's tauri.<os>.conf.json merged over it.
     fn file() -> tauri::Config {
-        serde_json::from_str(include_str!("../../tauri.conf.json"))
+        serde_json::from_value(crate::types::testing::build_config())
             .expect("tauri.conf.json parses as a Tauri config")
     }
 
@@ -202,6 +205,7 @@ mod tests {
     }
 
     /// Bundle settings are read by the Tauri CLI, not compiled into the context, so they are parsed from the file.
+    #[cfg(windows)]
     #[test]
     fn installer_is_per_user_nsis_with_embedded_webview_bootstrapper() {
         let bundle = file().bundle;
@@ -214,6 +218,31 @@ mod tests {
         ));
     }
 
+    /// Linux ships the three package formats the install script and the release workflow expect.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_builds_deb_rpm_and_appimage() {
+        let bundle = file().bundle;
+        assert_eq!(
+            bundle.targets,
+            BundleTarget::List(vec![BundleType::Deb, BundleType::Rpm, BundleType::AppImage])
+        );
+        assert!(
+            bundle
+                .linux
+                .deb
+                .depends
+                .is_some_and(|depends| depends.iter().any(|d| d.contains("webkit2gtk-4.1")))
+        );
+        assert!(
+            bundle
+                .linux
+                .rpm
+                .depends
+                .is_some_and(|depends| depends.iter().any(|d| d == "webkit2gtk4.1"))
+        );
+    }
+
     /// The installer, the uninstaller and the executable all carry the app icon, and the publisher never changes.
     #[test]
     fn installer_carries_the_app_icon_and_a_stable_publisher() {
@@ -221,9 +250,12 @@ mod tests {
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let app_icon = std::path::PathBuf::from("icons/icon.ico");
         assert!(bundle.icon.iter().any(|icon| *icon == "icons/icon.ico"));
-        let nsis = bundle.windows.nsis.expect("NSIS settings are configured");
-        for icon in [nsis.installer_icon, nsis.uninstaller_icon] {
-            assert_eq!(icon.as_ref(), Some(&app_icon));
+        #[cfg(windows)]
+        {
+            let nsis = bundle.windows.nsis.expect("NSIS settings are configured");
+            for icon in [nsis.installer_icon, nsis.uninstaller_icon] {
+                assert_eq!(icon.as_ref(), Some(&app_icon));
+            }
         }
         assert!(
             manifest_dir.join(&app_icon).is_file(),
@@ -263,22 +295,63 @@ mod tests {
         };
         let mut folders: Vec<_> = resources.into_iter().collect();
         folders.sort();
+        let mut expected = vec![
+            (
+                "../src/styles/fonts/Inter-OFL.txt",
+                "licenses/Inter-OFL.txt",
+            ),
+            (
+                "../src/styles/fonts/Poppins-OFL.txt",
+                "licenses/Poppins-OFL.txt",
+            ),
+            (
+                "resources/licenses/onnxruntime-LICENSE.txt",
+                "licenses/onnxruntime-LICENSE.txt",
+            ),
+            (
+                "resources/licenses/silero-vad-LICENSE.txt",
+                "licenses/silero-vad-LICENSE.txt",
+            ),
+            ("resources/models/*", "models/"),
+        ];
+        #[cfg(windows)]
+        expected.extend([
+            (
+                "resources/licenses/DirectML-LICENSE.txt",
+                "licenses/DirectML-LICENSE.txt",
+            ),
+            (
+                "resources/licenses/DirectML-ThirdPartyNotices.txt",
+                "licenses/DirectML-ThirdPartyNotices.txt",
+            ),
+            (
+                "resources/licenses/msvc-runtime-NOTICE.txt",
+                "licenses/msvc-runtime-NOTICE.txt",
+            ),
+            (
+                "resources/licenses/onnxruntime-ThirdPartyNotices.txt",
+                "licenses/onnxruntime-ThirdPartyNotices.txt",
+            ),
+            ("resources/onnxruntime/*.dll", "onnxruntime/"),
+        ]);
+        #[cfg(target_os = "linux")]
+        expected.extend([
+            (
+                "resources/licenses/onnxruntime-linux-ThirdPartyNotices.txt",
+                "licenses/onnxruntime-linux-ThirdPartyNotices.txt",
+            ),
+            (
+                "resources/onnxruntime/libonnxruntime.so",
+                "onnxruntime/libonnxruntime.so",
+            ),
+        ]);
+        expected.sort_unstable();
         assert_eq!(
             folders,
-            [
-                (
-                    "../src/styles/fonts/Inter-OFL.txt",
-                    "licenses/Inter-OFL.txt"
-                ),
-                (
-                    "../src/styles/fonts/Poppins-OFL.txt",
-                    "licenses/Poppins-OFL.txt"
-                ),
-                ("resources/licenses/*", "licenses/"),
-                ("resources/models/*", "models/"),
-                ("resources/onnxruntime/*", "onnxruntime/"),
-            ]
-            .map(|(from, to)| (from.to_owned(), to.to_owned()))
+            expected
+                .into_iter()
+                .map(|(from, to)| (from.to_owned(), to.to_owned()))
+                .collect::<Vec<_>>()
         );
     }
 }

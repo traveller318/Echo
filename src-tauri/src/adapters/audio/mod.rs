@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: audio adapters, AudioCapture implementations, CpalWasapiCapture, microphone, WASAPI, device watch, endpoint bus
+ * SOURCE OF TRUTH KEYWORDS: audio adapters, AudioCapture implementations, CpalCapture, microphone, WASAPI, PulseAudio, device watch, endpoint bus
  * WHAT:  Adapters behind the AudioCapture port, plus the Core Audio pieces the WASAPI one uses: endpoint
  *        properties (endpoints.rs) and the hot-plug watch (device_watch.rs).
  * WHY:   Microphone access is a Windows API concern and stays behind its port (root CLAUDE.md §3); a second backend
@@ -7,8 +7,12 @@
  * WHERE: Constructed by app/bootstrap; used only through `dyn AudioCapture`.
  */
 
-mod cpal_wasapi;
+mod cpal_capture;
+#[cfg(target_os = "linux")]
+mod device_poll;
+#[cfg(windows)]
 mod device_watch;
+#[cfg(windows)]
 mod endpoints;
 
-pub use cpal_wasapi::CpalWasapiCapture;
+pub use cpal_capture::CpalCapture;

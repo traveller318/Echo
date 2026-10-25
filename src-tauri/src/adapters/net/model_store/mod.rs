@@ -16,6 +16,8 @@ mod copy;
 mod download;
 mod files;
 mod layout;
+#[cfg(target_os = "linux")]
+mod tar_archive;
 
 #[cfg(test)]
 mod tests;

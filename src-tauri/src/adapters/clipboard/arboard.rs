@@ -10,12 +10,20 @@
  *        pasteable but Win+V history, cloud sync and clipboard monitors skip it, because Echo's History is the
  *        archive. An arboard handle is created per call: on Windows it holds nothing between calls, and the
  *        clipboard may only be opened on the thread that uses it.
+ *        On Linux the clipboard's contents live in the process that set them (X11 selections, Wayland data
+ *        offers): arboard serves them from a context shared by every live handle and drops them with the last
+ *        one, so the adapter keeps one handle open for its lifetime and a paste after the write still finds the
+ *        text. An excluded write there carries `x-kde-passwordManagerHint`, the hint clipboard managers honour.
  * WHERE: Built by app/bootstrap into pipeline/delivery.rs's Delivery; called through `dyn Clipboard`.
  */
 
 use std::{thread, time::Duration};
 
-use arboard::{Error as ClipboardError, SetExtWindows};
+use arboard::Error as ClipboardError;
+#[cfg(target_os = "linux")]
+use arboard::SetExtLinux;
+#[cfg(windows)]
+use arboard::SetExtWindows;
 
 use crate::{
     ports::Clipboard,
@@ -29,12 +37,31 @@ const ATTEMPTS: u32 = 10;
 const BACKOFF: Duration = Duration::from_millis(15);
 
 /// The system clipboard through arboard.
-#[derive(Debug, Default)]
-pub struct ArboardClipboard;
+#[derive(Default)]
+pub struct ArboardClipboard {
+    /// Linux: the handle that keeps the clipboard's serving context (and so the last write) alive.
+    #[cfg(target_os = "linux")]
+    keep_alive: parking_lot::Mutex<Option<arboard::Clipboard>>,
+}
+
+impl std::fmt::Debug for ArboardClipboard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ArboardClipboard").finish_non_exhaustive()
+    }
+}
 
 impl ArboardClipboard {
     pub fn new() -> Self {
-        Self
+        Self::default()
+    }
+
+    /// Opens the long-lived handle once; a failure is retried on the next write.
+    #[cfg(target_os = "linux")]
+    fn keep_serving(&self) {
+        let mut held = self.keep_alive.lock();
+        if held.is_none() {
+            *held = arboard::Clipboard::new().ok();
+        }
     }
 }
 
@@ -48,14 +75,19 @@ impl Clipboard for ArboardClipboard {
     }
 
     fn write_text(&self, text: &str, history: ClipboardHistory) -> PortResult<()> {
+        #[cfg(target_os = "linux")]
+        self.keep_serving();
         with_retry("write", |clipboard| {
             let set = clipboard.set();
             match history {
+                #[cfg(windows)]
                 ClipboardHistory::Exclude => set
                     .exclude_from_history()
                     .exclude_from_cloud()
                     .exclude_from_monitoring()
                     .text(text),
+                #[cfg(target_os = "linux")]
+                ClipboardHistory::Exclude => set.exclude_from_history().text(text),
                 ClipboardHistory::Include => set.text(text),
             }
         })
@@ -119,6 +151,7 @@ fn with_retry<T>(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
     use windows::{
         Win32::System::DataExchange::{IsClipboardFormatAvailable, RegisterClipboardFormatW},
         core::{HSTRING, PCWSTR},
@@ -127,6 +160,7 @@ mod tests {
     use super::*;
 
     /// True when the clipboard currently offers the registered format `name`.
+    #[cfg(windows)]
     fn offers(name: &str) -> bool {
         let name = HSTRING::from(name);
         // SAFETY: `name` is a valid null-terminated wide string that outlives the call.
@@ -151,6 +185,7 @@ mod tests {
 
     /// Uses the real clipboard: the developer's text is put back afterwards (excluded, so it is not re-added to
     /// Win+V history). This is the one place the exclusion formats can be proven (05 W5).
+    #[cfg(windows)]
     #[test]
     fn excluded_writes_carry_the_windows_exclusion_formats() {
         let clipboard = ArboardClipboard::new();

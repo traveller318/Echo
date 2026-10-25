@@ -642,7 +642,7 @@ pub(super) mod tests {
                 .err()
                 .map(PortError::into_app_error),
             Some(AppError::ModelMissing {
-                model_id: models::LLAMA_CPP_VULKAN
+                model_id: models::LLAMA_CPP_RUNTIME
             }),
             "nothing is installed in a fresh folder"
         );

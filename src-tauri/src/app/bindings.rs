@@ -178,6 +178,13 @@ mod tests {
     }
 
     /// Invokes `cmd` with JSON `args` the way the generated bindings do.
+    /// The origin Tauri serves the bundled pages from: `http://tauri.localhost` on Windows, `tauri://localhost` elsewhere.
+    const APP_ORIGIN: &str = if cfg!(windows) {
+        "http://tauri.localhost"
+    } else {
+        "tauri://localhost"
+    };
+
     fn invoke(
         webview: &tauri::WebviewWindow<MockRuntime>,
         cmd: &str,
@@ -189,7 +196,7 @@ mod tests {
                 cmd: cmd.into(),
                 callback: CallbackFn(0),
                 error: CallbackFn(1),
-                url: "http://tauri.localhost".parse().expect("valid url"),
+                url: APP_ORIGIN.parse().expect("valid url"),
                 body: InvokeBody::Json(args),
                 headers: Default::default(),
                 invoke_key: INVOKE_KEY.to_owned(),

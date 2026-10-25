@@ -314,11 +314,19 @@ fn missing_files_are_model_missing_for_the_file_that_is_absent() {
     );
 }
 
-/// A Windows tool that rejects llama-server's arguments and exits at once, standing in for a runtime that crashes
-/// on every start.
+/// A system tool that rejects llama-server's arguments and exits at once, standing in for a runtime that crashes
+/// on every start: PING.EXE on Windows, `false` on Linux.
 fn exits_at_once() -> PathBuf {
-    let system = std::env::var_os("SystemRoot").map(PathBuf::from).unwrap();
-    system.join("System32").join("PING.EXE")
+    if cfg!(windows) {
+        let system = std::env::var_os("SystemRoot").map(PathBuf::from).unwrap();
+        system.join("System32").join("PING.EXE")
+    } else {
+        ["/usr/bin/false", "/bin/false"]
+            .into_iter()
+            .map(PathBuf::from)
+            .find(|path| path.is_file())
+            .unwrap()
+    }
 }
 
 #[test]

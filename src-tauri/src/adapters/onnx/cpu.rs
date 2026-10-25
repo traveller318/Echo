@@ -17,6 +17,7 @@
 
 use std::{num::NonZeroUsize, sync::OnceLock};
 
+#[cfg(windows)]
 use windows::Win32::System::SystemInformation::{
     GetLogicalProcessorInformationEx, RelationProcessorCore,
     SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX,
@@ -38,8 +39,10 @@ impl CpuCores {
 
 static CPU_CORES: OnceLock<CpuCores> = OnceLock::new();
 
+#[cfg(windows)]
 /// Byte offset of the `Size` field in every record (after the 4-byte `Relationship`).
 const SIZE_OFFSET: usize = 4;
+#[cfg(windows)]
 /// Byte offset of PROCESSOR_RELATIONSHIP.EfficiencyClass (record header 8 bytes, then the `Flags` byte).
 const EFFICIENCY_CLASS_OFFSET: usize = 9;
 
@@ -61,6 +64,7 @@ pub fn cpu_cores() -> CpuCores {
 }
 
 /// Asks Windows for one record per physical core; None when either call fails.
+#[cfg(windows)]
 fn read_cores() -> Option<CpuCores> {
     let mut length = 0_u32;
     // SAFETY: a null buffer with a length of 0 only asks for the size the buffer needs; the call writes `length`.
@@ -88,6 +92,7 @@ fn read_cores() -> Option<CpuCores> {
     count_cores(&buffer[..written])
 }
 
+#[cfg(windows)]
 /// Counts the variable-length core records in `bytes` and those of the highest efficiency class; None if a record
 /// is malformed or there is none.
 fn count_cores(bytes: &[u8]) -> Option<CpuCores> {
@@ -112,6 +117,60 @@ fn count_cores(bytes: &[u8]) -> Option<CpuCores> {
     })
 }
 
+/// Linux: physical cores are the distinct (package, core) pairs in `/proc/cpuinfo`; on a hybrid Intel CPU the kernel
+/// lists the performance cores' logical CPUs in `/sys/devices/cpu_core/cpus`.
+#[cfg(target_os = "linux")]
+fn read_cores() -> Option<CpuCores> {
+    let cpuinfo = std::fs::read_to_string("/proc/cpuinfo").ok()?;
+    let performance_cpus = std::fs::read_to_string("/sys/devices/cpu_core/cpus")
+        .ok()
+        .map(|list| parse_cpu_list(&list));
+    count_cores(&cpuinfo, performance_cpus.as_deref())
+}
+
+/// `0-3,8,10-11` as the CPU numbers it names.
+#[cfg(target_os = "linux")]
+fn parse_cpu_list(list: &str) -> Vec<u32> {
+    list.trim()
+        .split(',')
+        .filter_map(|part| match part.split_once('-') {
+            Some((from, to)) => Some(from.parse::<u32>().ok()?..=to.parse::<u32>().ok()?),
+            None => part.parse::<u32>().ok().map(|cpu| cpu..=cpu),
+        })
+        .flatten()
+        .collect()
+}
+
+/// Counts distinct (physical id, core id) pairs; a core is a performance core when any of its logical CPUs is listed
+/// in `performance_cpus` (every core when the list is absent). None when `cpuinfo` names no core.
+#[cfg(target_os = "linux")]
+fn count_cores(cpuinfo: &str, performance_cpus: Option<&[u32]>) -> Option<CpuCores> {
+    use std::collections::BTreeMap;
+    // (package, core) → is a performance core
+    let mut cores: BTreeMap<(String, String), bool> = BTreeMap::new();
+    for block in cpuinfo.split("\n\n") {
+        let field = |name: &str| {
+            block.lines().find_map(|line| {
+                let (key, value) = line.split_once(':')?;
+                (key.trim() == name).then(|| value.trim().to_owned())
+            })
+        };
+        let (Some(processor), Some(core)) = (field("processor"), field("core id")) else {
+            continue;
+        };
+        let package = field("physical id").unwrap_or_default();
+        let listed = match (performance_cpus, processor.parse::<u32>()) {
+            (Some(list), Ok(cpu)) => list.contains(&cpu),
+            _ => true,
+        };
+        *cores.entry((package, core)).or_insert(false) |= listed;
+    }
+    (!cores.is_empty()).then(|| CpuCores {
+        physical: cores.len(),
+        performance: cores.values().filter(|performance| **performance).count(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,6 +189,7 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
     fn record(size: u32, efficiency_class: u8) -> Vec<u8> {
         // Never shorter than the fields written, so a record can also declare an impossible size.
         let mut bytes = vec![0_u8; (size as usize).max(EFFICIENCY_CLASS_OFFSET + 1)];
@@ -138,6 +198,7 @@ mod tests {
         bytes
     }
 
+    #[cfg(windows)]
     #[test]
     fn hybrid_cores_are_split_by_efficiency_class() {
         let hybrid = [
@@ -161,6 +222,7 @@ mod tests {
         assert!(!count_cores(&uniform).unwrap().is_hybrid());
     }
 
+    #[cfg(windows)]
     #[test]
     fn malformed_records_are_refused() {
         let bytes = [record(48, 0), record(48, 0)].concat();
@@ -171,5 +233,30 @@ mod tests {
             "a record too small for its fields"
         );
         assert_eq!(count_cores(&bytes[..60]), None, "a truncated record");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn cpuinfo_cores_are_counted_and_hybrid_ones_split() {
+        let info = "processor : 0\nphysical id : 0\ncore id : 0\n\nprocessor : 1\nphysical id : 0\ncore id : 0\n\nprocessor : 2\nphysical id : 0\ncore id : 4\n\n";
+        let uniform = count_cores(info, None).unwrap();
+        assert_eq!(
+            uniform,
+            CpuCores {
+                physical: 2,
+                performance: 2
+            }
+        );
+        let hybrid = count_cores(info, Some(&parse_cpu_list("0-1"))).unwrap();
+        assert_eq!(
+            hybrid,
+            CpuCores {
+                physical: 2,
+                performance: 1
+            }
+        );
+        assert!(hybrid.is_hybrid());
+        assert_eq!(count_cores("model name : x\n", None), None);
+        assert_eq!(parse_cpu_list("0-2,5\n"), [0, 1, 2, 5]);
     }
 }

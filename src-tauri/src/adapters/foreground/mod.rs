@@ -7,7 +7,18 @@
  * WHERE: Constructed by app/bootstrap; used only through `dyn ForegroundApp`.
  */
 
+#[cfg(windows)]
 mod tracker;
+#[cfg(target_os = "linux")]
+mod unknown_focus;
+#[cfg(windows)]
 mod win32;
+#[cfg(target_os = "linux")]
+mod x11;
 
+#[cfg(target_os = "linux")]
+pub use unknown_focus::UnknownFocusForeground;
+#[cfg(windows)]
 pub use win32::Win32ForegroundApp;
+#[cfg(target_os = "linux")]
+pub use x11::X11ForegroundApp;

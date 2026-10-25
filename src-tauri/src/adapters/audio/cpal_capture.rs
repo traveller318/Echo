@@ -1,6 +1,7 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: CpalWasapiCapture, cpal, WASAPI shared mode, input devices, default input device, device id, capture callback, DeviceLost, sample format conversion, device transport, watch_devices
- * WHAT:  CpalWasapiCapture: AudioCapture on cpal's WASAPI host (shared mode). Lists input devices with a stable id
+ * SOURCE OF TRUTH KEYWORDS: CpalCapture, cpal, WASAPI shared mode, PulseAudio host, PipeWire, input devices, default input device, device id, capture callback, DeviceLost, sample format conversion, device transport, watch_devices
+ * WHAT:  CpalCapture: AudioCapture on cpal: the WASAPI host (shared mode) on Windows; on Linux the PulseAudio host
+ *        (the native protocol, which PipeWire's pulse server also speaks), or ALSA where no sound server runs. Lists input devices with a stable id
  *        (cpal's `DeviceId`, persisted as text by `audio.input_device`) and how each is connected, watches for
  *        hot-plug (DeviceWatch), and opens one at its default shared-mode format; the stream handle pauses, resumes
  *        and closes it and says how the opened device is connected.
@@ -18,6 +19,8 @@
  *        connection type, except that any Windows Bluetooth bus (read from the endpoint, endpoints.rs) is Bluetooth,
  *        because cpal misses the hands-free bus a headset microphone uses (05 W11). COM is entered in cpal's
  *        apartment for that read (ComScope::shared), so cpal's own COM use on the thread is never disturbed.
+ *        Linux has no microphone privacy switch for native apps and no endpoint bus to read: a PulseAudio device
+ *        whose id names BlueZ is Bluetooth, and hot-plug is a polled list (device_poll.rs).
  * WHERE: Built by app/bootstrap into CommandCtx (and the session actor later); used through `dyn AudioCapture` by
  *        pipeline/capture and `audio_list_devices`.
  */
@@ -36,11 +39,16 @@ use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 use parking_lot::Mutex;
+#[cfg(windows)]
 use windows::Win32::Media::Audio::IMMDeviceEnumerator;
 
+#[cfg(target_os = "linux")]
+use super::device_poll::DeviceWatch;
+#[cfg(windows)]
 use super::{device_watch::DeviceWatch, endpoints};
+#[cfg(windows)]
+use crate::adapters::win32::ComScope;
 use crate::{
-    adapters::win32::ComScope,
     ports::{AudioCapture, AudioSink, CaptureStream, EventSink, PrivacyConsent},
     types::{
         AppError, AudioCaps, AudioDevice, AudioDeviceId, AudioTransport, CaptureEvent,
@@ -60,8 +68,8 @@ const CHANNELS: &[u16] = &[1, 2, 4, 6, 8];
 /// Frames converted per sink push when the device format is not f32.
 const CONVERT_FRAMES: usize = 1024;
 
-/// Microphone capture through WASAPI shared mode.
-pub struct CpalWasapiCapture {
+/// Microphone capture through cpal.
+pub struct CpalCapture {
     consent: Arc<dyn PrivacyConsent>,
     /// A stream is open; cleared when its handle is dropped.
     open: Arc<AtomicBool>,
@@ -69,7 +77,7 @@ pub struct CpalWasapiCapture {
     watch: Mutex<Option<DeviceWatch>>,
 }
 
-impl CpalWasapiCapture {
+impl CpalCapture {
     /// `consent` is read before every open (05 W13).
     pub fn new(consent: Arc<dyn PrivacyConsent>) -> Self {
         Self {
@@ -80,7 +88,7 @@ impl CpalWasapiCapture {
     }
 }
 
-impl AudioCapture for CpalWasapiCapture {
+impl AudioCapture for CpalCapture {
     fn caps(&self) -> AudioCaps {
         AudioCaps {
             sample_rates: StaticList::new(SAMPLE_RATES),
@@ -148,7 +156,7 @@ impl AudioCapture for CpalWasapiCapture {
     }
 }
 
-/// Opens `device` (None = the Windows default input) at its default shared-mode format and starts it; returns the
+/// Opens `device` (None = the system's default input) at its default shared-mode format and starts it; returns the
 /// stream, its format and how the opened device is connected.
 fn open_stream(
     device: Option<&AudioDeviceId>,
@@ -159,7 +167,8 @@ fn open_stream(
     let device = match device {
         Some(id) => find_device(&host, id)?,
         None => host.default_input_device().ok_or_else(|| {
-            PortError::new(AppError::AudioDevice).with_detail("Windows has no default input device")
+            PortError::new(AppError::AudioDevice)
+                .with_detail("the system has no default input device")
         })?,
     };
     let supported = device
@@ -240,7 +249,7 @@ where
     )
 }
 
-/// The open WASAPI stream. Dropping it stops the device thread after its current callback.
+/// The open capture stream. Dropping it stops the device thread after its current callback.
 struct CpalCaptureStream {
     stream: Stream,
     format: CaptureFormat,
@@ -282,8 +291,17 @@ impl Drop for CpalCaptureStream {
     }
 }
 
-fn host() -> PortResult<Host> {
+#[cfg(windows)]
+pub(super) fn host() -> PortResult<Host> {
     cpal::host_from_id(HostId::Wasapi).map_err(|error| device_failure("open WASAPI", &error))
+}
+
+/// The PulseAudio host when a sound server answers (PulseAudio or PipeWire), otherwise plain ALSA.
+#[cfg(target_os = "linux")]
+pub(super) fn host() -> PortResult<Host> {
+    cpal::host_from_id(HostId::PulseAudio)
+        .or_else(|_| cpal::host_from_id(HostId::Alsa))
+        .map_err(|error| device_failure("open the sound server", &error))
 }
 
 /// The input device with `id`; `NotFound { audio_device }` when it is unplugged or the id is not one of cpal's.
@@ -307,12 +325,14 @@ fn find_device(host: &Host, id: &AudioDeviceId) -> PortResult<Device> {
  *        overrides it (see the file header). An enumerator that cannot be created only means no Bluetooth override.
  * WHERE: `devices` and `open_stream`.
  */
+#[cfg(windows)]
 struct Buses {
     enumerator: Option<IMMDeviceEnumerator>,
     // Dropped after the enumerator (field order), so COM outlives every interface.
     _com: ComScope,
 }
 
+#[cfg(windows)]
 impl Buses {
     fn open() -> Self {
         let com = ComScope::shared();
@@ -331,6 +351,21 @@ impl Buses {
             .ok()
             .and_then(|id| endpoints::bus_of(enumerator, id.id()))
             .is_some_and(|bus| endpoints::is_bluetooth_bus(&bus))
+    }
+}
+
+/// Linux: PulseAudio names Bluetooth sources after BlueZ (`bluez_input.…`); nothing needs opening first.
+#[cfg(target_os = "linux")]
+struct Buses;
+
+#[cfg(target_os = "linux")]
+impl Buses {
+    const fn open() -> Self {
+        Self
+    }
+
+    fn is_bluetooth(&self, device: &Device) -> bool {
+        device.id().is_ok_and(|id| id.to_string().contains("bluez"))
     }
 }
 
@@ -377,7 +412,11 @@ fn microphone_blocked() -> PortError {
     PortError::new(AppError::PermissionDenied {
         permission: Permission::Microphone,
     })
-    .with_detail("Windows privacy settings block microphone access for desktop apps")
+    .with_detail(if cfg!(windows) {
+        "Windows privacy settings block microphone access for desktop apps"
+    } else {
+        "the system refused access to the microphone"
+    })
 }
 
 fn device_failure(action: &str, error: &dyn std::fmt::Display) -> PortError {
@@ -397,8 +436,8 @@ mod tests {
     use super::*;
     use crate::ports::fakes::{FakePrivacyConsent, RecordingAudioSink, RecordingSink};
 
-    fn capture(consent: FakePrivacyConsent) -> CpalWasapiCapture {
-        CpalWasapiCapture::new(Arc::new(consent))
+    fn capture(consent: FakePrivacyConsent) -> CpalCapture {
+        CpalCapture::new(Arc::new(consent))
     }
 
     #[test]

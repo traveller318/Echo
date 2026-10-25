@@ -24,7 +24,6 @@ use std::{
     collections::VecDeque,
     ffi::OsString,
     io::{BufRead, BufReader},
-    os::windows::process::CommandExt,
     process::{Child, ChildStderr, Command, Stdio},
     sync::{
         Arc,
@@ -36,14 +35,16 @@ use std::{
 
 use parking_lot::Mutex;
 use tokio::sync::watch;
+#[cfg(windows)]
 use windows::Win32::System::Threading::CREATE_NO_WINDOW;
 
 use super::request::{CHAT_PATH, warm_up_body};
+#[cfg(target_os = "linux")]
+use crate::adapters::linux::KillOnCloseGroup as KillOnCloseJob;
+#[cfg(windows)]
+use crate::adapters::win32::KillOnCloseJob;
 use crate::{
-    adapters::{
-        net::{LoopbackClient, free_port},
-        win32::KillOnCloseJob,
-    },
+    adapters::net::{LoopbackClient, free_port},
     types::{AppError, GpuOffload, LlamaServerSetup, PortError, ThinkingControl},
 };
 
@@ -518,11 +519,17 @@ impl Sidecar {
         command
             .current_dir(folder)
             .env("LLAMA_API_KEY", &self.key)
-            .env("PATH", child_path(&files.library_dirs, folder)?)
+            .env(LIBRARY_PATH_VAR, child_path(&files.library_dirs, folder)?)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .creation_flags(CREATE_NO_WINDOW.0);
+            .stderr(Stdio::piped());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(CREATE_NO_WINDOW.0);
+        }
+        #[cfg(target_os = "linux")]
+        KillOnCloseJob::prepare(&mut command);
         Ok(command)
     }
 
@@ -596,12 +603,19 @@ impl Sidecar {
     }
 }
 
-/// The child's PATH: `library_dirs`, then its own folder, then Echo's PATH.
+/// The environment variable the child finds its shared libraries through: Windows searches PATH, Linux's dynamic
+/// linker searches LD_LIBRARY_PATH.
+#[cfg(windows)]
+const LIBRARY_PATH_VAR: &str = "PATH";
+#[cfg(target_os = "linux")]
+const LIBRARY_PATH_VAR: &str = "LD_LIBRARY_PATH";
+
+/// The child's library search path: `library_dirs`, then its own folder, then Echo's own (PATH or LD_LIBRARY_PATH).
 fn child_path(
     library_dirs: &[std::path::PathBuf],
     folder: &std::path::Path,
 ) -> Result<OsString, PortError> {
-    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    let inherited = std::env::var_os(LIBRARY_PATH_VAR).unwrap_or_default();
     let dirs = library_dirs
         .iter()
         .cloned()

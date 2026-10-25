@@ -55,28 +55,15 @@ use std::{error::Error, sync::Arc, time::Duration};
 
 use tauri::{App, AppHandle, Manager, Runtime};
 
-use super::{events::TauriEventSink, logging, panics, windows::MAIN_WINDOW};
+use super::{events::TauriEventSink, logging, panics, platform, windows::MAIN_WINDOW};
 use crate::{
     adapters::{
-        appearance::Win32SystemAppearance,
-        audio::CpalWasapiCapture,
-        clipboard::ArboardClipboard,
-        consent::Win32PrivacyConsent,
         dialog::TauriFolderPicker,
-        foreground::Win32ForegroundApp,
-        gpu::DxgiGraphicsAdapters,
-        hotkey::LowLevelKeyboardHotkeys,
-        inserter::Win32SendInputInserter,
-        launcher::Win32ShellLauncher,
         net::{HttpClient, HttpModelStore},
         notifier::TauriToastNotifier,
-        power::Win32PowerEvents,
-        process::Win32ProcessStats,
-        scheduler::Win32WorkerScheduler,
-        sound::Win32SoundPlayer,
-        startup::{DisabledLaunchAtLogin, RunKeyLocation, Win32RunKey},
+        startup::DisabledLaunchAtLogin,
         updater::DisabledUpdater,
-        window::{TauriMainWindow, Win32OverlayWindow},
+        window::TauriMainWindow,
     },
     ipc::{CommandCtx, CommandDeps},
     pipeline::{
@@ -97,8 +84,7 @@ use crate::{
         updates::{self, StartupCheckDeps},
     },
     ports::{
-        AudioCapture, EventSink, ForegroundApp, HotkeyService, LaunchAtLogin, Notifier,
-        PowerEvents, PrivacyConsent, SystemAppearance, Updater, WorkerScheduler,
+        AudioCapture, EventSink, LaunchAtLogin, Notifier, PowerEvents, SystemAppearance, Updater,
     },
     registry::{self, engines::BuildCtx},
     services::{self, Db},
@@ -130,8 +116,14 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<RecoveryReport, Box<dyn Error>>
     });
     let stored = services::settings::get::all(&db).map_err(startup_failure)?;
     let settings = SharedSettings::new(registry::settings::resolve(stored));
-    let foreground: Arc<dyn ForegroundApp> = Arc::new(Win32ForegroundApp::new());
-    let overlay = Arc::new(Win32OverlayWindow::new());
+    let foreground = platform::foreground();
+    #[cfg(windows)]
+    let overlay = Arc::new(crate::adapters::window::Win32OverlayWindow::new());
+    #[cfg(target_os = "linux")]
+    let overlay = Arc::new(crate::adapters::window::TauriOverlayWindow::new(
+        app.handle().clone(),
+        super::windows::PILL_WINDOW,
+    ));
     let pill = PillPresenter::spawn(
         Arc::clone(&overlay) as _,
         Arc::clone(&foreground),
@@ -143,10 +135,10 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<RecoveryReport, Box<dyn Error>>
         Arc::new(pill.clone()),
         Arc::new(TauriEventSink::new(app.handle().clone())),
     ]));
-    let appearance = Arc::new(Win32SystemAppearance::new());
+    let appearance = platform::appearance();
     watch_appearance(appearance.as_ref(), &settings, &events);
-    let consent: Arc<dyn PrivacyConsent> = Arc::new(Win32PrivacyConsent::new());
-    let scheduler: Arc<dyn WorkerScheduler> = Arc::new(Win32WorkerScheduler::new());
+    let consent = platform::consent();
+    let scheduler = platform::scheduler();
     if let Err(error) = scheduler.keep_full_speed() {
         tracing::warn!(
             detail = error.detail(),
@@ -156,11 +148,8 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<RecoveryReport, Box<dyn Error>>
     // The worker reports readiness to the Models page and its load failures to the model check (ModelWatch).
     let (readiness, load_failures) = ReadinessRelay::new(Arc::clone(&events));
     // Where each engine runs: DXGI lists the GPUs, the database remembers `auto` measurements (02 §8.1).
-    let accelerators = AcceleratorPicker::new(
-        Arc::new(DxgiGraphicsAdapters::new()),
-        db.clone(),
-        AcceleratorPolicy::DEFAULT,
-    );
+    let accelerators =
+        AcceleratorPicker::new(platform::graphics(), db.clone(), AcceleratorPolicy::DEFAULT);
     let asr = AsrWorker::spawn(AsrWorkerConfig::registry(
         BuildCtx {
             paths: paths.clone(),
@@ -197,14 +186,14 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<RecoveryReport, Box<dyn Error>>
     tauri::async_runtime::spawn(ModelWatch::new(models.clone(), load_failures).run());
     let notifier: Arc<dyn Notifier> = Arc::new(TauriToastNotifier::new(app.handle().clone()));
     let delivery = Delivery::new(DeliveryPorts {
-        clipboard: Arc::new(ArboardClipboard::new()),
-        inserter: Arc::new(Win32SendInputInserter::new()),
+        clipboard: platform::clipboard(),
+        inserter: platform::inserter(&app.config().identifier, &paths),
         notifier: Arc::clone(&notifier),
     });
-    let audio: Arc<dyn AudioCapture> = Arc::new(CpalWasapiCapture::new(Arc::clone(&consent)));
+    let audio = platform::capture(Arc::clone(&consent));
     watch_audio_devices(&audio, &events);
-    let sounds = SoundCues::new(Arc::new(Win32SoundPlayer::new().map_err(startup_failure)?));
-    let hotkeys: Arc<dyn HotkeyService> = Arc::new(LowLevelKeyboardHotkeys::new());
+    let sounds = SoundCues::new(platform::sound_player().map_err(startup_failure)?);
+    let hotkeys = platform::hotkeys(&app.config().identifier);
     // The always-on hotkeys' one switch: the session binds through it, the tray and Settings pause it.
     let hotkey_gate = HotkeyGate::new(HotkeyGateDeps {
         service: Arc::clone(&hotkeys),
@@ -257,7 +246,7 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<RecoveryReport, Box<dyn Error>>
         audio,
         consent,
         appearance,
-        launcher: Arc::new(Win32ShellLauncher::new()),
+        launcher: platform::launcher(),
         scheduler,
         asr,
         hotkeys,
@@ -273,7 +262,7 @@ pub fn start<R: Runtime>(app: &App<R>) -> Result<RecoveryReport, Box<dyn Error>>
         models,
         updater: updater(),
         launch: launch_at_login,
-        process: Arc::new(Win32ProcessStats::new()),
+        process: platform::process_stats(),
         app_info: AppInfo {
             version: app.package_info().version.to_string(),
             development: tauri::is_dev(),
@@ -465,7 +454,10 @@ fn watch_audio_devices(audio: &Arc<dyn AudioCapture>, events: &Arc<dyn EventSink
  * WHERE: `start`, right after the session handle exists.
  */
 fn watch_power<R: Runtime>(app: &App<R>, session: &SessionHandle) {
-    let power = Win32PowerEvents::new();
+    #[cfg(windows)]
+    let power = crate::adapters::power::Win32PowerEvents::new();
+    #[cfg(target_os = "linux")]
+    let power = crate::adapters::power::LogindPowerEvents::new();
     match power.listen(Arc::new(session.power_sink())) {
         Ok(()) => {
             app.manage(power);
@@ -506,12 +498,30 @@ fn launch_at_login<R: Runtime>(app: &App<R>) -> Arc<dyn LaunchAtLogin> {
         return Arc::new(DisabledLaunchAtLogin::new());
     }
     match std::env::current_exe() {
-        Ok(executable) => Arc::new(Win32RunKey::new(
-            RunKeyLocation::current_user(),
-            &app.config().identifier,
-            &executable,
-            registry::launch::LAUNCH_AT_LOGIN_ARGS,
-        )),
+        #[cfg(windows)]
+        Ok(executable) => {
+            use crate::adapters::startup::{RunKeyLocation, Win32RunKey};
+            Arc::new(Win32RunKey::new(
+                RunKeyLocation::current_user(),
+                &app.config().identifier,
+                &executable,
+                registry::launch::LAUNCH_AT_LOGIN_ARGS,
+            ))
+        }
+        #[cfg(target_os = "linux")]
+        Ok(executable) => {
+            use crate::adapters::startup::XdgAutostart;
+            let Some(dir) = XdgAutostart::user_dir() else {
+                tracing::warn!("the autostart folder is unknown; start at sign-in is off");
+                return Arc::new(DisabledLaunchAtLogin::new());
+            };
+            Arc::new(XdgAutostart::new(
+                &dir,
+                &app.config().identifier,
+                &XdgAutostart::launch_target(executable),
+                registry::launch::LAUNCH_AT_LOGIN_ARGS,
+            ))
+        }
         Err(error) => {
             tracing::warn!(%error, "Echo's executable path is unknown; start at sign-in is off");
             Arc::new(DisabledLaunchAtLogin::new())

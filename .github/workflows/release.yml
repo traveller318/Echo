@@ -1,0 +1,129 @@
+# Checks every push and pull request on Linux and Windows, and on a version tag (v*) also builds the installers and
+# publishes them as a GitHub release together with SHA256SUMS (which scripts/install.sh verifies before installing).
+name: ci-and-release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    # Ubuntu 22.04 on purpose: its older glibc makes the AppImage and packages run on newer distributions too.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
+            libasound2-dev libssl-dev patchelf rpm file desktop-file-utils
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.25.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # The toolchain is pinned in src-tauri/rust-toolchain.toml; rustup installs it on first use.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: ONNX Runtime (pinned, checksum-verified)
+        run: ./scripts/fetch-onnxruntime-linux.sh
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
+
+      - name: Rust checks
+        working-directory: src-tauri
+        run: |
+          cargo clippy --all-targets
+          # The Parakeet tests need the 650 MB speech model on disk, which CI does not download.
+          cargo test -- --skip adapters::asr::parakeet_onnx
+
+      - name: Build the installers
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: pnpm tauri build
+
+      - name: Checksums
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: src-tauri/target/release/bundle
+        run: |
+          mkdir -p ../../../../dist-release
+          cp deb/*.deb rpm/*.rpm appimage/*.AppImage ../../../../dist-release/
+          cd ../../../../dist-release
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          name: linux-installers
+          path: dist-release/*
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.25.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
+      - name: Rust checks
+        working-directory: src-tauri
+        run: |
+          cargo clippy --all-targets
+          cargo test -- --skip adapters::asr::parakeet_onnx
+      - name: Build the installer
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: pnpm tauri build
+      - uses: actions/upload-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          name: windows-installer
+          path: src-tauri/target/release/bundle/nsis/*-setup.exe
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" \
+            --title "Echo ${GITHUB_REF_NAME}" --generate-notes assets/*

@@ -1,5 +1,5 @@
 /*!
- * SOURCE OF TRUTH KEYWORDS: model registry, MODELS, model manifests, find model, pinned revision, sha256, license, PARAKEET_TDT_V3, SILERO_VAD_V5, QWEN3_1_7B_Q4, LLAMA_CPP_VULKAN, bundled_file, install_set
+ * SOURCE OF TRUTH KEYWORDS: model registry, MODELS, model manifests, find model, pinned revision, sha256, license, PARAKEET_TDT_V3, SILERO_VAD_V5, QWEN3_1_7B_Q4, LLAMA_CPP_RUNTIME, bundled_file, install_set
  * WHAT:  The list of every model and runtime manifest Echo knows (files, pinned revision, SHA-256, size, license,
  *        what it requires), lookup by id, and a model's install set (its requirements, then itself).
  * WHY:   A model is a registry entry (02 §3.3), so the model manager, the Models page and About → Models &
@@ -91,14 +91,22 @@ const SILERO_VAD_V5_FILES: &[ModelFile] = &[ModelFile {
     bytes: ByteCount::new(2_327_524),
 }];
 
-/// llama.cpp's `llama-server` (Windows x64, Vulkan build), the runtime the LLM polisher starts (02 §2.5).
-pub const LLAMA_CPP_VULKAN: ModelId = ModelId::from_static("llama-cpp-vulkan");
+/// llama.cpp's `llama-server`, the runtime the LLM polisher starts (02 §2.5): the Vulkan build on Windows x64, the CPU
+/// build on Linux x64 (the polish profile keeps GPU offload off, so the Linux build carries no GPU backend). Each
+/// system keeps its own id, so an install folder never holds the other's binaries.
+#[cfg(windows)]
+pub const LLAMA_CPP_RUNTIME: ModelId = ModelId::from_static("llama-cpp-vulkan");
+#[cfg(target_os = "linux")]
+pub const LLAMA_CPP_RUNTIME: ModelId = ModelId::from_static("llama-cpp-cpu");
 
 /// Qwen3 1.7B, Q4_K_M GGUF: the grammar polish model (02 §2.5, 05 A16).
 pub const QWEN3_1_7B_Q4: ModelId = ModelId::from_static("qwen3-1.7b-q4-k-m");
 
 /// The pinned llama.cpp release archive every runtime file is unpacked from.
+#[cfg(windows)]
 const LLAMA_CPP_ARCHIVE_URL: &str = "https://github.com/ggml-org/llama.cpp/releases/download/b11146/llama-b11146-bin-win-vulkan-x64.zip";
+#[cfg(target_os = "linux")]
+const LLAMA_CPP_ARCHIVE_URL: &str = "https://github.com/ggml-org/llama.cpp/releases/download/b11146/llama-b11146-bin-ubuntu-x64.tar.gz";
 
 /// One file kept from the llama.cpp archive, with its size and digest as unpacked.
 const fn runtime_file(name: &'static str, sha256: &'static str, bytes: u64) -> ModelFile {
@@ -121,9 +129,10 @@ const fn runtime_file(name: &'static str, sha256: &'static str, bytes: u64) -> M
  *        so all of them stay). The archive digest is GitHub's published asset digest; the member digests were
  *        computed from the downloaded archive. The Visual C++ runtime the binaries import is not in the release: the
  *        adapter puts Echo's bundled copy on the child's PATH (05 A20).
- * WHERE: The LLAMA_CPP_VULKAN entry of MODELS; the LLM polisher's build fn names `llama-server.exe` in it.
+ * WHERE: The LLAMA_CPP_RUNTIME entry of MODELS; the LLM polisher's build fn names `llama-server.exe` in it.
  */
-const LLAMA_CPP_VULKAN_FILES: &[ModelFile] = &[
+#[cfg(windows)]
+const LLAMA_CPP_RUNTIME_FILES: &[ModelFile] = &[
     runtime_file(
         "llama-server.exe",
         "7b886298b688509ced3e92b420edd57dd3d665da72c1fc207d7a537be5870352",
@@ -246,16 +255,157 @@ const LLAMA_CPP_VULKAN_FILES: &[ModelFile] = &[
     ),
 ];
 
-/// The `llama-server` executable inside the runtime folder (a file of LLAMA_CPP_VULKAN_FILES).
-pub const LLAMA_SERVER_EXE: &str = "llama-server.exe";
+/**
+ * SOURCE OF TRUTH KEYWORDS: llama.cpp Linux runtime manifest, llama-server Linux, b11146, ubuntu x64 CPU build, tar.gz release archive, soname symlinks, libggml-cpu variants
+ * WHAT:  The files Echo keeps from `llama-b11146-bin-ubuntu-x64.tar.gz`: `llama-server`, its implementation library,
+ *        llama, llama-common, mtmd, ggml and ggml-base under their sonames (`libllama.so.0`, ...), every ggml CPU
+ *        variant and the llama.cpp LICENSE, each with its unpacked size and SHA-256.
+ * WHY:   The release ships 50 files (a dozen other tools, the RPC backend); `readelf -d` shows `llama-server` needs
+ *        only these, found beside it through RUNPATH `$ORIGIN`. ggml picks the CPU variant for the processor at
+ *        runtime, so all of them stay. The archive stores each library as a chain of symlinks
+ *        (`libllama.so.0` -> `libllama.so.0.5.0`); a name here is the soname the loader asks for, and the unpacker
+ *        follows the link, so the digest and size are those of the real file. The system supplies libstdc++,
+ *        OpenSSL 3 (libssl.so.3, libcrypto.so.3) and libgomp (the packages depend on them). The archive digest is
+ *        GitHub's published asset digest; the member digests were computed from the downloaded archive.
+ * WHERE: The LLAMA_CPP_RUNTIME entry of MODELS on Linux; the LLM polisher's build fn names `llama-server` in it.
+ */
+#[cfg(target_os = "linux")]
+const LLAMA_CPP_RUNTIME_FILES: &[ModelFile] = &[
+    runtime_file(
+        "llama-server",
+        "22de090746c114569367998ec930b28f27f12e078e593ff21175a54b409d26fe",
+        17_864,
+    ),
+    runtime_file(
+        "libllama-server-impl.so",
+        "448901d999734830ff3ba6d81b3df230910ee534ac4584571fce4ce1896d450d",
+        7_218_272,
+    ),
+    runtime_file(
+        "libllama-common.so.0",
+        "6686de2e183ac053f6d965bd06af6c4eb62aff44353a3c2664b854c72a492dda",
+        6_331_832,
+    ),
+    runtime_file(
+        "libllama.so.0",
+        "7e3dd3d60fada6e76cc0bbccd076c90e0b2f1c01cc1c18bf3bb0b2df5ee2c67f",
+        4_616_400,
+    ),
+    runtime_file(
+        "libmtmd.so.0",
+        "9bfb7fc0005de64f160763476a326a54a9a56ffd0a5b1e24111981a90c02d84f",
+        1_878_192,
+    ),
+    runtime_file(
+        "libggml.so.0",
+        "569c53469aceca5dd357d2c3e1570014ed73e676abb08d44971be4cb784d855c",
+        55_184,
+    ),
+    runtime_file(
+        "libggml-base.so.0",
+        "5edd28e54a19d75ccf3bcd1a729a5d5327f822514c274969b8b83d878e5ef3bd",
+        920_080,
+    ),
+    runtime_file(
+        "libggml-cpu-alderlake.so",
+        "8c0a8861351221a1dbe5fd43df5fbdbb00aeff0face86aed47ddc166323c2228",
+        1_223_880,
+    ),
+    runtime_file(
+        "libggml-cpu-cannonlake.so",
+        "efc6d0d0cb92e5ff7c3a2b2a995068a810e72aab23174bd6d84484f92e145643",
+        1_368_864,
+    ),
+    runtime_file(
+        "libggml-cpu-cascadelake.so",
+        "0e12697fe79d6209486fb4ab6e38ee279b8b80481208a7e1f7b61e803af6ee8c",
+        1_364_768,
+    ),
+    runtime_file(
+        "libggml-cpu-cooperlake.so",
+        "5cb2ce6bda931e19742c0cbec44ed258ac57afe2801cc2324d752a19bf8d6707",
+        1_364_840,
+    ),
+    runtime_file(
+        "libggml-cpu-haswell.so",
+        "984064c44e5a92558e01ace8cf18cde33356d2d21bdb93166f0faf57885fe234",
+        1_227_976,
+    ),
+    runtime_file(
+        "libggml-cpu-icelake.so",
+        "6cefaed8ad0d4b7e2e661e850b16936e4265283cb7fda004b6c6923d87e9241f",
+        1_364_768,
+    ),
+    runtime_file(
+        "libggml-cpu-ivybridge.so",
+        "a90c3b1a96f150cba36e0abae4dd8d15384db29fee49106c0f4664619ec01fe3",
+        1_181_480,
+    ),
+    runtime_file(
+        "libggml-cpu-piledriver.so",
+        "bb4d2dfe4cb107b06d7841904bf87460c42854dbf9c56d9dc3eed861e7a7bb92",
+        1_177_384,
+    ),
+    runtime_file(
+        "libggml-cpu-sandybridge.so",
+        "ced91e5db35c922b2e081daa079c0057f3862ad285f92dd1cfd1f6847985701a",
+        1_172_168,
+    ),
+    runtime_file(
+        "libggml-cpu-sapphirerapids.so",
+        "b19ce9b822c569e514c8a99f6df2996f553eb295838c78bd544d791a124d3919",
+        1_631_216,
+    ),
+    runtime_file(
+        "libggml-cpu-skylakex.so",
+        "cf4a4bc0daf9ca620d1df6ee66a7d9132899f33e3ff797d6b6fb5b29911ccbc0",
+        1_368_864,
+    ),
+    runtime_file(
+        "libggml-cpu-sse42.so",
+        "4f4e9d6bf9a3f3a6c709fb5e48c684d1fa4c931db23ee0f2c0bbf14d78fff1f4",
+        977_064,
+    ),
+    runtime_file(
+        "libggml-cpu-x64.so",
+        "2cf499f61c4e9888c47e404f9359e53e9ca79cf1f33e5b5bd706ce4642051149",
+        973_144,
+    ),
+    runtime_file(
+        "libggml-cpu-zen4.so",
+        "e636cd0e2c623b7fb74ed32e76a6d6139ee1dba1f8c552dd2c497a242db96b52",
+        1_364_840,
+    ),
+    runtime_file(
+        "LICENSE",
+        "94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d",
+        1_078,
+    ),
+];
 
-const LLAMA_CPP_VULKAN_ARCHIVE: ModelFile = ModelFile {
+/// The `llama-server` executable inside the runtime folder (a file of LLAMA_CPP_RUNTIME_FILES).
+#[cfg(windows)]
+pub const LLAMA_SERVER_EXE: &str = "llama-server.exe";
+#[cfg(target_os = "linux")]
+pub const LLAMA_SERVER_EXE: &str = "llama-server";
+
+#[cfg(windows)]
+const LLAMA_CPP_RUNTIME_ARCHIVE: ModelFile = ModelFile {
     name: StaticStr::new("llama-b11146-bin-win-vulkan-x64.zip"),
     url: StaticStr::new(LLAMA_CPP_ARCHIVE_URL),
     sha256: Sha256Hex::from_static(
         "55a378aa095b466979d85075234f66d7655c7a7483222af0c006c0e55b4d7bd6",
     ),
     bytes: ByteCount::new(32_127_004),
+};
+#[cfg(target_os = "linux")]
+const LLAMA_CPP_RUNTIME_ARCHIVE: ModelFile = ModelFile {
+    name: StaticStr::new("llama-b11146-bin-ubuntu-x64.tar.gz"),
+    url: StaticStr::new(LLAMA_CPP_ARCHIVE_URL),
+    sha256: Sha256Hex::from_static(
+        "c150306eb16b5ab696f76a8bdf810c35fd98a24e82158742e6fa28f420ff8410",
+    ),
+    bytes: ByteCount::new(16_998_357),
 };
 
 /**
@@ -278,7 +428,7 @@ const QWEN3_1_7B_Q4_FILES: &[ModelFile] = &[ModelFile {
 }];
 
 /// What the Qwen3 model needs installed to run: the llama.cpp runtime.
-const QWEN3_1_7B_Q4_REQUIRES: &[ModelId] = &[LLAMA_CPP_VULKAN];
+const QWEN3_1_7B_Q4_REQUIRES: &[ModelId] = &[LLAMA_CPP_RUNTIME];
 
 /// Every model manifest, in the order the Models page lists them.
 pub const MODELS: &[ModelManifest] = &[
@@ -326,16 +476,22 @@ pub const MODELS: &[ModelManifest] = &[
         bundled: false,
     },
     ModelManifest {
-        id: LLAMA_CPP_VULKAN,
-        label: StaticStr::new("llama.cpp runtime b11146 (Vulkan)"),
+        id: LLAMA_CPP_RUNTIME,
+        label: StaticStr::new(if cfg!(windows) {
+            "llama.cpp runtime b11146 (Vulkan)"
+        } else {
+            "llama.cpp runtime b11146 (CPU)"
+        }),
         kind: ModelKind::Runtime,
         license: StaticStr::new("MIT"),
-        attribution: Some(StaticStr::new(
-            "llama.cpp by the ggml authors (MIT License), with the LLVM OpenMP runtime (Apache-2.0 WITH LLVM-exception)",
-        )),
+        attribution: Some(StaticStr::new(if cfg!(windows) {
+            "llama.cpp by the ggml authors (MIT License), with the LLVM OpenMP runtime (Apache-2.0 WITH LLVM-exception)"
+        } else {
+            "llama.cpp by the ggml authors (MIT License)"
+        })),
         revision: StaticStr::new("b11146"),
-        files: StaticList::new(LLAMA_CPP_VULKAN_FILES),
-        archive: Some(LLAMA_CPP_VULKAN_ARCHIVE),
+        files: StaticList::new(LLAMA_CPP_RUNTIME_FILES),
+        archive: Some(LLAMA_CPP_RUNTIME_ARCHIVE),
         requires: StaticList::new(&[]),
         bundled: false,
     },
@@ -676,9 +832,9 @@ mod tests {
             .into_iter()
             .map(|manifest| &manifest.id)
             .collect();
-        assert_eq!(ids, [&LLAMA_CPP_VULKAN, &QWEN3_1_7B_Q4]);
+        assert_eq!(ids, [&LLAMA_CPP_RUNTIME, &QWEN3_1_7B_Q4]);
         assert_eq!(
-            required_by(&LLAMA_CPP_VULKAN)
+            required_by(&LLAMA_CPP_RUNTIME)
                 .map(|manifest| &manifest.id)
                 .collect::<Vec<_>>(),
             [&QWEN3_1_7B_Q4]
@@ -694,12 +850,18 @@ mod tests {
         assert_eq!(qwen.license.as_str(), "Apache-2.0");
         // 02 §2.5: about 1.3 GB.
         assert_eq!(qwen.total_bytes().get(), 1_282_439_264);
-        let runtime = find(&LLAMA_CPP_VULKAN).unwrap();
+        let runtime = find(&LLAMA_CPP_RUNTIME).unwrap();
         assert_eq!(runtime.kind, ModelKind::Runtime);
         assert_eq!(runtime.license.as_str(), "MIT");
-        // 02 §2.5: a ~32 MB archive, about 86 MB unpacked.
-        assert_eq!(runtime.transfer_bytes().get(), 32_127_004);
-        assert_eq!(runtime.total_bytes().get(), 86_030_109);
+        // 02 §2.5: a ~32 MB archive, about 86 MB unpacked (Windows Vulkan build); the Linux CPU build is a ~17 MB
+        // archive, about 38 MB unpacked.
+        let (archive, unpacked) = if cfg!(windows) {
+            (32_127_004, 86_030_109)
+        } else {
+            (16_998_357, 38800158)
+        };
+        assert_eq!(runtime.transfer_bytes().get(), archive);
+        assert_eq!(runtime.total_bytes().get(), unpacked);
         assert!(
             runtime
                 .files

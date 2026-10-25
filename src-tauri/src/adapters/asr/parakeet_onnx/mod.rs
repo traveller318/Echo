@@ -191,14 +191,12 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::{
-        adapters::gpu::DxgiGraphicsAdapters,
-        ports::GraphicsAdapters,
-        types::{
-            ByteCount, GpuAdapter,
-            testing::{TempDir, installed_app_paths, source_resource_paths},
-        },
+    use crate::types::{
+        ByteCount, GpuAdapter,
+        testing::{TempDir, installed_app_paths, source_resource_paths},
     };
+    #[cfg(windows)]
+    use crate::{adapters::gpu::DxgiGraphicsAdapters, ports::GraphicsAdapters};
 
     const MODEL: ModelId = ModelId::from_static("parakeet-tdt-0.6b-v3");
 
@@ -274,6 +272,7 @@ mod tests {
 
     /// On this machine's preferred DirectX 12 GPU (skipped in effect when it has none): DirectML runs the encoder, or
     /// the engine falls back to the CPU, and either way the text is the CPU's.
+    #[cfg(windows)]
     #[test]
     fn the_machine_gpu_transcribes_like_the_cpu() {
         let Some(gpu) = DxgiGraphicsAdapters::new()

@@ -13,17 +13,30 @@
 
 use crate::types::{StaticList, StaticStr, ThirdPartyCredit};
 
+#[cfg(windows)]
 const ONNXRUNTIME_LICENSES: &[StaticStr] = &[
     StaticStr::new("onnxruntime-LICENSE.txt"),
     StaticStr::new("onnxruntime-ThirdPartyNotices.txt"),
 ];
+#[cfg(target_os = "linux")]
+const ONNXRUNTIME_LICENSES: &[StaticStr] = &[
+    StaticStr::new("onnxruntime-LICENSE.txt"),
+    StaticStr::new("onnxruntime-linux-ThirdPartyNotices.txt"),
+];
+#[cfg(windows)]
 const ONNXRUNTIME_FILES: &[StaticStr] = &[StaticStr::new("onnxruntime/onnxruntime.dll")];
+#[cfg(target_os = "linux")]
+const ONNXRUNTIME_FILES: &[StaticStr] = &[StaticStr::new("onnxruntime/libonnxruntime.so")];
+#[cfg(windows)]
 const DIRECTML_LICENSES: &[StaticStr] = &[
     StaticStr::new("DirectML-LICENSE.txt"),
     StaticStr::new("DirectML-ThirdPartyNotices.txt"),
 ];
+#[cfg(windows)]
 const DIRECTML_FILES: &[StaticStr] = &[StaticStr::new("onnxruntime/DirectML.dll")];
+#[cfg(windows)]
 const MSVC_RUNTIME_LICENSES: &[StaticStr] = &[StaticStr::new("msvc-runtime-NOTICE.txt")];
+#[cfg(windows)]
 const MSVC_RUNTIME_FILES: &[StaticStr] = &[
     StaticStr::new("onnxruntime/msvcp140.dll"),
     StaticStr::new("onnxruntime/msvcp140_1.dll"),
@@ -37,56 +50,80 @@ const POPPINS_LICENSES: &[StaticStr] = &[StaticStr::new("Poppins-OFL.txt")];
 /// The typefaces are compiled into the web assets, not installed as resource files.
 const IN_WEB_ASSETS: &[StaticStr] = &[];
 
+const ONNXRUNTIME_CREDIT: ThirdPartyCredit = ThirdPartyCredit {
+    id: StaticStr::new("onnxruntime"),
+    label: StaticStr::new("ONNX Runtime 1.24.2"),
+    license: StaticStr::new("MIT"),
+    attribution: StaticStr::new("Copyright (c) Microsoft Corporation"),
+    license_files: StaticList::new(ONNXRUNTIME_LICENSES),
+    bundled_files: StaticList::new(ONNXRUNTIME_FILES),
+};
+
+#[cfg(windows)]
+const DIRECTML_CREDIT: ThirdPartyCredit = ThirdPartyCredit {
+    id: StaticStr::new("directml"),
+    label: StaticStr::new("DirectML 1.15.4"),
+    license: StaticStr::new("Microsoft Software License Terms"),
+    attribution: StaticStr::new("Copyright (c) Microsoft Corporation"),
+    license_files: StaticList::new(DIRECTML_LICENSES),
+    bundled_files: StaticList::new(DIRECTML_FILES),
+};
+
+#[cfg(windows)]
+const MSVC_RUNTIME_CREDIT: ThirdPartyCredit = ThirdPartyCredit {
+    id: StaticStr::new("msvc-runtime"),
+    label: StaticStr::new("Microsoft Visual C++ Runtime 14.51"),
+    license: StaticStr::new("Visual Studio Distributable Code"),
+    attribution: StaticStr::new("Copyright (c) Microsoft Corporation"),
+    license_files: StaticList::new(MSVC_RUNTIME_LICENSES),
+    bundled_files: StaticList::new(MSVC_RUNTIME_FILES),
+};
+
+const SILERO_VAD_V5_CREDIT: ThirdPartyCredit = ThirdPartyCredit {
+    id: StaticStr::new("silero-vad-v5"),
+    label: StaticStr::new("Silero VAD v5"),
+    license: StaticStr::new("MIT"),
+    attribution: StaticStr::new("Copyright (c) 2020-present Silero Team"),
+    license_files: StaticList::new(SILERO_VAD_V5_LICENSES),
+    bundled_files: StaticList::new(SILERO_VAD_V5_FILES),
+};
+
+const INTER_CREDIT: ThirdPartyCredit = ThirdPartyCredit {
+    id: StaticStr::new("inter"),
+    label: StaticStr::new("Inter typeface"),
+    license: StaticStr::new("OFL-1.1"),
+    attribution: StaticStr::new("Copyright (c) 2016 The Inter Project Authors"),
+    license_files: StaticList::new(INTER_LICENSES),
+    bundled_files: StaticList::new(IN_WEB_ASSETS),
+};
+
+const POPPINS_CREDIT: ThirdPartyCredit = ThirdPartyCredit {
+    id: StaticStr::new("poppins"),
+    label: StaticStr::new("Poppins typeface"),
+    license: StaticStr::new("OFL-1.1"),
+    attribution: StaticStr::new("Copyright 2020 The Poppins Project Authors"),
+    license_files: StaticList::new(POPPINS_LICENSES),
+    bundled_files: StaticList::new(IN_WEB_ASSETS),
+};
+
 /// Every third-party component the installer ships, in the order About lists them.
+#[cfg(windows)]
 pub const CREDITS: &[ThirdPartyCredit] = &[
-    ThirdPartyCredit {
-        id: StaticStr::new("onnxruntime"),
-        label: StaticStr::new("ONNX Runtime 1.24.2"),
-        license: StaticStr::new("MIT"),
-        attribution: StaticStr::new("Copyright (c) Microsoft Corporation"),
-        license_files: StaticList::new(ONNXRUNTIME_LICENSES),
-        bundled_files: StaticList::new(ONNXRUNTIME_FILES),
-    },
-    ThirdPartyCredit {
-        id: StaticStr::new("directml"),
-        label: StaticStr::new("DirectML 1.15.4"),
-        license: StaticStr::new("Microsoft Software License Terms"),
-        attribution: StaticStr::new("Copyright (c) Microsoft Corporation"),
-        license_files: StaticList::new(DIRECTML_LICENSES),
-        bundled_files: StaticList::new(DIRECTML_FILES),
-    },
-    ThirdPartyCredit {
-        id: StaticStr::new("msvc-runtime"),
-        label: StaticStr::new("Microsoft Visual C++ Runtime 14.51"),
-        license: StaticStr::new("Visual Studio Distributable Code"),
-        attribution: StaticStr::new("Copyright (c) Microsoft Corporation"),
-        license_files: StaticList::new(MSVC_RUNTIME_LICENSES),
-        bundled_files: StaticList::new(MSVC_RUNTIME_FILES),
-    },
-    ThirdPartyCredit {
-        id: StaticStr::new("silero-vad-v5"),
-        label: StaticStr::new("Silero VAD v5"),
-        license: StaticStr::new("MIT"),
-        attribution: StaticStr::new("Copyright (c) 2020-present Silero Team"),
-        license_files: StaticList::new(SILERO_VAD_V5_LICENSES),
-        bundled_files: StaticList::new(SILERO_VAD_V5_FILES),
-    },
-    ThirdPartyCredit {
-        id: StaticStr::new("inter"),
-        label: StaticStr::new("Inter typeface"),
-        license: StaticStr::new("OFL-1.1"),
-        attribution: StaticStr::new("Copyright (c) 2016 The Inter Project Authors"),
-        license_files: StaticList::new(INTER_LICENSES),
-        bundled_files: StaticList::new(IN_WEB_ASSETS),
-    },
-    ThirdPartyCredit {
-        id: StaticStr::new("poppins"),
-        label: StaticStr::new("Poppins typeface"),
-        license: StaticStr::new("OFL-1.1"),
-        attribution: StaticStr::new("Copyright 2020 The Poppins Project Authors"),
-        license_files: StaticList::new(POPPINS_LICENSES),
-        bundled_files: StaticList::new(IN_WEB_ASSETS),
-    },
+    ONNXRUNTIME_CREDIT,
+    DIRECTML_CREDIT,
+    MSVC_RUNTIME_CREDIT,
+    SILERO_VAD_V5_CREDIT,
+    INTER_CREDIT,
+    POPPINS_CREDIT,
+];
+
+/// Every third-party component the installer ships, in the order About lists them (no DirectML or Visual C++ on Linux).
+#[cfg(target_os = "linux")]
+pub const CREDITS: &[ThirdPartyCredit] = &[
+    ONNXRUNTIME_CREDIT,
+    SILERO_VAD_V5_CREDIT,
+    INTER_CREDIT,
+    POPPINS_CREDIT,
 ];
 
 #[cfg(test)]

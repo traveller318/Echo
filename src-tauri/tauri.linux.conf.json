@@ -1,0 +1,49 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "bundle": {
+    "targets": [
+      "deb",
+      "rpm",
+      "appimage"
+    ],
+    "resources": {
+      "resources/onnxruntime/libonnxruntime.so": "onnxruntime/libonnxruntime.so",
+      "resources/licenses/onnxruntime-linux-ThirdPartyNotices.txt": "licenses/onnxruntime-linux-ThirdPartyNotices.txt"
+    },
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0",
+          "libayatana-appindicator3-1 | libappindicator3-1",
+          "libasound2t64 | libasound2",
+          "libssl3t64 | libssl3",
+          "libgomp1",
+          "xdg-desktop-portal"
+        ],
+        "section": "sound",
+        "files": {
+          "/usr/share/applications/app.echo.desktop.desktop": "linux/app.echo.desktop.desktop"
+        }
+      },
+      "rpm": {
+        "depends": [
+          "webkit2gtk4.1",
+          "gtk3",
+          "libayatana-appindicator-gtk3",
+          "alsa-lib",
+          "openssl-libs",
+          "libgomp",
+          "xdg-desktop-portal"
+        ],
+        "files": {
+          "/usr/share/applications/app.echo.desktop.desktop": "linux/app.echo.desktop.desktop"
+        }
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    }
+  },
+  "mainBinaryName": "echo-dictation"
+}

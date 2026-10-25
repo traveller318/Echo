@@ -27,8 +27,14 @@ pub const PASTE_LAST: HotkeyId = HotkeyId::from_static("paste-last");
 pub const CANCEL: HotkeyId = HotkeyId::from_static("cancel");
 
 /// Default combinations (05 decision log): hold Ctrl+Alt to dictate (a modifier-only chord the keyboard hook binds),
-/// Ctrl+Alt+V to paste the last transcript again.
-pub const RECORD_DEFAULT: &str = "Ctrl+Alt";
+/// Ctrl+Alt+V to paste the last transcript again. Linux dictates on Ctrl+Alt+Space: a Wayland desktop's shortcut
+/// portal cannot bind a bare modifier chord, and one default keeps every Linux session alike (an X11 user can still
+/// choose Ctrl+Alt in Settings).
+pub const RECORD_DEFAULT: &str = if cfg!(windows) {
+    "Ctrl+Alt"
+} else {
+    "Ctrl+Alt+Space"
+};
 pub const PASTE_LAST_DEFAULT: &str = "Ctrl+Alt+V";
 pub const CANCEL_DEFAULT: &str = "Escape";
 
@@ -203,8 +209,15 @@ mod tests {
         let paste_last = |shortcut: &str| {
             conflicting(&keys::PASTE_LAST_HOTKEY, shortcut, &defaults).map(|spec| &spec.id)
         };
-        assert_eq!(paste_last("Ctrl+Alt"), Some(&RECORD));
-        assert_eq!(paste_last(" alt + CTRL "), Some(&RECORD), "order and case");
+        // The record default spelled in reverse order, lower case and with spaces.
+        let scrambled = RECORD_DEFAULT
+            .split('+')
+            .rev()
+            .collect::<Vec<_>>()
+            .join(" + ")
+            .to_lowercase();
+        assert_eq!(paste_last(RECORD_DEFAULT), Some(&RECORD));
+        assert_eq!(paste_last(&scrambled), Some(&RECORD), "order and case");
         assert_eq!(
             paste_last("Escape"),
             Some(&CANCEL),
@@ -217,7 +230,7 @@ mod tests {
             SettingValue::Hotkey(StaticStr::new("Ctrl+Shift+D")),
         )]);
         assert_eq!(
-            conflicting(&keys::PASTE_LAST_HOTKEY, "Ctrl+Alt", &rebound),
+            conflicting(&keys::PASTE_LAST_HOTKEY, RECORD_DEFAULT, &rebound),
             None,
             "the record hotkey moved away"
         );

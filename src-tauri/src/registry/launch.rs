@@ -17,5 +17,12 @@ pub const LOGIN_ARG: &str = "--minimized";
 /// Every argument the start-at-sign-in entry passes.
 pub const LAUNCH_AT_LOGIN_ARGS: &[&str] = &[LOGIN_ARG];
 
+/// Arguments that steer the Echo already running instead of opening it: a desktop with no global-shortcut portal
+/// binds a key of its own to `echo --toggle`. `--toggle` starts dictating, or stops the take that is recording (the
+/// tray's Start / Stop); `--stop` stops it; `--cancel` is the Esc key (press again within the countdown to keep it).
+pub const TOGGLE_ARG: &str = "--toggle";
+pub const STOP_ARG: &str = "--stop";
+pub const CANCEL_ARG: &str = "--cancel";
+
 /// How long after the windows exist the speech engine, voice detector and polish chain start loading.
 pub const STARTUP_IDLE_DELAY: Duration = Duration::from_secs(2);

@@ -18,6 +18,7 @@
 
 use std::{path::Path, sync::OnceLock};
 
+#[cfg(windows)]
 use windows::{
     Win32::System::LibraryLoader::{
         GetModuleHandleW, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR,
@@ -82,12 +83,14 @@ fn load(paths: &AppPaths) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(windows)]
 fn is_loaded(file_name: &str) -> bool {
     // SAFETY: the name is a valid null-terminated HSTRING for the whole call; the handle is only tested for success
     // and never freed (GetModuleHandleW does not add a reference).
     unsafe { GetModuleHandleW(&HSTRING::from(file_name)) }.is_ok()
 }
 
+#[cfg(windows)]
 fn load_library(path: &Path) -> Result<(), String> {
     // SAFETY: the path is a valid null-terminated HSTRING for the whole call. The module is intentionally never
     // freed: ONNX Runtime and its sessions may use it until the process exits.
@@ -107,7 +110,23 @@ fn load_library(path: &Path) -> Result<(), String> {
     })
 }
 
-#[cfg(test)]
+/// Linux: `ort` opens `libonnxruntime.so` by the absolute path below, so nothing is preloaded and the dynamic linker
+/// never searches system directories for a stale copy (the same rule the Windows bundle enforces by load order).
+#[cfg(target_os = "linux")]
+fn is_loaded(_file_name: &str) -> bool {
+    false
+}
+
+#[cfg(target_os = "linux")]
+fn load_library(path: &Path) -> Result<(), String> {
+    if path.is_file() {
+        Ok(())
+    } else {
+        Err(format!("the bundled {} is missing", path.display()))
+    }
+}
+
+#[cfg(all(test, windows))]
 mod tests {
     use sha2::{Digest, Sha256};
 

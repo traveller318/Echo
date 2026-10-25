@@ -43,7 +43,7 @@ const ACTIONS = {
 const PERMISSION_COPY: Readonly<Record<Permission, AppErrorCopy>> = {
   microphone: {
     title: "Microphone access is off",
-    body: "Turn on microphone access for desktop apps in Windows privacy settings.",
+    body: "Allow Echo to use the microphone in your system's privacy or sound settings.",
     action: ACTIONS.open_mic_privacy,
   },
   network: {

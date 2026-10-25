@@ -192,7 +192,7 @@ impl Opener<'_> {
             {
                 tracing::warn!(
                     detail = error.detail(),
-                    "the chosen microphone is gone; recording from the Windows default"
+                    "the chosen microphone is gone; recording from the system default"
                 );
                 // The failed start consumed the detector with its config.
                 self.start(None, (self.request.build_detector)()?)

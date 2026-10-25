@@ -17,6 +17,8 @@ pub mod gpu;
 pub mod hotkey;
 pub mod inserter;
 pub mod launcher;
+#[cfg(target_os = "linux")]
+pub mod linux;
 pub mod net;
 pub mod notifier;
 pub mod onnx;
@@ -28,5 +30,6 @@ pub mod sound;
 pub mod startup;
 pub mod updater;
 pub mod vad;
+#[cfg(windows)]
 pub mod win32;
 pub mod window;

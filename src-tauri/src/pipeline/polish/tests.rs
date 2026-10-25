@@ -412,7 +412,7 @@ fn grammar_polish_without_its_model_keeps_the_rule_output() {
         [(
             QWEN,
             &PolishFallbackReason::Failed(AppError::ModelMissing {
-                model_id: crate::registry::models::LLAMA_CPP_VULKAN
+                model_id: crate::registry::models::LLAMA_CPP_RUNTIME
             })
         )]
     );

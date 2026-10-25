@@ -61,7 +61,7 @@ export function MicrophoneStep({ view, step }: OnboardingStepProps) {
         <InlineNotice
           icon={<MicOffIcon />}
           title="Couldn't check microphone access"
-          body="Run the test below. If it hears nothing, check Windows privacy settings."
+          body="Run the test below. If it hears nothing, check your system's sound and privacy settings."
         />
       ) : null}
       <StepSettings settings={step.settings} />

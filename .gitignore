@@ -66,3 +66,8 @@ ehthumbs.db
 desktop.ini
 $RECYCLE.BIN/
 .DS_Store
+
+# Downloaded by scripts/fetch-onnxruntime-linux.sh
+src-tauri/resources/onnxruntime/libonnxruntime.so
+src-tauri/resources/.onnxruntime-linux-version
+src-tauri/resources/licenses/onnxruntime-linux-ThirdPartyNotices.txt

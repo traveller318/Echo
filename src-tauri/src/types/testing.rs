@@ -59,46 +59,77 @@ pub fn source_resource_paths(data: &Path) -> AppPaths {
     )
 }
 
+/// The tauri.conf.json this build runs on: the shared file with this operating system's file merged over it, the way
+/// Tauri's own configuration loader does (JSON Merge Patch: objects merge key by key, other values replace).
+pub fn build_config() -> serde_json::Value {
+    #[cfg(windows)]
+    const PLATFORM: &str = include_str!("../../tauri.windows.conf.json");
+    #[cfg(target_os = "linux")]
+    const PLATFORM: &str = include_str!("../../tauri.linux.conf.json");
+    fn merge(base: &mut serde_json::Value, patch: serde_json::Value) {
+        match (base, patch) {
+            (serde_json::Value::Object(base), serde_json::Value::Object(patch)) => {
+                for (key, value) in patch {
+                    merge(base.entry(key).or_insert(serde_json::Value::Null), value);
+                }
+            }
+            (base, patch) => *base = patch,
+        }
+    }
+    let mut config: serde_json::Value =
+        serde_json::from_str(include_str!("../../tauri.conf.json")).unwrap();
+    merge(&mut config, serde_json::from_str(PLATFORM).unwrap());
+    config
+}
+
+/// This operating system's per-user data root, where Tauri's `app_local_data_dir()` puts the app folder.
+fn local_data_root() -> PathBuf {
+    #[cfg(windows)]
+    return PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap());
+    #[cfg(target_os = "linux")]
+    return std::env::var_os("XDG_DATA_HOME")
+        .filter(|dir| !dir.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap()).join(".local/share"));
+}
+
 /// AppPaths over this machine's installed Echo data folder (read-only use: downloaded models) with the repository's
 /// resources; the same data folder the app resolves through `app_local_data_dir()`.
 pub fn installed_app_paths() -> AppPaths {
-    let config: serde_json::Value =
-        serde_json::from_str(include_str!("../../tauri.conf.json")).unwrap();
+    let config = build_config();
     let identifier = config["identifier"].as_str().unwrap();
-    let local_data = std::env::var_os("LOCALAPPDATA").unwrap();
-    source_resource_paths(&PathBuf::from(local_data).join(identifier))
+    source_resource_paths(&local_data_root().join(identifier))
 }
 
 /// Every file the installer puts in the resources folder, as `folder/file` with forward slashes, read from
-/// tauri.conf.json's `bundle.resources` map: a `dir/*` source installs each file in `dir` under its target folder,
-/// any other source installs one file at its target path.
+/// the `bundle.resources` map of the build's configuration: a source whose last part holds a `*` (`dir/*`,
+/// `dir/*.dll`) installs each matching file in `dir` under its target folder, any other source installs one file at
+/// its target path.
 pub fn installed_resource_files() -> BTreeSet<String> {
-    let config: serde_json::Value =
-        serde_json::from_str(include_str!("../../tauri.conf.json")).unwrap();
+    let config = build_config();
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut installed = BTreeSet::new();
     for (source, target) in config["bundle"]["resources"].as_object().unwrap() {
         let target = target.as_str().unwrap();
-        match source.strip_suffix("/*") {
-            Some(folder) => {
-                for entry in fs::read_dir(manifest_dir.join(folder)).unwrap() {
-                    let entry = entry.unwrap();
-                    if entry.file_type().unwrap().is_file() {
-                        installed.insert(format!(
-                            "{}/{}",
-                            target.trim_end_matches('/'),
-                            entry.file_name().to_string_lossy()
-                        ));
-                    }
+        let (folder, pattern) = source.rsplit_once('/').unwrap_or((".", source));
+        if let Some((prefix, suffix)) = pattern.split_once('*') {
+            for entry in fs::read_dir(manifest_dir.join(folder)).unwrap() {
+                let entry = entry.unwrap();
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if entry.file_type().unwrap().is_file()
+                    && name.len() >= prefix.len() + suffix.len()
+                    && name.starts_with(prefix)
+                    && name.ends_with(suffix)
+                {
+                    installed.insert(format!("{}/{name}", target.trim_end_matches('/')));
                 }
             }
-            None => {
-                assert!(
-                    manifest_dir.join(source).is_file(),
-                    "{source} is not a file"
-                );
-                installed.insert(target.to_owned());
-            }
+        } else {
+            assert!(
+                manifest_dir.join(source).is_file(),
+                "{source} is not a file"
+            );
+            installed.insert(target.to_owned());
         }
     }
     installed

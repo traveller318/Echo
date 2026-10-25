@@ -34,7 +34,7 @@ use crate::{
     },
     registry::{
         engines::{PARAKEET_TDT_V3 as PARAKEET_ENGINE, QWEN3_POLISHER, SILERO_VAD},
-        models::{self, LLAMA_CPP_VULKAN, PARAKEET_TDT_V3, QWEN3_1_7B_Q4, SILERO_VAD_V5},
+        models::{self, LLAMA_CPP_RUNTIME, PARAKEET_TDT_V3, QWEN3_1_7B_Q4, SILERO_VAD_V5},
         settings::{self, keys},
     },
     types::{
@@ -513,7 +513,7 @@ fn grammar_polish_on() -> crate::types::SettingsSnapshot {
 #[test]
 fn an_llm_and_its_runtime_are_one_card_with_one_download() {
     let rig = Rig::new();
-    let runtime = models::find(&LLAMA_CPP_VULKAN).unwrap();
+    let runtime = models::find(&LLAMA_CPP_RUNTIME).unwrap();
     let model = models::find(&QWEN3_1_7B_Q4).unwrap();
     let card = rig.entry(&QWEN3_POLISHER);
     assert_eq!(card.model.id, QWEN3_1_7B_Q4);
@@ -531,7 +531,7 @@ fn an_llm_and_its_runtime_are_one_card_with_one_download() {
         block_on(rig.manager.download(&QWEN3_1_7B_Q4)).unwrap(),
         ModelTransferOutcome::Completed
     );
-    assert_eq!(rig.stored(&LLAMA_CPP_VULKAN), ModelStatus::Installed);
+    assert_eq!(rig.stored(&LLAMA_CPP_RUNTIME), ModelStatus::Installed);
     assert_eq!(rig.stored(&QWEN3_1_7B_Q4), ModelStatus::Installed);
     assert_eq!(rig.entry(&QWEN3_POLISHER).status, ModelStatus::Installed);
     // One stream under the card's id, never under the runtime's, and the bar only moves forward.
@@ -584,7 +584,7 @@ fn a_model_whose_runtime_is_missing_is_partial_and_resuming_fetches_the_runtime(
         }
     );
     block_on(rig.manager.download(&QWEN3_1_7B_Q4)).unwrap();
-    assert_eq!(rig.stored(&LLAMA_CPP_VULKAN), ModelStatus::Installed);
+    assert_eq!(rig.stored(&LLAMA_CPP_RUNTIME), ModelStatus::Installed);
     assert_eq!(rig.entry(&QWEN3_POLISHER).status, ModelStatus::Installed);
     let writes = rig.manager.activation(&QWEN3_POLISHER).unwrap();
     assert!(writes.contains(&(keys::LLM_ENABLED, SettingValue::Bool(true))));
@@ -593,13 +593,13 @@ fn a_model_whose_runtime_is_missing_is_partial_and_resuming_fetches_the_runtime(
 #[test]
 fn a_damaged_runtime_damages_the_card_and_a_check_names_it() {
     let rig = Rig::new();
-    rig.store.install(&LLAMA_CPP_VULKAN);
+    rig.store.install(&LLAMA_CPP_RUNTIME);
     rig.store.install(&QWEN3_1_7B_Q4);
-    rig.store.corrupt(&LLAMA_CPP_VULKAN);
+    rig.store.corrupt(&LLAMA_CPP_RUNTIME);
     assert_eq!(
         app_error(block_on(rig.manager.verify(&QWEN3_1_7B_Q4))),
         AppError::ModelCorrupt {
-            model_id: LLAMA_CPP_VULKAN
+            model_id: LLAMA_CPP_RUNTIME
         }
     );
     assert_eq!(rig.entry(&QWEN3_POLISHER).status, ModelStatus::Corrupt);
@@ -609,7 +609,7 @@ fn a_damaged_runtime_damages_the_card_and_a_check_names_it() {
             model_id: QWEN3_1_7B_Q4
         }
     );
-    rig.store.repair(&LLAMA_CPP_VULKAN);
+    rig.store.repair(&LLAMA_CPP_RUNTIME);
     block_on(rig.manager.download(&QWEN3_1_7B_Q4)).unwrap();
     assert_eq!(rig.entry(&QWEN3_POLISHER).status, ModelStatus::Installed);
 }
@@ -622,7 +622,7 @@ fn removing_the_llm_stops_its_stage_first_and_takes_its_runtime_along() {
     block_on(async {
         rig.polish.for_settings(&rig.settings.current());
     });
-    rig.store.install(&LLAMA_CPP_VULKAN);
+    rig.store.install(&LLAMA_CPP_RUNTIME);
     rig.store.install(&QWEN3_1_7B_Q4);
     rig.manager.remove(&QWEN3_1_7B_Q4).unwrap();
     assert_eq!(
@@ -631,7 +631,7 @@ fn removing_the_llm_stops_its_stage_first_and_takes_its_runtime_along() {
         "the sidecar lets go of its files before they are deleted"
     );
     assert_eq!(rig.stored(&QWEN3_1_7B_Q4), ModelStatus::NotInstalled);
-    assert_eq!(rig.stored(&LLAMA_CPP_VULKAN), ModelStatus::NotInstalled);
+    assert_eq!(rig.stored(&LLAMA_CPP_RUNTIME), ModelStatus::NotInstalled);
     assert_eq!(rig.entry(&QWEN3_POLISHER).status, ModelStatus::NotInstalled);
 }
 
@@ -688,7 +688,7 @@ fn switching_grammar_polish_on_downloads_its_model_unless_offline() {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
     });
-    assert_eq!(rig.stored(&LLAMA_CPP_VULKAN), ModelStatus::Installed);
+    assert_eq!(rig.stored(&LLAMA_CPP_RUNTIME), ModelStatus::Installed);
     assert_eq!(rig.stored(&QWEN3_1_7B_Q4), ModelStatus::Installed);
     assert_eq!(rig.phases(&QWEN3_1_7B_Q4).last(), Some(&ModelPhase::Ready));
 

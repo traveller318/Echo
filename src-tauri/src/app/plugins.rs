@@ -28,8 +28,23 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
         .plugin(tauri_plugin_dialog::init())
 }
 
-/// Another Echo was started: bring this one's window forward, unless Windows started it at sign-in.
+/// Another Echo was started: do what its arguments ask (`--toggle`, `--stop`, `--cancel` steer the session), else
+/// bring this one's window forward, unless Windows started it at sign-in.
 fn on_second_launch<R: Runtime>(app: &AppHandle<R>, args: Vec<String>, _cwd: String) {
+    if let Some(input) = launch::command_from_args(&args) {
+        match app.try_state::<CommandCtx>() {
+            Some(ctx) => {
+                if let Err(error) = ctx.session().ui_input(input) {
+                    tracing::warn!(
+                        detail = error.detail(),
+                        "a command-line request could not reach the session"
+                    );
+                }
+            }
+            None => tracing::warn!("a command-line request came before startup finished"),
+        }
+        return;
+    }
     if launch::origin_from_args(&args) == LaunchOrigin::Login {
         tracing::info!("a start at sign-in found Echo already running");
         return;

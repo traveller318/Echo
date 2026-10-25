@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Echo
+Comment=Local, private speech-to-text
+Exec=echo-dictation
+Icon=echo-dictation
+Terminal=false
+NoDisplay=true
+Categories=AudioVideo;Utility;

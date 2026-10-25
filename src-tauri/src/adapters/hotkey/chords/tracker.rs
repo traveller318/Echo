@@ -345,7 +345,7 @@ impl ChordTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{adapters::hotkey::low_level_hook::chord::parse, types::Shortcut};
+    use crate::{adapters::hotkey::chords::chord::parse, types::Shortcut};
 
     const RECORD: HotkeyId = HotkeyId::from_static("record");
     const CANCEL: HotkeyId = HotkeyId::from_static("cancel");

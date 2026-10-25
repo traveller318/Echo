@@ -677,7 +677,7 @@ mod tests {
         key: SettingKey::from_static("general.theme"),
         section: SettingSection::General,
         label: StaticStr::new("Theme"),
-        help: StaticStr::new("Follow Windows or pick light or dark."),
+        help: StaticStr::new("Follow your system or pick light or dark."),
         kind: SettingKind::Enum {
             options: EnumOptions::Fixed {
                 list: StaticList::new(THEMES),

@@ -5,6 +5,12 @@
  * WHERE: Constructed by app/bootstrap; used only through `dyn GraphicsAdapters` (pipeline/asr/accelerator.rs).
  */
 
+#[cfg(windows)]
 mod dxgi;
+#[cfg(target_os = "linux")]
+mod linux;
 
+#[cfg(windows)]
 pub use dxgi::DxgiGraphicsAdapters;
+#[cfg(target_os = "linux")]
+pub use linux::NoGraphicsAdapters;

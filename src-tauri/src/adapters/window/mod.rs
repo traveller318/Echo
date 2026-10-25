@@ -10,7 +10,13 @@
  */
 
 mod main_window;
+#[cfg(windows)]
 mod overlay;
+#[cfg(target_os = "linux")]
+mod tauri_overlay;
 
 pub use main_window::TauriMainWindow;
+#[cfg(windows)]
 pub use overlay::Win32OverlayWindow;
+#[cfg(target_os = "linux")]
+pub use tauri_overlay::TauriOverlayWindow;

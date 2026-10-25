@@ -22,8 +22,8 @@ use crate::{
     registry::{self, settings::keys},
     services::Db,
     types::{
-        AppEvent, LaunchAtLoginState, LaunchOrigin, MainWindowAtLaunch, SettingValue,
-        SettingsSnapshot, SharedSettings,
+        AppEvent, LaunchAtLoginState, LaunchOrigin, MainWindowAtLaunch, SessionUiInput,
+        SettingValue, SettingsSnapshot, SharedSettings,
     },
 };
 
@@ -41,6 +41,20 @@ where
     } else {
         LaunchOrigin::User
     }
+}
+
+/// The session command a launch's arguments carry (`--toggle`, `--stop`, `--cancel`), if any; the first one wins.
+pub fn command_from_args<I, S>(args: I) -> Option<SessionUiInput>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    args.into_iter().find_map(|arg| match arg.as_ref() {
+        registry::launch::TOGGLE_ARG => Some(SessionUiInput::Toggle),
+        registry::launch::STOP_ARG => Some(SessionUiInput::Stop),
+        registry::launch::CANCEL_ARG => Some(SessionUiInput::Cancel),
+        _ => None,
+    })
 }
 
 /// Whether the main window shows at launch; `onboarding_due` is `pipeline::onboarding::needs(..).required()`.
@@ -223,6 +237,24 @@ mod tests {
         );
         assert_eq!(origin_from_args(["echo.exe"]), LaunchOrigin::User);
         assert_eq!(origin_from_args(Vec::<String>::new()), LaunchOrigin::User);
+    }
+
+    #[test]
+    fn command_arguments_steer_the_running_session() {
+        assert_eq!(
+            command_from_args(["echo", "--toggle"]),
+            Some(SessionUiInput::Toggle)
+        );
+        assert_eq!(
+            command_from_args(["echo", "--stop"]),
+            Some(SessionUiInput::Stop)
+        );
+        assert_eq!(
+            command_from_args(["/usr/bin/echo-dictation", "--cancel"]),
+            Some(SessionUiInput::Cancel)
+        );
+        assert_eq!(command_from_args(["echo", "--minimized"]), None);
+        assert_eq!(command_from_args(Vec::<String>::new()), None);
     }
 
     #[test]

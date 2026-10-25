@@ -18,7 +18,7 @@ export const MIC_VERDICT_LOOK: Readonly<Record<MicVerdict, MicVerdictLook>> = {
   good: { title: "Sounds good", body: "Echo hears you clearly.", passed: true },
   too_quiet: {
     title: "A little quiet",
-    body: "Move closer to the microphone, or raise its level in Windows sound settings.",
+    body: "Move closer to the microphone, or raise its level in your system's sound settings.",
     passed: false,
   },
   too_loud: {

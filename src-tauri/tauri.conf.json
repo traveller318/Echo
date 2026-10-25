@@ -74,31 +74,25 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
     "publisher": "Echo",
     "copyright": "Copyright (c) 2026 Echo contributors. MIT License.",
     "category": "Productivity",
-    "shortDescription": "Local, private speech-to-text for Windows.",
+    "shortDescription": "Local, private speech-to-text for Windows and Linux.",
     "longDescription": "Press a hotkey, speak, and polished text is pasted into the app you are using. Speech recognition and text cleanup run entirely on your machine.",
     "license": "MIT",
     "licenseFile": "../LICENSE",
     "resources": {
-      "resources/onnxruntime/*": "onnxruntime/",
       "resources/models/*": "models/",
-      "resources/licenses/*": "licenses/",
+      "resources/licenses/silero-vad-LICENSE.txt": "licenses/silero-vad-LICENSE.txt",
+      "resources/licenses/onnxruntime-LICENSE.txt": "licenses/onnxruntime-LICENSE.txt",
       "../src/styles/fonts/Inter-OFL.txt": "licenses/Inter-OFL.txt",
       "../src/styles/fonts/Poppins-OFL.txt": "licenses/Poppins-OFL.txt"
     },
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
-    "windows": {
-      "webviewInstallMode": {
-        "type": "embedBootstrapper"
-      },
-      "nsis": {
-        "installMode": "currentUser",
-        "installerIcon": "icons/icon.ico",
-        "uninstallerIcon": "icons/icon.ico"
-      }
-    }
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ]
   }
 }

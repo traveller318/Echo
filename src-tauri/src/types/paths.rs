@@ -41,6 +41,7 @@ pub struct OnnxRuntimeLibrary {
 }
 
 /// The bundled ONNX Runtime files in load order; ONNX Runtime itself is last.
+#[cfg(windows)]
 pub const ONNX_RUNTIME_LOAD_ORDER: &[OnnxRuntimeLibrary] = &[
     OnnxRuntimeLibrary {
         file_name: "vcruntime140.dll",
@@ -73,6 +74,14 @@ pub const ONNX_RUNTIME_LOAD_ORDER: &[OnnxRuntimeLibrary] = &[
         process_shared: false,
     },
 ];
+
+/// The bundled ONNX Runtime on Linux: one CPU build whose C++ runtime is the system's, so nothing precedes it.
+#[cfg(target_os = "linux")]
+pub const ONNX_RUNTIME_LOAD_ORDER: &[OnnxRuntimeLibrary] = &[OnnxRuntimeLibrary {
+    file_name: "libonnxruntime.so",
+    required: true,
+    process_shared: false,
+}];
 
 /// Where Echo keeps its files.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,6 +121,11 @@ impl AppPaths {
     /// Models shipped with the installer (ModelManifest `bundled: true`), stored under their manifest file names.
     pub fn bundled_models_dir(&self) -> PathBuf {
         self.resources_dir.join("models")
+    }
+
+    /// The remembered approval of the desktop's RemoteDesktop portal (Linux), so pasting asks only once.
+    pub fn remote_desktop_token(&self) -> PathBuf {
+        self.data_dir.join("remote-desktop.token")
     }
 
     /// The SQLite database.
@@ -272,7 +286,7 @@ mod tests {
             paths.onnx_runtime_file(&ONNX_RUNTIME_LOAD_ORDER[0]),
             Path::new("resources")
                 .join("onnxruntime")
-                .join("vcruntime140.dll")
+                .join(ONNX_RUNTIME_LOAD_ORDER[0].file_name)
         );
         assert_eq!(
             paths.bundled_models_dir(),
@@ -284,7 +298,14 @@ mod tests {
     #[test]
     fn onnx_runtime_itself_loads_last_and_is_required() {
         let last = ONNX_RUNTIME_LOAD_ORDER.last().unwrap();
-        assert_eq!(last.file_name, "onnxruntime.dll");
+        assert_eq!(
+            last.file_name,
+            if cfg!(windows) {
+                "onnxruntime.dll"
+            } else {
+                "libonnxruntime.so"
+            }
+        );
         assert!(last.required);
     }
 }

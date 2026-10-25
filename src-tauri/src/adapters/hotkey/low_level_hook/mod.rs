@@ -18,17 +18,15 @@
  *        pipeline/hotkeys.rs. Parsing in chord.rs, matching in tracker.rs, Win32 plumbing in hook_thread.rs.
  */
 
-mod chord;
 mod hook_thread;
-mod tracker;
 
 use std::{collections::BTreeMap, sync::Arc};
 
 use parking_lot::{Mutex, RwLock};
 
-use self::{
+use self::hook_thread::HookThread;
+use super::chords::{
     chord::{Chord, parse},
-    hook_thread::HookThread,
     tracker::HookBinding,
 };
 use crate::{

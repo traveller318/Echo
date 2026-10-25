@@ -116,19 +116,19 @@ pub fn llama_server_setup(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::models::{LLAMA_CPP_VULKAN, PARAKEET_TDT_V3, QWEN3_1_7B_Q4};
+    use crate::registry::models::{LLAMA_CPP_RUNTIME, PARAKEET_TDT_V3, QWEN3_1_7B_Q4};
 
     #[test]
     fn qwen_runs_on_the_llama_runtime_from_the_install_folders() {
         let paths = AppPaths::new("data", "resources");
         let setup = llama_server_setup(&paths, &QWEN3_1_7B_Q4, QWEN3_POLISH).unwrap();
-        assert_eq!(setup.runtime_id, LLAMA_CPP_VULKAN);
+        assert_eq!(setup.runtime_id, LLAMA_CPP_RUNTIME);
         assert_eq!(
             setup.files.executable,
             paths
                 .runtimes_dir()
-                .join("llama-cpp-vulkan")
-                .join("llama-server.exe")
+                .join(LLAMA_CPP_RUNTIME.as_str())
+                .join(LLAMA_SERVER_EXE)
         );
         assert_eq!(
             setup.files.model,

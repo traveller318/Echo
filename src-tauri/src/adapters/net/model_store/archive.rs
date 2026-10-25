@@ -29,6 +29,10 @@ pub(super) async fn unpack(
     manifest: &ModelManifest,
     mut on_block: impl FnMut(u64),
 ) -> PortResult<()> {
+    #[cfg(target_os = "linux")]
+    if archive.to_string_lossy().ends_with(".tar.gz") {
+        return super::tar_archive::unpack_tar(archive, staging, manifest, on_block).await;
+    }
     let file =
         File::open(archive).map_err(|error| storage("opening the archive", archive, &error))?;
     let mut zip = ZipArchive::new(BufReader::new(file)).map_err(|error| {

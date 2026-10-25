@@ -19,7 +19,7 @@ use crate::{
 pub(super) const THEME_OPTIONS: &[EnumOption] = &[
     EnumOption {
         value: StaticStr::new(ThemePreference::System.as_str()),
-        label: StaticStr::new("Match Windows"),
+        label: StaticStr::new("Match system"),
         requires: None,
     },
     EnumOption {
@@ -88,7 +88,7 @@ pub const SETTINGS: &[SettingSpec] = &[
         key: keys::LAUNCH_AT_STARTUP,
         section: SettingSection::General,
         label: StaticStr::new("Launch at startup"),
-        help: StaticStr::new("Start Echo when you sign in to Windows."),
+        help: StaticStr::new("Start Echo when you sign in."),
         kind: SettingKind::Bool,
         default: SettingValue::Bool(true),
         restart_required: false,
@@ -123,7 +123,7 @@ pub const SETTINGS: &[SettingSpec] = &[
         key: keys::THEME,
         section: SettingSection::General,
         label: StaticStr::new("Appearance"),
-        help: StaticStr::new("Follow Windows, or always use light or dark."),
+        help: StaticStr::new("Follow your system, or always use light or dark."),
         kind: SettingKind::Enum {
             options: EnumOptions::Fixed {
                 list: StaticList::new(THEME_OPTIONS),
@@ -304,7 +304,9 @@ pub const SETTINGS: &[SettingSpec] = &[
         key: keys::INPUT_DEVICE,
         section: SettingSection::Audio,
         label: StaticStr::new("Microphone"),
-        help: StaticStr::new("The input Echo records from. System default follows Windows."),
+        help: StaticStr::new(
+            "The input Echo records from. System default follows your computer's setting.",
+        ),
         kind: SettingKind::Device,
         default: SettingValue::Device(None),
         restart_required: false,

@@ -657,8 +657,14 @@ mod tests {
                 ),
             )
         };
+        // The record default with its keys in another order.
+        const RECORD_REORDERED: &str = if cfg!(windows) {
+            "Alt+Ctrl"
+        } else {
+            "Space+Alt+Ctrl"
+        };
         assert_eq!(
-            paste_last("Alt+Ctrl"),
+            paste_last(RECORD_REORDERED),
             conflict,
             "the record hotkey's chord"
         );

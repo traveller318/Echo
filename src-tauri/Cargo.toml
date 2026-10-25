@@ -9,7 +9,7 @@
 [package]
 name = "echo"
 version = "0.1.0"
-description = "Local, private speech-to-text for Windows."
+description = "Local, private speech-to-text for Windows and Linux."
 license = "MIT"
 edition = "2024"
 rust-version = "1.98"
@@ -17,7 +17,7 @@ publish = false
 
 [lib]
 name = "echo_lib"
-# Windows desktop only: no mobile targets, so no staticlib/cdylib.
+# Desktop only (Windows, Linux): no mobile targets, so no staticlib/cdylib.
 crate-type = ["rlib"]
 
 [build-dependencies]
@@ -68,6 +68,12 @@ tracing = { version = "=0.1.44", default-features = false, features = ["std"] }
 tracing-appender = "=0.2.5"
 tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["fmt", "json", "std"] }
 ulid = { version = "=3.0.0", features = ["serde"] }
+# Reads the pinned llama.cpp release archive (a zip of Deflate entries) into `runtimes/` (02 §8.2). Only the Deflate codec,
+# through flate2 on the pure-Rust zlib-rs backend (no C build, 05 W24); every other codec and encryption is off.
+zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+# Win32 bindings: every Windows adapter and nothing else (adapters/platform.rs picks the Linux ones elsewhere).
+[target.'cfg(windows)'.dependencies]
 # Same version tauri already links, so no second copy is compiled; features grow with each Win32 adapter.
 windows = { version = "=0.61.3", features = [
     "Win32_Devices_Properties",
@@ -101,9 +107,33 @@ windows = { version = "=0.61.3", features = [
 # The crate `windows` re-exports; named directly only because the COM `#[implement]` macro (the audio device watch's
 # IMMNotificationClient) expands to `::windows_core` paths. Same version `windows` already links.
 windows-core = "=0.61.2"
-# Reads the pinned llama.cpp release archive (a zip of Deflate entries) into `runtimes/` (02 §8.2). Only the Deflate codec,
-# through flate2 on the pure-Rust zlib-rs backend (no C build, 05 W24); every other codec and encryption is off.
-zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+# Linux adapters (adapters/linux and the `linux*.rs` file of each adapter folder). The Wayland input paths go through
+# xdg-desktop-portal (ashpd: GlobalShortcuts, RemoteDesktop, Settings) and libei (reis), so Echo needs no root and
+# no access to /dev/input by default; X11 uses XInput2 raw events and XTest (x11rb, the version tao already links).
+[target.'cfg(target_os = "linux")'.dependencies]
+# Wayland's data-control protocol where the compositor offers it; otherwise arboard uses X11 (XWayland).
+arboard = { version = "=3.6.1", default-features = false, features = ["wayland-data-control"] }
+# zbus runs on async-io, never tokio: the notification plugin (notify-rust) blocks on zbus from Tokio workers, which a
+# tokio-backed zbus turns into "cannot start a runtime from within a runtime".
+ashpd = { version = "=0.13.13", default-features = false, features = ["async-io", "global_shortcuts", "remote_desktop", "screencast", "settings"] }
+# The PulseAudio native protocol in pure Rust (no libpulse); PipeWire's pulse server speaks it too.
+cpal = { version = "=0.18.2", features = ["pulseaudio"] }
+# StreamExt over the portal and D-Bus signal streams; the version zbus already links.
+futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
+# Unpacks the Linux llama.cpp release (a tar.gz of symlink chains); flate2 on the same pure-Rust backend as zip.
+flate2 = { version = "=1.1.10", default-features = false, features = ["zlib-rs"] }
+libc = "=0.2.189"
+# `select!` for the D-Bus and portal watch loops (adapters/power, adapters/hotkey on Wayland).
+tokio = { version = "=1.53.1", default-features = false, features = ["macros"] }
+reis = { version = "=0.7.1", features = ["tokio"] }
+tar = { version = "=0.4.46", default-features = false }
+# The wlroots virtual-keyboard protocol (Hyprland, Sway, river...): Echo's paste on compositors without a RemoteDesktop portal.
+wayland-client = "=0.31.15"
+wayland-protocols-misc = { version = "=0.3.12", default-features = false, features = ["client"] }
+x11rb = { version = "=0.13.2", features = ["xinput", "xtest", "randr"] }
+# Same version tauri's notification plugin links; logind sleep/unlock signals (adapters/power/linux.rs).
+zbus = { version = "=5.19.0", default-features = false, features = ["async-io"] }
 
 [dev-dependencies]
 # `test` adds the mock runtime used to call commands end to end (dev builds only; resolver 3 keeps it out of the app).

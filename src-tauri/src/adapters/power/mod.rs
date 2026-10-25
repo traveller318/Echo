@@ -6,6 +6,12 @@
  * WHERE: Constructed by app/bootstrap; used only through `dyn PowerEvents`.
  */
 
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(windows)]
 mod win32;
 
+#[cfg(target_os = "linux")]
+pub use linux::LogindPowerEvents;
+#[cfg(windows)]
 pub use win32::Win32PowerEvents;

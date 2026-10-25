@@ -1,0 +1,25 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "bundle": {
+    "targets": [
+      "nsis"
+    ],
+    "resources": {
+      "resources/onnxruntime/*.dll": "onnxruntime/",
+      "resources/licenses/DirectML-LICENSE.txt": "licenses/DirectML-LICENSE.txt",
+      "resources/licenses/DirectML-ThirdPartyNotices.txt": "licenses/DirectML-ThirdPartyNotices.txt",
+      "resources/licenses/msvc-runtime-NOTICE.txt": "licenses/msvc-runtime-NOTICE.txt",
+      "resources/licenses/onnxruntime-ThirdPartyNotices.txt": "licenses/onnxruntime-ThirdPartyNotices.txt"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico"
+      }
+    }
+  }
+}

@@ -79,7 +79,7 @@ describe("describeAppError", () => {
     );
   });
 
-  it("points a blocked microphone at the Windows privacy page", () => {
+  it("points a blocked microphone at the privacy settings", () => {
     expect(describeAppError({ code: "PermissionDenied", permission: "microphone" }).action?.id).toBe("open_mic_privacy");
   });
 

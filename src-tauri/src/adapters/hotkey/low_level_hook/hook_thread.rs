@@ -48,8 +48,8 @@ use windows::Win32::{
 };
 
 use super::{
+    super::chords::tracker::{ChordTracker, KeyEvent, Reaction},
     Shared,
-    tracker::{ChordTracker, KeyEvent, Reaction},
 };
 use crate::{
     adapters::win32::{
@@ -483,7 +483,10 @@ mod tests {
     use super::*;
     use crate::{
         adapters::{
-            hotkey::low_level_hook::{REAL_KEYS, chord::parse, tracker::HookBinding},
+            hotkey::{
+                chords::{chord::parse, tracker::HookBinding},
+                low_level_hook::REAL_KEYS,
+            },
             win32::{KeyStroke, keyboard_input},
         },
         ports::fakes::RecordingSink,

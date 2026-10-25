@@ -9,6 +9,23 @@
  *        actor.
  */
 
+pub(crate) mod chords;
+#[cfg(windows)]
 mod low_level_hook;
+#[cfg(target_os = "linux")]
+mod portal_shortcuts;
+#[cfg(target_os = "linux")]
+mod unavailable;
+#[cfg(target_os = "linux")]
+mod x11_xinput;
 
+#[cfg(target_os = "linux")]
+pub use chords::ChordHotkeys;
+#[cfg(windows)]
 pub use low_level_hook::LowLevelKeyboardHotkeys;
+#[cfg(target_os = "linux")]
+pub use portal_shortcuts::PortalGlobalShortcuts;
+#[cfg(target_os = "linux")]
+pub use unavailable::UnavailableHotkeys;
+#[cfg(target_os = "linux")]
+pub use x11_xinput::X11XInput;

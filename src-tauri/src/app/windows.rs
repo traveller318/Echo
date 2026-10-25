@@ -25,16 +25,18 @@
  *        builder's window event handler; reads the managed CommandCtx, the managed Win32OverlayWindow and pipeline/appearance.
  */
 
-use tauri::{
-    AppHandle, Manager, Runtime, Theme, Window, WindowEvent,
-    window::{Effect, EffectsBuilder},
-};
+#[cfg(windows)]
+use tauri::window::{Effect, EffectsBuilder};
+use tauri::{AppHandle, Manager, Runtime, Theme, Window, WindowEvent};
 use tauri_specta::Event;
 
 use std::sync::Arc;
 
+#[cfg(target_os = "linux")]
+use crate::adapters::window::TauriOverlayWindow;
+#[cfg(windows)]
+use crate::adapters::{win32::window_handle, window::Win32OverlayWindow};
 use crate::{
-    adapters::{win32::window_handle, window::Win32OverlayWindow},
     ipc::CommandCtx,
     pipeline::{appearance, launch, onboarding},
     types::{AppearanceChanged, LaunchOrigin, MainWindowAtLaunch, ThemePreference},
@@ -53,6 +55,7 @@ pub fn setup<R: Runtime>(app: &AppHandle<R>) {
         return;
     };
     let view = appearance::current(&ctx.settings(), ctx.appearance());
+    #[cfg(windows)]
     if ctx.appearance().caps().mica {
         apply_mica(app);
     }
@@ -135,6 +138,7 @@ fn hides_on_close(label: &str) -> bool {
 
 /// Hands the pill window to the overlay adapter; without it the pill never shows, and dictation still works.
 /// True when the pill window is attached.
+#[cfg(windows)]
 fn attach_pill<R: Runtime>(app: &AppHandle<R>) -> bool {
     let Some(overlay) = app.try_state::<Arc<Win32OverlayWindow>>() else {
         tracing::error!("the pill overlay was not managed before the windows were set up");
@@ -158,6 +162,27 @@ fn attach_pill<R: Runtime>(app: &AppHandle<R>) -> bool {
     attached.is_ok()
 }
 
+/// The Linux pill is an ordinary Tauri window the overlay adapter drives; attaching sets its always-on-top,
+/// skip-taskbar and click-through state.
+#[cfg(target_os = "linux")]
+fn attach_pill<R: Runtime>(app: &AppHandle<R>) -> bool {
+    let Some(overlay) = app.try_state::<Arc<TauriOverlayWindow<R>>>() else {
+        tracing::error!("the pill overlay was not managed before the windows were set up");
+        return false;
+    };
+    match overlay.attach() {
+        Ok(()) => true,
+        Err(error) => {
+            tracing::warn!(
+                detail = error.detail(),
+                "the pill window could not be attached; takes run without it"
+            );
+            false
+        }
+    }
+}
+
+#[cfg(windows)]
 fn apply_mica<R: Runtime>(app: &AppHandle<R>) {
     let Some(main) = app.get_webview_window(MAIN_WINDOW) else {
         tracing::warn!("no main window to put Mica behind");
